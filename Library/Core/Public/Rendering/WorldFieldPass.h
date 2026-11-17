@@ -15,6 +15,10 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t WorldFieldDrynessGroupCount =
         (WorldFieldDrynessResolution + WorldFieldDrynessGroupSize - 1u) / WorldFieldDrynessGroupSize;
 
+    inline constexpr uint32_t WorldFieldPuddleGroupSize = 8u;
+    inline constexpr uint32_t WorldFieldPuddleGroupCount =
+        (WorldFieldPuddleResolution + WorldFieldPuddleGroupSize - 1u) / WorldFieldPuddleGroupSize;
+
     /** @brief WorldFieldUpdate.comp の binding 3 に渡す std140 定数。 */
     struct alignas(16) WorldFieldUpdateConstants
     {
@@ -63,6 +67,21 @@ namespace NorvesLib::Core::Rendering
     };
     static_assert(sizeof(WorldFieldDrynessSourceBlock) == 4096);
 
+    /** @brief WorldFieldPuddle.comp の binding 1 に渡す std140 定数と源の配列。 */
+    struct alignas(16) WorldFieldPuddleParams
+    {
+        float OriginXZ[2] = {};
+        float TexelSize = 0.0f;
+        uint32_t SourceCount = 0u;
+        WorldFieldPuddleSource Sources[WorldFieldPuddleMaxSources];
+    };
+    static_assert(alignof(WorldFieldPuddleParams) == 16);
+    static_assert(sizeof(WorldFieldPuddleParams) == 4112);
+    static_assert(offsetof(WorldFieldPuddleParams, OriginXZ) == 0);
+    static_assert(offsetof(WorldFieldPuddleParams, TexelSize) == 8);
+    static_assert(offsetof(WorldFieldPuddleParams, SourceCount) == 12);
+    static_assert(offsetof(WorldFieldPuddleParams, Sources) == 16);
+
     /** @brief 主カメラに追従する世界空間のフィールドを更新し、画像と座標を公開する。 */
     class WorldFieldPass final : public IViewPass, public IRenderGraphPass
     {
@@ -87,6 +106,9 @@ namespace NorvesLib::Core::Rendering
         bool EnsureDrynessTextures();
         bool PrepareDryness(const ViewRenderContext& context);
         void RecordDryness(ViewRenderContext& context);
+        bool EnsurePuddleTexture();
+        bool PreparePuddle(const ViewRenderContext& context);
+        void RecordPuddle(ViewRenderContext& context);
         static WorldFieldState MakeDrynessState(const WorldFieldScrollResult& scroll, float texelSize);
         WorldFieldFrameState GetFrameState(uint32_t& currentIndex, uint32_t& previousIndex) const;
 
@@ -107,6 +129,15 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorSetPtr m_DrynessSet;
         WorldFieldState m_PreparedDryness[2];
         WorldFieldState m_DrynessStates[2];
+        RHI::ShaderPtr m_PuddleShader;
+        RHI::PipelinePtr m_PuddlePipeline;
+        RHI::DescriptorSetLayoutPtr m_PuddleDescriptorSetLayout;
+        RHI::TexturePtr m_PuddleTexture;
+        RHI::DescriptorSetPtr m_PuddleSet;
+        WorldFieldState m_PreparedPuddle;
+        WorldFieldState m_PuddleState;
+        uint64_t m_PreparedPuddleSourceHash = 0u;
+        uint64_t m_PuddleSourceHash = 0u;
         WorldFieldSettings m_Settings;
         // 各画像に実際に記録した座標。宣言だけでは更新しない。
         WorldFieldState m_HistoryStates[2];
@@ -120,5 +151,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bPrepared = false;
         bool m_bDrynessReady = false;
         bool m_bDrynessPrepared = false;
+        bool m_bPuddleReady = false;
+        bool m_bPuddlePrepared = false;
+        bool m_bPuddleAvailable = false;
     };
 } // 名前空間 NorvesLib::Core::Rendering

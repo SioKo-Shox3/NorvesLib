@@ -11965,3 +11965,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 水たまりの式（Puddle.glsl）と、濡れの式へ雨の遮蔽と水たまりを重ねる関数: 着地(直し 0 回)
 - U2 地形の凹み度 PDL0 をスプラットの配列の 3 枚目に載せ、TerrainLayerBlend.glsl で引く: 着地(直し 0 回)
 - U3 水たまりの層の型・手置きの水たまりの源の経路・共有の UBO を詰める口: 着地(直し 0 回)
+- U4 世界空間のフィールドに水たまりの層（手置きの源から）を作って公開する: 着地(直し 0 回)

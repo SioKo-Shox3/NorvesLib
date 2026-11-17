@@ -48,6 +48,38 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
+        RHI::DescriptorSetDesc MakeWorldFieldPuddleDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc desc;
+            const RHI::ResourceBindType types[] = {
+                RHI::ResourceBindType::RWTexture, RHI::ResourceBindType::ConstantBuffer};
+            for (uint32_t binding = 0u; binding < 2u; ++binding)
+            {
+                RHI::DescriptorBinding entry;
+                entry.binding = binding;
+                entry.type = types[binding];
+                entry.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(entry);
+            }
+            return desc;
+        }
+
+        uint64_t HashPuddleSources(const WorldFieldPuddleSource* sources, uint32_t count)
+        {
+            // 件数と std140 の源の全フィールドを、記録済み画像との比較に使う。
+            uint64_t hash = 14695981039346656037ull;
+            hash ^= count;
+            hash *= 1099511628211ull;
+            const auto* bytes = reinterpret_cast<const unsigned char*>(sources);
+            const size_t byteCount = sizeof(WorldFieldPuddleSource) * count;
+            for (size_t index = 0u; index < byteCount; ++index)
+            {
+                hash ^= bytes[index];
+                hash *= 1099511628211ull;
+            }
+            return hash;
+        }
+
         RHI::ResourceState GetFieldTextureState(const ViewRenderContext& context,
                                                 const RHI::TexturePtr& texture)
         {
@@ -148,6 +180,39 @@ namespace NorvesLib::Core::Rendering
                 m_DrynessDescriptorSetLayout.reset();
                 NORVES_LOG_WARNING("WorldFieldPass", "枯れ度フィールドの資源を用意できないため、枯れ度の更新を無効にします");
             }
+
+            try
+            {
+                // r8 storage image に必要な機能と形式がない場合は、この層だけを無効にする。
+                if (m_Device->GetCapabilities().bShaderStorageImageExtendedFormats &&
+                    m_Device->IsFormatSupported(RHI::Format::R8_UNORM, RHI::FormatUsage::Storage) &&
+                    m_Device->IsFormatSupported(RHI::Format::R8_UNORM, RHI::FormatUsage::Sampled))
+                {
+                    const RHI::DescriptorSetDesc layoutDesc = MakeWorldFieldPuddleDescriptorSetDesc();
+                    m_PuddleShader = context.ShaderMgr->LoadShader("WorldField/WorldFieldPuddle.comp", RHI::ShaderStage::Compute);
+                    m_PuddleDescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(layoutDesc);
+                    if (m_PuddleShader && m_PuddleDescriptorSetLayout)
+                    {
+                        RHI::ComputePipelineDesc pipelineDesc;
+                        pipelineDesc.computeShader = m_PuddleShader;
+                        pipelineDesc.descriptorSetLayouts.push_back(layoutDesc);
+                        m_PuddlePipeline = m_Device->CreateComputePipeline(pipelineDesc);
+                        m_bPuddleReady = m_PuddlePipeline && EnsurePuddleTexture();
+                    }
+                }
+            }
+            catch (const std::exception&)
+            {
+                m_bPuddleReady = false;
+            }
+            if (!m_bPuddleReady)
+            {
+                m_PuddleTexture.reset();
+                m_PuddlePipeline.reset();
+                m_PuddleShader.reset();
+                m_PuddleDescriptorSetLayout.reset();
+                NORVES_LOG_WARNING("WorldFieldPass", "水たまりフィールドの資源を用意できないため、水たまりの更新を無効にします");
+            }
         }
         m_bInitialized = true;
         return true;
@@ -163,6 +228,11 @@ namespace NorvesLib::Core::Rendering
         m_DrynessPipeline.reset();
         m_DrynessShader.reset();
         m_DrynessDescriptorSetLayout.reset();
+        m_PuddleSet.reset();
+        m_PuddleTexture.reset();
+        m_PuddlePipeline.reset();
+        m_PuddleShader.reset();
+        m_PuddleDescriptorSetLayout.reset();
         m_HistoryTextures[0].reset();
         m_HistoryTextures[1].reset();
         m_UpdatePipeline.reset();
@@ -176,11 +246,18 @@ namespace NorvesLib::Core::Rendering
         m_PreparedDryness[1] = {};
         m_DrynessStates[0] = {};
         m_DrynessStates[1] = {};
+        m_PreparedPuddle = {};
+        m_PuddleState = {};
+        m_PreparedPuddleSourceHash = 0u;
+        m_PuddleSourceHash = 0u;
         m_Origin = {};
         m_LastUpdateTime = 0.0;
         m_bPrepared = false;
         m_bDrynessReady = false;
         m_bDrynessPrepared = false;
+        m_bPuddleReady = false;
+        m_bPuddlePrepared = false;
+        m_bPuddleAvailable = false;
         m_bInitialized = false;
     }
 
@@ -256,6 +333,27 @@ namespace NorvesLib::Core::Rendering
         m_DrynessStates[0] = {};
         m_DrynessStates[1] = {};
         return true;
+    }
+
+    bool WorldFieldPass::EnsurePuddleTexture()
+    {
+        if (m_PuddleTexture)
+        {
+            return true;
+        }
+        if (!m_Device)
+        {
+            return false;
+        }
+        RHI::TextureDesc desc;
+        desc.Width = WorldFieldPuddleResolution;
+        desc.Height = WorldFieldPuddleResolution;
+        desc.TextureFormat = RHI::Format::R8_UNORM;
+        desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite;
+        desc.DebugName = "WorldField.PuddleNear";
+        m_PuddleTexture = m_Device->CreateTexture(desc);
+        m_PuddleState = {};
+        return static_cast<bool>(m_PuddleTexture);
     }
 
     bool WorldFieldPass::PrepareUpdate(const ViewRenderContext& context)
@@ -437,6 +535,77 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool WorldFieldPass::PreparePuddle(const ViewRenderContext& context)
+    {
+        m_bPuddlePrepared = false;
+        m_bPuddleAvailable = false;
+        m_PuddleSet.reset();
+        const CameraProxy* camera = context.GetActiveCamera();
+        const auto* sources = context.SnapshotWorldFieldPuddleSources;
+        if (!m_bEnabled || !m_bPuddleReady || !context.CommandList || !camera ||
+            (context.MainCamera && camera->CameraId != context.MainCamera->CameraId) ||
+            !sources || sources->empty())
+        {
+            return false;
+        }
+
+        const WorldFieldScrollResult scroll = CalculateWorldFieldScroll(WorldFieldOrigin{},
+            camera->PositionX, camera->PositionZ, WorldFieldPuddleDefaultTexelMeters, WorldFieldPuddleResolution);
+        if (!scroll.Origin.bValid)
+        {
+            return false;
+        }
+
+        // スナップショットは整形済み。上限を超えても GPU に渡す先頭分だけを比較する。
+        const uint32_t sourceCount = static_cast<uint32_t>(sources->size() < WorldFieldPuddleMaxSources ?
+            sources->size() : WorldFieldPuddleMaxSources);
+        const uint64_t sourceHash = HashPuddleSources(sources->data(), sourceCount);
+        if (m_PuddleState.bValid && m_PuddleState.OriginXZ[0] == scroll.OriginXMeters &&
+            m_PuddleState.OriginXZ[1] == scroll.OriginZMeters && m_PuddleSourceHash == sourceHash)
+        {
+            m_bPuddleAvailable = true;
+            return true;
+        }
+        if (!context.FrameResources)
+        {
+            return false;
+        }
+
+        WorldFieldPuddleParams params;
+        params.OriginXZ[0] = static_cast<float>(scroll.OriginXMeters);
+        params.OriginXZ[1] = static_cast<float>(scroll.OriginZMeters);
+        params.TexelSize = WorldFieldPuddleDefaultTexelMeters;
+        params.SourceCount = sourceCount;
+        for (uint32_t index = 0u; index < sourceCount; ++index)
+        {
+            params.Sources[index] = (*sources)[index];
+        }
+
+        const FrameUploadAllocation paramsAllocation = context.FrameResources->AllocateConstants(params);
+        const FrameDescriptorAllocation setAllocation =
+            context.FrameResources->AllocateDescriptorSet(m_PuddleDescriptorSetLayout);
+        if (!paramsAllocation.IsValid() || !setAllocation.IsValid())
+        {
+            return false;
+        }
+        setAllocation.Set->BindStorageTexture(0u, m_PuddleTexture);
+        setAllocation.Set->BindConstantBuffer(1u, paramsAllocation.Buffer,
+            paramsAllocation.GetOffset32(), paramsAllocation.GetSize32());
+        setAllocation.Set->Update();
+
+        m_PreparedPuddle.OriginXZ[0] = scroll.OriginXMeters;
+        m_PreparedPuddle.OriginXZ[1] = scroll.OriginZMeters;
+        m_PreparedPuddle.ExtentMeters =
+            WorldFieldPuddleDefaultTexelMeters * static_cast<float>(WorldFieldPuddleResolution);
+        m_PreparedPuddle.TexelSizeMeters = WorldFieldPuddleDefaultTexelMeters;
+        m_PreparedPuddle.bValid = true;
+        m_PreparedPuddleSourceHash = sourceHash;
+        m_PuddleSet = setAllocation.Set;
+        m_bPuddlePrepared = true;
+        m_bPuddleAvailable = true;
+        return true;
+    }
+
     WorldFieldFrameState WorldFieldPass::GetFrameState(uint32_t& currentIndex, uint32_t& previousIndex) const
     {
         currentIndex = m_bPrepared ? m_HistoryWriteIndex : 1u - m_HistoryWriteIndex;
@@ -474,6 +643,10 @@ namespace NorvesLib::Core::Rendering
             state.DrynessFar = dryness[1];
             state.DrynessNearBlendMeters = m_Settings.DrynessNearBlendMeters;
         }
+        if (m_bEnabled && m_bPuddleReady && m_bPuddleAvailable)
+        {
+            state.PuddleNear = m_bPuddlePrepared ? m_PreparedPuddle : m_PuddleState;
+        }
         return state;
     }
 
@@ -489,6 +662,16 @@ namespace NorvesLib::Core::Rendering
             m_bDrynessPrepared = false;
             NORVES_LOG_WARNING("WorldFieldPass", "枯れ度フィールドの更新資源を借りられないため、前の状態を使います");
         }
+        try
+        {
+            PreparePuddle(context);
+        }
+        catch (const std::exception&)
+        {
+            m_bPuddlePrepared = false;
+            m_bPuddleAvailable = false;
+            NORVES_LOG_WARNING("WorldFieldPass", "水たまりフィールドの更新資源を借りられないため、このフレームでは無効にします");
+        }
         uint32_t currentIndex;
         uint32_t previousIndex;
         context.PhysicalLighting.PublishWorldField(GetFrameState(currentIndex, previousIndex));
@@ -499,6 +682,8 @@ namespace NorvesLib::Core::Rendering
         const ViewRenderContext* context = builder.GetContext();
         m_bPrepared = false;
         m_bDrynessPrepared = false;
+        m_bPuddlePrepared = false;
+        m_bPuddleAvailable = false;
         if (!context)
         {
             return;
@@ -579,6 +764,36 @@ namespace NorvesLib::Core::Rendering
                 {
                     builder.Read(nearLayer, RHI::ResourceState::ShaderResource);
                     builder.Read(farLayer, RHI::ResourceState::ShaderResource);
+                }
+                bDeclared = true;
+            }
+        }
+
+        // 曲げと枯れ度の設定や準備の成否に関係なく、水たまりの層を宣言する。
+        if (m_bEnabled && m_bPuddleReady && context->CommandList)
+        {
+            try
+            {
+                PreparePuddle(*context);
+            }
+            catch (const std::exception&)
+            {
+                m_bPuddlePrepared = false;
+                m_bPuddleAvailable = false;
+                NORVES_LOG_WARNING("WorldFieldPass", "水たまりフィールドの更新資源を借りられないため、このフレームでは無効にします");
+            }
+            if (m_bPuddleAvailable)
+            {
+                const RGResourceHandle layer = builder.ImportTexture(m_PuddleTexture,
+                    GetFieldTextureState(*context, m_PuddleTexture), "WorldField.PuddleNear");
+                builder.PublishTexture(RenderGraphResourceNames::WorldFieldPuddleNear, layer);
+                if (m_bPuddlePrepared)
+                {
+                    builder.Write(layer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
+                }
+                else
+                {
+                    builder.Read(layer, RHI::ResourceState::ShaderResource);
                 }
                 bDeclared = true;
             }
@@ -666,11 +881,33 @@ namespace NorvesLib::Core::Rendering
         m_bDrynessPrepared = false;
     }
 
+    void WorldFieldPass::RecordPuddle(ViewRenderContext& context)
+    {
+        if (!m_bPuddlePrepared || !context.CommandList || !m_PuddleSet || m_PuddleSet->IsExpired())
+        {
+            return;
+        }
+        RHI::ICommandList* commandList = context.CommandList;
+        commandList->TextureBarrier(m_PuddleTexture, RHI::ResourceState::UnorderedAccess,
+                                    RHI::ResourceState::UnorderedAccess);
+        commandList->SetPipeline(m_PuddlePipeline);
+        commandList->SetDescriptorSet(m_PuddleSet, 0u);
+        commandList->Dispatch(WorldFieldPuddleGroupCount, WorldFieldPuddleGroupCount, 1u);
+        commandList->TextureBarrier(m_PuddleTexture, RHI::ResourceState::UnorderedAccess,
+                                    RHI::ResourceState::ShaderResource);
+
+        // 実際に記録した画像の座標と源だけを、次のフレームの比較に使う。
+        m_PuddleState = m_PreparedPuddle;
+        m_PuddleSourceHash = m_PreparedPuddleSourceHash;
+        m_bPuddlePrepared = false;
+    }
+
     void WorldFieldPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         (void)resources;
         RecordUpdate(context);
         RecordDryness(context);
+        RecordPuddle(context);
     }
 
     void WorldFieldPass::Execute(ViewRenderContext& context)
@@ -697,6 +934,12 @@ namespace NorvesLib::Core::Rendering
                                                     RHI::ResourceState::UnorderedAccess);
             }
             RecordDryness(context);
+        }
+        if (m_bPuddlePrepared)
+        {
+            context.CommandList->TextureBarrier(m_PuddleTexture, GetFieldTextureState(context, m_PuddleTexture),
+                                                RHI::ResourceState::UnorderedAccess);
+            RecordPuddle(context);
         }
     }
 } // 名前空間 NorvesLib::Core::Rendering
