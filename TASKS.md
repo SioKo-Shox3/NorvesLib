@@ -7137,7 +7137,7 @@
 - notes: 要件 `#### GR58` の設計案（B）。G7-S7 の (A)（G7-GR57-GPU-SIMULATION の notes）を採っても、Volumetrics の直後は GR25 の段に当たらない（AfterLighting は Lighting の直後で SSR・CloudLayer・Volumetrics の前）ので、このパスだけは SetupDeferredPipeline の中に直に置く（ロードマップ 4531 行の注記どおり）。Forward・DoF・動きぼけ・TAA より前なので全部が自然に掛かり、細かい筋は TAA で平均されて霞に見える。世界の向きに固定した近似で視差は無い（層の数と距離はデータで替えられる）。時刻は G7-GR49-ENV-SYSTEM のゲームの時刻で、ポーズで止まる。共有の SceneView.cpp は AddPass の数行だけにする。試験を足す理由: 近い物の手前にカーテンが描かれる・雨量 0 で色が変わる・並びの誤りは、場面によって見落とし黙って起きる。危険地帯（RenderThread・パスの並び）なので評価者を通す。ロードマップ 1540・1554 行。
 
 ## G7-GR58-RAIN-NEAR: カメラの周りの箱で巻き戻る GPU の粒の雨筋を、雨量に連続に追随し、風と落ちる速さで傾き、相対速度で伸びる形で TAA の後に描く
-- status: done
+- status: doing
 - after: G7-GR57-GPU-DRAW, G7-GR58-RAIN-MODEL, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR58
 - needs-gr: GR46, GR30
