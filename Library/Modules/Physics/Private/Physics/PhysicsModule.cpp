@@ -62,6 +62,7 @@ namespace NorvesLib::Modules::Physics
 
     PhysicsModule::PhysicsModule()
         : m_StaticColliderPayloadHandler(*this)
+        , m_ScatterColliderBinding(*this)
         , m_OwnerThreadId(Thread::Thread::GetCurrentThreadId())
     {
     }
@@ -96,6 +97,7 @@ namespace NorvesLib::Modules::Physics
         m_Engine = &engine;
         m_bBound = true;
         m_StaticColliderPayloadHandler.SetScatterSystem(&engine.GetScatterSystem());
+        engine.GetScatterSystem().SetColliderListener(&m_ScatterColliderBinding);
         if (!engine.GetStreamingSystem().RegisterHandler(&m_StaticColliderPayloadHandler))
         {
             LOG_WARNING("PHYSICS_STREAMING_HANDLER_SKIPPED マニフェストが既にあるか、同じ種類のハンドラが登録済みです");
@@ -198,6 +200,11 @@ namespace NorvesLib::Modules::Physics
 
         ResetTransientState();
         m_bInitialized = true;
+        // 初期化前や再初期化前から常駐するチャンクを登録し直す。
+        if (m_Engine->GetScatterSystem().GetColliderListener() == &m_ScatterColliderBinding)
+        {
+            m_Engine->GetScatterSystem().SetColliderListener(&m_ScatterColliderBinding);
+        }
         for (auto& body : m_BodySlots)
             UpdateRenderInterpolationDefault(body);
         return true;
@@ -312,6 +319,10 @@ namespace NorvesLib::Modules::Physics
 
         engine.GetStreamingSystem().UnregisterHandler(&m_StaticColliderPayloadHandler);
         m_StaticColliderPayloadHandler.SetScatterSystem(nullptr);
+        if (engine.GetScatterSystem().GetColliderListener() == &m_ScatterColliderBinding)
+        {
+            engine.GetScatterSystem().SetColliderListener(nullptr);
+        }
 
         // Unavailable は provider が既に存在しないため dangling binding はない。
         engine.GetSceneQuery().SetTerrainSystem(nullptr);
@@ -1740,6 +1751,7 @@ namespace NorvesLib::Modules::Physics
             }
         }
         m_StaticColliderChunks.clear();
+        m_ScatterColliderBinding.Reset();
         for (BodySlot& body : m_BodySlots)
         {
             if (body.bOccupied && body.Owner)

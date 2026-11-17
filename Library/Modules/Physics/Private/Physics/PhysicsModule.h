@@ -211,6 +211,7 @@ namespace NorvesLib::Modules::Physics
         Core::Scene::EPhysicsSceneQueryResult GetReadinessResult() const;
 
         StaticColliderPayloadHandler m_StaticColliderPayloadHandler;
+        ScatterColliderBinding m_ScatterColliderBinding;
         Core::Engine::Engine* m_Engine = nullptr;
         Thread::Thread::ThreadId m_OwnerThreadId;
         bool m_bBound = false;
