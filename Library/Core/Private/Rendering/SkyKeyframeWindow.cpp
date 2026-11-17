@@ -1,13 +1,35 @@
 ﻿// 太陽高度を挟むキーフレームと先読み・退去の対象を決める。
 #include "Rendering/SkyKeyframeWindow.h"
 
+#include "Rendering/SkyAtmospherePass.h"
+#include "Rendering/SkyAtmosphereSourceCache.h"
+#include "RHI/IDevice.h"
+#include "RHI/ITexture.h"
+#include "Thread/JobSystem.h"
+#include "Thread/Task.h"
+
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        // RGBA の要素数を、乗算のあふれを避けて求める。
+        bool TryGetRadianceTexelCount(uint32_t width, uint32_t height, size_t& outCount)
+        {
+            outCount = 0u;
+            if (width == 0u || height == 0u ||
+                static_cast<size_t>(width) > (std::numeric_limits<size_t>::max)() / height / 4u)
+            {
+                return false;
+            }
+            outCount = static_cast<size_t>(width) * height * 4u;
+            return true;
+        }
+
         // 有限な float の和を二重精度で比較し、和の丸めに隠れた差も判定する。
         int CompareFloatSum(double left, double right, double target)
         {
@@ -432,5 +454,199 @@ namespace NorvesLib::Core::Rendering
         const size_t lastIndex = std::min(m_KeyAltitudes.size() - 1u,
                                           static_cast<size_t>(m_LastIntervalLowerIndex) + 2u);
         last = static_cast<uint32_t>(lastIndex);
+    }
+
+    bool BuildSkyKeyframeCpuData(const SkyAtmosphereParameters& keyParameters,
+                                 const SkyAtmosphereModel* previous,
+                                 uint32_t radianceWidth,
+                                 uint32_t radianceHeight,
+                                 SkyKeyframeCpuData& outData)
+    {
+        try
+        {
+            const SkyAtmosphereParameters key = MakeSkyAtmosphereClearKey(keyParameters);
+            size_t texelCount = 0u;
+            if (key.bEnabled && TryGetRadianceTexelCount(radianceWidth, radianceHeight, texelCount))
+            {
+                SkyKeyframeCpuData data;
+                auto model = Container::MakeShared<SkyAtmosphereModel>(key, previous);
+                model->BuildSkyViewTable();
+                BuildSkyRadianceLutTexels(*model, radianceWidth, radianceHeight, data.RadianceLutTexels);
+
+                Container::VariableArray<float> source;
+                if (data.RadianceLutTexels.size() == texelCount &&
+                    BuildSkyRadianceSource(*model, radianceWidth, radianceHeight, source) &&
+                    ComputeIblCpuData(source, radianceWidth, radianceHeight, data.Ibl))
+                {
+                    BuildSkyAerialProfile(*model, data.AerialProfile);
+                    if (data.AerialProfile.bValid)
+                    {
+                        data.Parameters = key;
+                        data.RadianceWidth = radianceWidth;
+                        data.RadianceHeight = radianceHeight;
+                        data.SunGroundTransmittance = model->GetSunGroundTransmittance();
+                        data.ClearHorizontalIlluminance = model->GetClearHorizontalIlluminance();
+                        data.Model = std::move(model);
+                        data.bValid = true;
+                        outData = std::move(data);
+                        return true;
+                    }
+                }
+            }
+        }
+        catch (...)
+        {
+            // 部分的な結果は外へ渡さない。
+        }
+        outData = SkyKeyframeCpuData{};
+        return false;
+    }
+
+    bool SkyKeyframeGpu::IsValid() const
+    {
+        return Radiance && Environment && Diffuse && Prefilter;
+    }
+
+    bool UploadSkyKeyframe(RHI::IDevice* device, const SkyKeyframeCpuData& data, SkyKeyframeGpu& outKey)
+    {
+        outKey = SkyKeyframeGpu{};
+        constexpr uint32_t bytesPerPixel = 4u * static_cast<uint32_t>(sizeof(uint16_t));
+        constexpr uint32_t maxPitch = (std::numeric_limits<uint32_t>::max)();
+        size_t texelCount = 0u;
+        if (!device || !data.bValid || !data.Model || !data.Parameters.bEnabled ||
+            !TryGetRadianceTexelCount(data.RadianceWidth, data.RadianceHeight, texelCount) ||
+            data.RadianceLutTexels.size() != texelCount ||
+            data.RadianceWidth > maxPitch / bytesPerPixel ||
+            data.RadianceHeight > maxPitch / (data.RadianceWidth * bytesPerPixel))
+        {
+            return false;
+        }
+
+        try
+        {
+            SkyKeyframeGpu key;
+            RHI::TextureDesc desc;
+            desc.Width = data.RadianceWidth;
+            desc.Height = data.RadianceHeight;
+            desc.MipLevels = 1u;
+            desc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+            desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            desc.DebugName = "SkyAtmosphere.Keyframe.Radiance";
+            key.Radiance = device->CreateTexture(desc);
+            if (!key.Radiance)
+            {
+                return false;
+            }
+
+            const uint32_t rowPitch = data.RadianceWidth * bytesPerPixel;
+            key.Radiance->Update(data.RadianceLutTexels.data(), rowPitch, rowPitch * data.RadianceHeight);
+            if (!UploadIblResources(device, data.Ibl,
+                                    "SkyAtmosphere.Keyframe.Environment",
+                                    "SkyAtmosphere.Keyframe.DiffuseIrradiance",
+                                    "SkyAtmosphere.Keyframe.PrefilteredSpecular",
+                                    key.Environment, key.Diffuse, key.Prefilter, key.AverageIrradiance))
+            {
+                return false;
+            }
+
+            key.AltitudeDegrees = data.Parameters.SunAltitudeDegrees;
+            key.AzimuthDegrees = data.Parameters.SunAzimuthDegrees;
+            key.AerialProfile = data.AerialProfile;
+            key.SunGroundTransmittance = data.SunGroundTransmittance;
+            key.ClearHorizontalIlluminance = data.ClearHorizontalIlluminance;
+            key.Model = data.Model;
+            outKey = std::move(key);
+            return true;
+        }
+        catch (...)
+        {
+            outKey = SkyKeyframeGpu{};
+            return false;
+        }
+    }
+
+    SkyKeyframeBuilder::~SkyKeyframeBuilder()
+    {
+        WaitAll();
+    }
+
+    void SkyKeyframeBuilder::Submit(uint32_t keyIndex, uint64_t generation,
+                                    const SkyAtmosphereParameters& keyParameters,
+                                    Container::TSharedPtr<const SkyAtmosphereModel> previous,
+                                    uint32_t radianceWidth, uint32_t radianceHeight)
+    {
+        auto data = Container::MakeShared<SkyKeyframeCpuData>();
+        const auto build = [keyParameters, previous, data, radianceWidth, radianceHeight]()
+        {
+            BuildSkyKeyframeCpuData(keyParameters, previous.get(), radianceWidth, radianceHeight, *data);
+        };
+        auto task = Thread::Task::Create(build);
+        m_PendingBuilds.push_back(PendingBuild{SkyKeyframeBuildResult{keyIndex, generation, data}, task});
+
+        bool bSubmitted = false;
+        try
+        {
+            Thread::JobSystem& jobs = Thread::JobSystem::Get();
+            bSubmitted = jobs.IsAcceptingTasks() && jobs.SubmitTask(task);
+        }
+        catch (...)
+        {
+            // 公開済みで実行が始まっていれば、二重実行せずその完了を待つ。
+            bSubmitted = !task->Cancel() && !task->IsCanceled();
+        }
+        if (!bSubmitted)
+        {
+            m_PendingBuilds.back().Task.reset();
+            build();
+        }
+    }
+
+    void SkyKeyframeBuilder::CollectCompleted(Container::VariableArray<SkyKeyframeBuildResult>& outResults)
+    {
+        outResults.clear();
+        for (auto it = m_PendingBuilds.begin(); it != m_PendingBuilds.end();)
+        {
+            const bool bBuilt = !it->Task || it->Task->IsCompleted();
+            if (!bBuilt && !it->Task->IsCanceled())
+            {
+                ++it;
+                continue;
+            }
+            outResults.push_back(it->Result);
+            if (bBuilt)
+            {
+                ++m_CollectedBuildCount;
+            }
+            it = m_PendingBuilds.erase(it);
+        }
+    }
+
+    void SkyKeyframeBuilder::WaitAll()
+    {
+        for (const PendingBuild& pending : m_PendingBuilds)
+        {
+            if (pending.Task)
+            {
+                pending.Task->Wait();
+            }
+        }
+    }
+
+    size_t SkyKeyframeBuilder::GetPendingCount() const
+    {
+        return m_PendingBuilds.size();
+    }
+
+    uint64_t SkyKeyframeBuilder::GetBuildCount() const
+    {
+        uint64_t count = m_CollectedBuildCount;
+        for (const PendingBuild& pending : m_PendingBuilds)
+        {
+            if (!pending.Task || pending.Task->IsCompleted())
+            {
+                ++count;
+            }
+        }
+        return count;
     }
 } // namespace NorvesLib::Core::Rendering の終端

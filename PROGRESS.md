@@ -11997,3 +11997,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 キーフレームの窓の選択の論理（GPU・ジョブに触れない）: 着地(直し 0 回)
 - U1 IblGeneration を CPU の計算と転送に分ける: 着地(直し 0 回)
 - U3 混ぜのシェーダーと記録器を、晴天 a・晴天 b・単位曇天の 3 入力と経度のずらしへ広げる: 着地(直し 0 回)
+- U5 キーの CPU 生成（JobSystem のジョブ）と GPU への転送の道具を足す: 着地(直し 0 回)

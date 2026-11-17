@@ -1,10 +1,18 @@
 ﻿// 太陽高度に応じた晴天キーフレームの選択と作成状態を管理する。
 #pragma once
 
+#include "Container/PointerTypes.h"
 #include "Container/VariableArray.h"
+#include "Rendering/IblGeneration.h"
+#include "Rendering/SkyAtmosphere.h"
 
 #include <cstddef>
 #include <cstdint>
+
+namespace NorvesLib::Thread
+{
+    class Task;
+}
 
 namespace NorvesLib::Core::Rendering
 {
@@ -122,5 +130,93 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_Generation = 0u;
         bool m_bLateWarningRaised = false;
         bool m_bLateWarningConsumed = false;
+    };
+
+    /** 生成後はモデルを変更せず、別のキーで再利用する。 */
+    struct SkyKeyframeCpuData
+    {
+        SkyAtmosphereParameters Parameters;
+        Container::TSharedPtr<const SkyAtmosphereModel> Model;
+        Container::VariableArray<uint16_t> RadianceLutTexels;
+        uint32_t RadianceWidth = 0u;
+        uint32_t RadianceHeight = 0u;
+        IblCpuData Ibl;
+        SkyAerialProfile AerialProfile;
+        Math::Vector3 SunGroundTransmittance = Math::Vector3::Zero;
+        Math::Vector3 ClearHorizontalIlluminance = Math::Vector3::Zero;
+        bool bValid = false;
+    };
+
+    /**
+     * 晴天の鍵から CPU の結果を作り、失敗や例外では出力を空にする。
+     * previous は変更しない。別々の出力と変更されない previous を使えば、複数のワーカーから同時に呼べる。
+     */
+    bool BuildSkyKeyframeCpuData(const SkyAtmosphereParameters& keyParameters,
+                                 const SkyAtmosphereModel* previous,
+                                 uint32_t radianceWidth,
+                                 uint32_t radianceHeight,
+                                 SkyKeyframeCpuData& outData);
+
+    /** 装置へ転送済みの晴天キーフレーム。 */
+    struct SkyKeyframeGpu
+    {
+        float AltitudeDegrees = 0.0f;
+        float AzimuthDegrees = 0.0f;
+        RHI::TexturePtr Radiance;
+        RHI::TexturePtr Environment;
+        RHI::TexturePtr Diffuse;
+        RHI::TexturePtr Prefilter;
+        float AverageIrradiance[3] = {};
+        SkyAerialProfile AerialProfile;
+        Math::Vector3 SunGroundTransmittance = Math::Vector3::Zero;
+        Math::Vector3 ClearHorizontalIlluminance = Math::Vector3::Zero;
+        Container::TSharedPtr<const SkyAtmosphereModel> Model;
+
+        /** ４枚のテクスチャがそろっていれば真。 */
+        bool IsValid() const;
+    };
+
+    /** RenderThread でコマンド記録の外から呼ぶ。失敗や例外では出力を空にする。 */
+    bool UploadSkyKeyframe(RHI::IDevice* device, const SkyKeyframeCpuData& data, SkyKeyframeGpu& outKey);
+
+    struct SkyKeyframeBuildResult
+    {
+        uint32_t KeyIndex = SkyKeyframeInvalidIndex;
+        uint64_t Generation = 0u;
+        Container::TSharedPtr<SkyKeyframeCpuData> Data; // 作成に失敗した場合は bValid が偽。
+    };
+
+    /**
+     * RenderThread だけが投げ手を操作する。ワーカーは値で受け取った入力と結果だけに触れる。
+     * JobSystem の終了で未実行の仕事が取り消された場合は、無効な結果として回収する。
+     */
+    class SkyKeyframeBuilder final
+    {
+    public:
+        SkyKeyframeBuilder() = default;
+        ~SkyKeyframeBuilder();
+        SkyKeyframeBuilder(const SkyKeyframeBuilder&) = delete;
+        SkyKeyframeBuilder& operator=(const SkyKeyframeBuilder&) = delete;
+
+        void Submit(uint32_t keyIndex, uint64_t generation, const SkyAtmosphereParameters& keyParameters,
+                    Container::TSharedPtr<const SkyAtmosphereModel> previous,
+                    uint32_t radianceWidth, uint32_t radianceHeight);
+        void CollectCompleted(Container::VariableArray<SkyKeyframeBuildResult>& outResults);
+        void WaitAll();
+
+        /** 完了済みでも、まだ回収していない仕事を含む件数。 */
+        size_t GetPendingCount() const;
+        /** 作成関数が終わった通算回数。未実行のまま取り消された仕事は含まない。 */
+        uint64_t GetBuildCount() const;
+
+    private:
+        struct PendingBuild
+        {
+            SkyKeyframeBuildResult Result;
+            Container::TSharedPtr<Thread::Task> Task;
+        };
+
+        Container::VariableArray<PendingBuild> m_PendingBuilds;
+        uint64_t m_CollectedBuildCount = 0u;
     };
 } // namespace NorvesLib::Core::Rendering の終端
