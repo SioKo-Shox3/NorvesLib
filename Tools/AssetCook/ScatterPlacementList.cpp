@@ -294,7 +294,7 @@ namespace NorvesLib::Tools::AssetCook
         bool Species(Reader& reader, JsonValue object, Asset::CookedScatterWriteDesc& output)
         {
             if (!reader.Keys(object, {"name", "render_path", "lods", "mesh_radius_m", "scale_range", "slope_follow",
-                                      "brightness_variation", "cast_shadow", "ray_tracing", "collision", "wind"}))
+                                      "brightness_variation", "cast_shadow", "ray_tracing", "collision", "wind", "sky_occluder"}))
             {
                 return false;
             }
@@ -388,6 +388,16 @@ namespace NorvesLib::Tools::AssetCook
                 species.WindPhaseSeed = static_cast<uint32_t>(phase);
             }
             species.WindStiffness = static_cast<float>(stiffness);
+            if (object.HasMember("sky_occluder"))
+            {
+                ScatterSpeciesRule rule;
+                AnsiString detail;
+                if (!ScatterSpecInput::SkyOccluder(object.FindMember("sky_occluder"), rule, detail))
+                {
+                    return reader.Fail(Error::InvalidSpecies, reinterpret_cast<const char8_t*>(detail.c_str()));
+                }
+                CopyScatterSkyOccluder(rule, species);
+            }
             if (object.HasMember("collision"))
             {
                 const auto collision = object.FindMember("collision");

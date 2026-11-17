@@ -26,6 +26,7 @@ namespace NorvesLib::Tools::AssetCook
         bool Text(Core::JsonValue value, Core::Container::AnsiString& out, Core::Container::AnsiString& error);
         bool Keys(Core::JsonValue object, std::initializer_list<const char*> allowed, Core::Container::AnsiString& error);
         bool UInt64(Core::JsonValue value, uint64_t& out, Core::Container::AnsiString& error);
+        bool SkyOccluder(Core::JsonValue value, ScatterSpeciesRule& rule, Core::Container::AnsiString& error);
         bool LoadTerrain(const std::filesystem::path& path, const Core::Container::AnsiString& terrainPathText,
                          uint64_t recordedHash, Core::Asset::CookedTerrainData& terrain, uint64_t& cookedHash,
                          Core::Container::VariableArray<std::filesystem::path>& inputs, Core::Container::AnsiString& error,

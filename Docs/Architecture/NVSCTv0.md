@@ -464,6 +464,7 @@ payload_hash は NVSCT 内部ハッシュ。散布 manifest の cooked_hash は 
 | `ray_tracing` | true | false なら `ScatterSpeciesFlagNoRayTracing` |
 | `collision` | `[]` | 0〜16件の衝突の形。空でなければ `ScatterSpeciesFlagCollision` |
 | `wind` | 下位項目の既定 | 散布 spec と同じ。`stiffness` は既定1、有限で非負。`phase_seed` は既定0、uint32 の10進整数または10進文字列 |
+| `sky_occluder` | 任意。省略時は遮蔽物なし | 鍵と範囲は散布 spec JSON の `sky_occluder` と同じ |
 
 種表の `MinSpacingMeters` は `2 * mesh_radius_m * scale_range[1]`。有限で正の float で表せる値が必要で、間隔による配置の除外には使わない。
 寸法・属性は有限の float で表せる範囲とする。
