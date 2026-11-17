@@ -12020,3 +12020,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 反復 1 の Done の行にある `GpuParticleDrawPreTAA`・`GpuParticleDrawPostTAA` は、今は `Ext.Engine.` の付いた名前。
 - U1 詰めた描画の共有の定義と、エミッタの「スロットの順に描く」設定: 着地(直し 0 回)
 - U2 Game の開発用の起動の引数 --gpu-particle-stress=<粒の数>: 着地(直し 1 回)
+- U3 ParticleCompact.comp で生きている粒をバケットごとに詰め、間接の引数を書く: 着地(直し 0 回)
