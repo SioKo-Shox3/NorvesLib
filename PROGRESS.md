@@ -12316,3 +12316,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 コアの後半（UV のヤコビアン・texel への焼き・16px の膨張・補正マスク・4 枚と fur_maps.json・npz と CLI）: 着地(直し 0 回)
 - U3 Blender 側の入出力 fur_flow.py: 着地(直し 0 回)
 - U4 流れの線画 fur_preview.py: 着地(直し 0 回)
+- U5 規約の文書 FurMaps.md と最終の確かめ: 着地(直し 0 回)
