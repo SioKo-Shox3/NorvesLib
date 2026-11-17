@@ -11993,3 +11993,28 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 試験は作らない決まり（絶対規則 11）なので `SkyCloudBlendVulkanTest` と `SkyAtmosphereSourceCacheTest` のケースは作っていない。`RenderingGolden*`・`PathTracingOutdoorVulkanTest`・`SkyAtmosphereModelTest` も回していない。
 - Notes: 判断: 混ぜの道具（永続の出力の作成 `CreateSkyCloudBlendOutputTexture` と、記述子・定数をフレームの持ち主から借りて全ミップをディスパッチする `SkyCloudBlendRecorder`）は paths の内の `IblGeneration.{h,cpp}` に置いた。放射輝度 LUT の混ぜの単位曇天の入力は、同じ大きさの単位曇天の環境（1 ミップ）を使う。混ぜが使えない文脈（記録器の初期化の失敗・フレームの持ち主の無い手組みの文脈）では晴天の入力をそのまま公開する（雲量は空の LUT・IBL に効かない）。
 - Notes: 既知の限界: スイープの開始のフレームは、雲量 0 を当てた同じフレームで 1/frames まで進む。単位曇天の入力が作れなかったときは重みを (1,0) にして晴天を写す（警告 1 回）。
+
+- U1 粒に命中の法線を残す（SurfaceAligned の向き）: 着地(直し 0 回)
+- U2 描画の定数・結合番号・GLSL の共通部を決める: 着地(直し 0 回)
+- U3 ParticleDraw.vert（板・筋・面に沿う板）: 着地(直し 0 回)
+- U4 ParticleDraw.frag（形・ソフト・霧・環境光・出力）: 着地(直し 0 回)
+- U5 GpuParticleDrawPass（PreTAA と PostTAA の 2 インスタンス）と登録: 着地(直し 0 回)
+- U6 PreTAA の被覆率を Scene.Reactive へ書き、全体を確かめる: 着地(直し 0 回)
+
+### G7-GR57-GPU-DRAW GPU の粒の描画（板・筋・面に沿う板、TAA の前と後）（2026-11-17、run 20261117-103233・反復 1、完了）
+
+- Done: `GpuParticleDrawPass`（IViewPass と IRenderGraphPass）を足し、`GpuParticleDrawPreTAA`（Transparent の段。ForwardPass の後・DistortionPass の前、SSRSceneColor か SceneColor へ Load/Store）と `GpuParticleDrawPostTAA`（PostTemporalAA の段。`ResolveHdrChainHead` の HDR の色、ジッタを外したカメラ）の 2 インスタンスを `RegisterGpuParticleSimulationExtension` から登録した。レンダーパスは色 1 枚（深度の添付なし）で、Scene.Depth はシェーダー資源で読む。描画はエミッタごとの `DrawInstanced(6, Capacity, 0, PoolOffset)`、ブレンドごとに premultiplied（One・InvSrcAlpha）と加算（One・One）のパイプライン。GPU のエミッタが 0 件・その段のエミッタが 0 件のフレームは何も宣言・記録しない。
+- Done: シミュレーションのプールを `GpuParticle.Pool` の名前でレンダーグラフへ公開し、描画のパスが読む。グラフ上は UAV の読みとして宣言し、描画の前後で `UAV → GenericRead → UAV` の barrier を置く（compute の書き込みと頂点の読みの同期と、次のフレームの `ImportBuffer(UnorderedAccess)` の前提を両立）。
+- Done: `Assets/Shaders/Particles/ParticleDraw.{glsl,vert,frag}` を足した。頂点は `gl_InstanceIndex` でスロットを引き、Billboard（カメラの右・上）・VelocityStretch（頭 P・尾 P − v_rel×StreakShutterSeconds×伸び。ニア面で切ってから投影し、画面の向きに直交する幅、幅 1px 未満は 1px にして不透明度を幅の比で下げる）・SurfaceAligned（命中の法線に沿う板。法線が無ければ Billboard）。v_rel のカメラの速度は前のカメラが連続でないフレームは 0。大きさ・色・不透明度・伸びは寿命の折れ線（CPU の `UpdateOverLife` と同じ意味）。断片は手続きの丸・筋、ソフト = saturate((場面の線形深度 − 粒の線形深度)/SoftDistance)、奥の棄却、近距離のフェード、AmbientTinted（拡散の放射照度を視線の側で引く。資源が無ければ Scene の環境光）、`EvaluateHeightFogForward` の霧（FogInfluence で寄せる）、プリエクスポージャを掛けた出力。
+- Done: 粒の `Meta[3]` に衝突で留まった・跳ねた面の法線を八面体 15+15 bit で残す（bit 31 が法線あり、0 は法線なし）。PreTAA の premultiplied の粒は被覆率を `ReactiveTargetBinder` で Scene.Reactive へ書く（加算と PostTAA の粒は書かない）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` がエラー 0、`ParticleDraw.vert`・`ParticleDraw.frag`・`ParticleUpdate.comp`・`ParticleSpawn.comp` を逆 Z と標準 Z の両方で glslc（vulkan1.2、BOM を除いた写し）にかけて 8 本とも通った。done-when の試験（`GpuParticlePassOrderTest`・`GpuParticleShaderCompileTest`・`GpuParticleRenderVulkanTest` と閾値の表）は試験を作らない決まりで作っていない。撮影・GPU の計測の確かめは回さない決まり。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread・パスの並び・TAA の入力）。間接の描画は G7-GR57-GPU-INDIRECT。人が見るときの見どころ: 今は Executor=Gpu の効果を使うシーンが無いので、既存のシーン（Rendering3DTest の天球・地面・球・岩、ランチャーの各シーン）の見た目が変わらないことを見る。GPU の効果を置いたときは、雨・しぶきの筋（PostTAA・VelocityStretch）の長さと幅がカメラを動かしても破綻しないこと、灰・埃（PreTAA・premultiplied）が地面との交わりで柔らかく消え TAA の残像が出ないこと、AmbientTinted の粒が空の色に追随すること、霧の奥で粒が霧に沈むこと。
+- Notes: 既知の限界: テクスチャと GR136 のフリップブックの UV は、フレームの写し（`GpuParticleEmitterFrame`）にテクスチャの情報が無いので使っていない（手続きの形だけ）。粒の深度の並べ替えはしない（重なりの順はスロットの順）。空が無効のシーンでも AmbientTinted は既定の環境の IBL（grasslands_sunset）の放射照度を引くので夕焼けの色が着く。VelocityStretch の筋の端の幅のずらしに対応するワールド位置は端の深度での画素の大きさで近似している（霧と深度の比較だけに使い、ずれは幅の半分以下）。
+- U7 描画の拡張の名前を Ext.Engine. の形にして段へ登録されるようにする（差し戻しの直し）: 着地(直し 0 回)
+
+### G7-GR57-GPU-DRAW 差し戻しの直し（2026-11-17、run 20261117-103233・反復 2、完了）
+
+- Done: 描画の拡張の名前を `Ext.Engine.GpuParticleDrawPreTAA`・`Ext.Engine.GpuParticleDrawPostTAA` にした（定数は `GpuParticleDraw.h`、登録と `GetName` の両方で使う）。`RenderExtensionRegistry::Register` は名前が `Ext.` で始まらないと拒否するため、反復 1 の名前では 2 つの描画パスがどちらの段にも入らず、起動のたびに「GPU の粒の更新拡張を登録できませんでした」の警告が出ていた。これで Transparent の段（ForwardPass の後・DistortionPass の前）と PostTemporalAA の段（TemporalAA の後）へ登録される。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0（`Core.lib` と `Game.exe` ができた）。`"GpuParticleDrawPreTAA"`・`"GpuParticleDrawPostTAA"` の裸の文字列は grep で 0 件。行末は `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。試験は作らない決まりで作っておらず、ctest も回していない。撮影・GPU の計測・Game の起動の確かめは回さない決まり。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread・パスの並び・TAA の入力）。人が見るときの見どころ: Game の起動のログに `拡張 'GpuParticleDraw...' の登録を拒否しました` と「GPU の粒の更新拡張を登録できませんでした」が出ないこと。既存のシーン（Rendering3DTest の天球・地面・球・岩、ランチャーの各シーン）は GPU のエミッタが 0 件なので見た目が変わらないこと。
+- Notes: 反復 1 の Done の行にある `GpuParticleDrawPreTAA`・`GpuParticleDrawPostTAA` は、今は `Ext.Engine.` の付いた名前。
