@@ -160,9 +160,11 @@ namespace NorvesLib::Core::Component
         }
     }
 
+    // 参照があるのにテクスチャがまだ付いていない間は描画しない。
+    // 通知で Ready になってから受け取るまでと BeginPlay 前も含めるため、束縛状態ではなくハンドルを見る。
     bool BoardComponent::IsWaitingForAssetBinding() const
     {
-        return !TextureAsset->IsEmpty() && m_TextureBinding.IsWaiting();
+        return !TextureAsset->IsEmpty() && !LoadTextureHandle().IsValid();
     }
 
     Rendering::TextureHandle BoardComponent::LoadTextureHandle() const
