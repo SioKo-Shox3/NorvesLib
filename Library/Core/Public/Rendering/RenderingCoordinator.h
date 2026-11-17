@@ -14,6 +14,7 @@
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/AutoExposure.h"
 #include "Rendering/VolumetricFog.h"
+#include "Rendering/CloudShadow.h"
 #include "Rendering/PaleFlatShading.h"
 #include "Rendering/Wind.h"
 #include "Rendering/RainModel.h"
@@ -487,6 +488,12 @@ namespace NorvesLib::Core::Rendering
          */
         void SetCloudLayer(const CloudLayerParameters& parameters);
         const CloudLayerParameters& GetCloudLayer() const { return m_CloudLayer; }
+
+        /**
+         * @brief 雲の影を GameThread で無害化して保持し、次の FramePacket へ値コピーする。
+         * 既定は無効。雲の層と空が有効なときだけ効き、SunGap は最大 4 個。SceneRevision には含めない。
+         */
+        void SetCloudShadow(const CloudShadowParameters& parameters);
         /// GameThread が最後に SetSkyAtmosphere・SetVolumetricFogParameters・SetWindParameters で渡した値（気象を場面の値から有効にするときに読む）。
         const SkyAtmosphereParameters& GetSkyAtmosphere() const { return m_SkyAtmosphere; }
         const VolumetricFogParameters& GetVolumetricFogParameters() const { return m_VolumetricFog; }
@@ -781,6 +788,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bSkinnedViewCulling = true;
         AerialPerspectiveParameters m_AerialPerspective;
         CloudLayerParameters m_CloudLayer;
+        CloudShadowParameters m_CloudShadow;
         FoliageScene m_Foliage;
         Container::TSharedPtr<const GrassFieldRenderData> m_GrassField;
         Container::VariableArray<WorldFieldInteractor> m_WorldFieldInteractors;
