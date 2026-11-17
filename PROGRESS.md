@@ -11800,6 +11800,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 採った判断: 時間方向のずらしの位相は `ViewRenderContext::TemporalFrameIndex`（通常は FrameNumber と同じ。決定的な撮影ではエポックからの番号）を 64 で割った余りにした。上限より奥は 0 に打ち切らず、霧だけの経路は影なしの解析の差で足し（影の届く距離より上限が遠ければ正確）、霧と空気遠近の経路は空気遠近が視線全体を要るので等間隔 8 歩で進める。比は 1〜2、上限は 0〜1e6 m に安全化する。大気の書き出し（`--atmosphere-dump`）は参照の切り替えに従わず、ずらしも使わない。
 - 既知の限界: 上限を影の届く距離より手前に置くと、霧だけの経路では上限より奥の影の中の霧も太陽で光る。霧と空気遠近の経路でずらしを有効にすると、空気遠近の透過率も画素ごとにわずかに揺れる（TAA で均される前提）。
 - Next: ランナーの評価者の反証（volumetrics は全シーンの霞に効く危険地帯）。草原での有効化と見え方の確かめは G11-GR52-FOG-CHECK。
+
+### G12-GR92-ASSET-BIND（2026-11-17、run 20261117-103232・反復 1）
 - U1 資産の束縛の核（AssetBinding.h/.cpp）と Component::OnPropertyApplied の口を足す: 着地(直し 0 回)
 - U2 MegaGeometryResources に GetModelSourcePath(ModelHandle) を足す: 着地(直し 0 回)
 - U3 MegaGeometryComponent が ModelAssetRef を正本に持ち、非同期で束縛する: 着地(直し 0 回)
@@ -11809,3 +11811,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 ImpostorComponent が焼いたアトラスを TextureAssetRef とメタデータの値で保存し、非同期で束縛する: 着地(直し 0 回)
 - U7 SkinnedMeshComponent が骨格の資産・材質の AssetRef と再生の状態を PROPERTY に持ち、非同期で束縛する: 着地(直し 0 回)
 - U8 Rendering3DTest の SetMegaMeshHandle の呼び出しへ元パスを渡し、Game をビルドする: 着地(直し 0 回)
+- Done: 資産を持つ 5 種のコンポーネントが論理パスの参照を保存の正本に持ち、ハンドルは保存しない派生の状態になった。`MegaGeometryComponent`（`ModelAssetRef`）・`BoardComponent`/`BillboardComponent`（`TextureAssetRef`）・`ImpostorComponent`（焼いたアトラスの `TextureAssetRef` と、メタデータを 8 個の整数の文字列で保存する `ImpostorAtlasMetadataValue`）・`SkinnedMeshComponent`（`SkeletalAssetRef`・基本色の `TextureAssetRef`・clip の名前・再生中・ループ・速さ・時刻）・`MeshComponent`（ハンドルの代わりに手続きの形の `ProceduralMeshSpec`）。BeginPlay で `Asset::AssetBinding` が非同期の読み込みを要求し、完了の通知は `AssetBindingState` を `TWeakPtr` で捕まえて結果を書くだけで、コンポーネントは自分の更新（Board/Impostor は `TickFlipbook` の先頭の `PollAssetBindings`、SkinnedMesh は `AdvanceAnimationTime` の先頭、MegaGeometry は要求したときだけ登録する束縛の Tick）で結果を付ける。束縛までは描画しない。参照の setter は `Component::OnPropertyApplied` を呼び、参照が変わったら解決し直す。C++ で組み立てる経路のために `MegaGeometryResources::GetModelSourcePath` と `SetMegaMeshHandle(handle, sourcePath)` を足し、起動画面の外周のスキャン資産・岩・小屋は元のパスを参照に入れる（読み込みは始めないので見た目と順序は前のまま）。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が全単位を合わせた状態でエラー 0 で ImpostorComponent.cpp・SkinnedMeshComponent.cpp・Rendering3DTestRoutine.cpp などを再コンパイルし、Core.lib と Game.exe を生成した。
+- 作らなかったもの: done-when (4) の `SceneAssetBindTest` と 5 種のコンポーネントの保存・読み込みで `DroppedProperties` が 0 になることの確かめ、既存の試験の実行は、試験を作らない・回さない決まりにより作らず回していない（試験のディレクトリは既に無い）。
+- 人が見るときの見どころ: ランチャーから Rendering3DTest に入り、天球・地面・球・岩・小屋・外周のスキャン資産が前と同じに見えること。5 種のコンポーネントを置いたシーンを保存して読み直すと、モデル・テクスチャ・骨格が後から非同期に現れ、それまでは見えないこと。存在しない論理パスは Failed になり、ログに論理パスが出て、ほかの配置は読まれること。
+- 採った判断: 同じ種別・パスの二重の要求は、コンポーネントの中では `AssetBinding::BeginRequest` が束ね、コンポーネントをまたぐ進行中のモデルの読み込みは GLTFAnalyzer の進行中の表、テクスチャはテクスチャのキャッシュが束ねる。参照から読んだテクスチャはキャッシュが持つので Release せず、モデルは失効した通知と Finalize で Release する。SkinnedMesh の基本色テクスチャから作る材質はコンポーネントが持ち、Finalize と参照の変更で Release する。シーンの読み込みはプロパティを BeginPlay の前に適用するので、読み込みの要求は BeginPlay が出す。
+- 既知の限界: 汎用のプロパティの書き込み（Bridge の値の設定・World のプレハブの値の復元）はまだ `OnPropertyApplied` を呼ばないので、実行中にそれらで参照を変えても解決し直さない（Bridge は G12-GR92-BRIDGE-SCENE の範囲）。読み込みに失敗した資産は再試行せず不可視のまま。参照を持つ Impostor で `ReleaseBakedAtlas` を呼ぶと、参照が残るので不可視になる（今の呼び出しは参照を持たない）。名前が空・重複する clip は名前で一意に戻せず既定の clip になる。
+- Next: ランナーの評価者の反証（Object/Resource の寿命・資産の読み込み・RenderThread との窓・Public API の危険地帯）。
