@@ -12230,3 +12230,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 共通の道具 common.py: 着地(直し 0 回)
 - U2 共通骨格の仕様 skeleton_spec.json と skeleton_spec.py: 着地(直し 0 回)
 - U4 段の起動役 pipeline.py: 着地(直し 0 回)
+- U3 リグの事前検査 validate_rig.py: 着地(直し 1 回)
