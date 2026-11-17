@@ -10851,3 +10851,14 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - paths: Assets/Shaders/impostor_gbuffer.vert, Assets/Shaders/impostor_gbuffer.frag, Library/Core/Public/Rendering/ImpostorGBufferPass.h, Library/Core/Private/Rendering/ImpostorGBufferPass.cpp, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Private/Component/ImpostorComponent.cpp, TASKS.md, PROGRESS.md
 - from: G12-GR48-IMPOSTOR-GBUFFER
+
+## SCN-MEGA-RT-SELECT-P1: 絞ったクックで、既存の manifest に無い対象外の項目を、止めずに焼いて足す
+- status: todo
+- done-when: `Scripts/CookAssets.ps1` の `Invoke-CookEntry`（410〜419 行）が `-OnlyLogicalPath` で絞っているとき、対象外の項目が既存のマニフェストに無ければ throw しない。その項目を対象と同じ手順で焼いてマニフェストに足し、`COOK_ASSETS cooked_missing_untargeted=<論理パス>` を出す。既存のマニフェストにある対象外の項目は、今どおり引き継ぐ。manifest.json そのものが無いときの拒否（601 行）は変えない。こうすると、資産の一覧に後から足した項目（例: `Assets/Vegetation/Grassland/GrasslandGrassField.nvgfld`）を前のマニフェストが持っていない枠でも、絞ったクックが EXIT=0 で終わる。
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `git grep -q "cooked_missing_untargeted" -- Scripts/CookAssets.ps1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Assets/Vegetation/Grassland/GrasslandGrassField.nvgfld"`
+- paths: Scripts/CookAssets.ps1, TASKS.md, PROGRESS.md
+- effort: high
+- from: SCN-MEGA-RT-SELECT
+- notes: 判断の理由（1. 実際に起きている不具合）: 枠 NorvesLib-2-u2 の反復 2 で、地形を 14 分焼いたあとに 415 行の throw で EXIT=1 になった。原因は、枠のマニフェストが G5-GR42-GRASS-FIELD-ASSET で足された `GrasslandTerrain.json` の草の場の項目より古いこと。資産の一覧に項目が足されるたびに、全体をクックし直していない枠では絞ったクックがすべて落ちる。`-OnlyLogicalPath` を verify に使う todo のタスク（G12-GR47-PLACEMENT-COOK、G5-GR37-TERRAIN-COMPONENT-P1 など）も同じ落ち方をする。
