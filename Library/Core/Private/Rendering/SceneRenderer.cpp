@@ -591,6 +591,7 @@ namespace NorvesLib::Core::Rendering
         if (!commandList || !skinnedMeshResources ||
             command.Draw.PayloadKind != DrawPayloadKind::Skinned ||
             command.Draw.bInstanced || command.Draw.InstanceCount != 1 ||
+            command.Skinned.ShellCount == 0 || command.Skinned.ShellCount > FurMaxLayerCount ||
             (command.Skinned.PassKind != SkinnedMeshPassKind::GBuffer && command.Skinned.PassKind != SkinnedMeshPassKind::Shadow) ||
             !command.Pipeline || !descriptorSet ||
             !command.Skinned.FrameLease || !command.Skinned.FrameLease->IsValid() ||
@@ -627,10 +628,19 @@ namespace NorvesLib::Core::Rendering
         commandList->SetDescriptorSet(descriptorSet, descriptorSetSlot);
         commandList->SetVertexBuffer(command.Skinned.Prepared.VertexBuffer, 0, 0);
         commandList->SetIndexBuffer(command.Skinned.Prepared.IndexBuffer, 0, RHI::IndexType::Uint32);
-        commandList->DrawIndexed(range.IndexCount, range.IndexOffset, 0);
+        uint32_t drawnShellCount = 1u;
+        if (command.Skinned.PassKind == SkinnedMeshPassKind::GBuffer && command.Skinned.ShellCount > 1u)
+        {
+            drawnShellCount = command.Skinned.ShellCount;
+            commandList->DrawIndexedInstanced(range.IndexCount, drawnShellCount, range.IndexOffset, 0, 0);
+        }
+        else
+        {
+            commandList->DrawIndexed(range.IndexCount, range.IndexOffset, 0);
+        }
 
         ++stats.DrawCallCount;
-        stats.TriangleCount += range.IndexCount / 3;
+        stats.TriangleCount += (range.IndexCount / 3u) * drawnShellCount;
         if (command.Skinned.PassKind == SkinnedMeshPassKind::GBuffer)
         {
             ++stats.SkinnedGBufferDrawCallCount;
