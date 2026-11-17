@@ -7433,7 +7433,7 @@
 - notes: GR54 の P0 と P1 の前半（IBL の所有の移動）。今あるもの: 各パスの中では太陽に依らない表を写す（SkyAtmosphere.cpp:393-410、LightingPass.cpp:741-776 の `previousModel`）が、空のパスと照明のパスがそれぞれモデルを作るので、太陽高度の変化 1 回で 2 回作る（要件の事実は今も成り立つ）。IBL の生成時間のログは無い（`Sky LUT generated` だけ）。要件の「RHI に遅延破棄の仕組みがあるか未確認」は、今は `GpuRetireQueue` がある。保持体にしたのは、空のパスと照明のパスの順（SceneView.cpp:1199 で空のパスを足す）に依らず同じ物を引けるようにし、CPU の試験で「1 回だけ作る」を確かめられるようにするため。RenderThread だけが触る（GameThread からは使わない）。G7 の GR50 が `SkyAtmosphereParameters` へ `CloudCover` を足すので、鍵の比較は `AreSkyAtmosphereParametersEqual` を使い、欄を自前で並べない。所要時間の実測（RelWithDebInfo。AGENTS.md の絶対規則 8 で Release でなく）は G11-GR54-SKY-MEASURE。G10-GR65-PALEFLAT が同じ `CreateIblResources` に全球の平均照度 E_avg の戻りを足すので、先に入った側に合わせて切り出し、E_avg を `IblGeneration` の戻りに残す（どちらが先でも、もう一方は rebase で合わせる）。危険地帯（照明・RenderThread・IBL の所有。PT も空のパスを使う）。評価者の反証を省かない。LightingPass.cpp は大きい共有のファイルなので差分を小さくする。試験を足す理由: 反証する契約は「同じ空を 1 回しか作らない」「太陽だけの変化で大気の表を作り直さない」。2 回作っても絵は同じでログの時間が倍になるだけなので撮影では気づけず、黙って起きる。ロードマップ 1987・1998 行、要件 `#### GR54` の P0・P1。
 
 ## G11-GR54-CLOUD-BLEND: 雲量の連続した変化を、晴天と単位曇天の空 LUT・IBL の重み付き和を GPU で書くだけで追い、CPU の作り直しを 0 回にする
-- status: todo
+- status: done
 - after: G11-GR54-SKY-SOURCE-SHARE, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR54
 - needs-gr: GR49, GR50
