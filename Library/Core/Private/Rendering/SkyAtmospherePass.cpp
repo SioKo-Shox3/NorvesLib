@@ -773,7 +773,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return false;
             }
-            targets[index] = {clearTextures[index],
+            targets[index] = {clearTextures[index], clearTextures[index],
                 bUnitOvercastValid ? m_UnitOvercastTextures[index == 0u ? 0u : index - 1u] : clearTextures[index],
                 m_CloudBlendOutputs[index]};
         }
@@ -785,7 +785,8 @@ namespace NorvesLib::Core::Rendering
         {
             // 失敗した準備は次のフレームで再試行し、今のフレームは晴天入力を公開する。
             m_bCloudBlendDirty = true;
-            if (!m_CloudBlend->Prepare(lane, targets, targetCount, weights.ClearWeight, weights.OvercastWeight))
+            if (!m_CloudBlend->Prepare(lane, targets, targetCount,
+                SkyCloudBlendInputWeights{weights.ClearWeight, 0.0f, weights.OvercastWeight, 0.0f, 0.0f}))
             {
                 return false;
             }
@@ -813,7 +814,7 @@ namespace NorvesLib::Core::Rendering
             if (m_CloudBlendLane)
             {
                 // 空集合の準備は借用を増やさず、記録しなかった定数・記述子への参照だけを捨てる。
-                m_CloudBlend->Prepare(*m_CloudBlendLane, nullptr, 0u, 1.0f, Math::Vector3::Zero);
+                m_CloudBlend->Prepare(*m_CloudBlendLane, nullptr, 0u, SkyCloudBlendInputWeights{});
             }
         }
         m_CloudBlendLane = nullptr;

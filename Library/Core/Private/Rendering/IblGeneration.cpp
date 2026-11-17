@@ -25,7 +25,7 @@ namespace
 {
     struct alignas(16) SkyCloudBlendConstants
     {
-        float ClearWeight[4] = {};
+        float ClearWeights[4] = {};
         float OvercastWeight[4] = {};
         uint32_t Target[4] = {};
     };
@@ -37,9 +37,10 @@ namespace
             RHI::ResourceBindType::ConstantBuffer,
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::RWTexture};
         RHI::DescriptorSetDesc desc;
-        for (uint32_t binding = 0u; binding < 4u; ++binding)
+        for (uint32_t binding = 0u; binding < 5u; ++binding)
         {
             RHI::DescriptorBinding entry;
             entry.binding = binding;
@@ -260,16 +261,27 @@ namespace
     bool SkyCloudBlendRecorder::Prepare(FrameResourceLane& lane,
                                         const SkyCloudBlendTarget* targets,
                                         size_t targetCount,
-                                        float clearWeight,
-                                        const Math::Vector3& overcastWeight)
+                                        const SkyCloudBlendInputWeights& weights)
     {
         m_Dispatches.clear();
         m_Outputs.clear();
-        if (!IsReady() || (targetCount != 0u && !targets))
+        if (!IsReady() || (targetCount != 0u && !targets) ||
+            !std::isfinite(weights.ClearWeightA) || !std::isfinite(weights.ClearWeightB) ||
+            !std::isfinite(weights.OvercastWeight.x) || !std::isfinite(weights.OvercastWeight.y) ||
+            !std::isfinite(weights.OvercastWeight.z) || !std::isfinite(weights.ShiftA) ||
+            !std::isfinite(weights.ShiftB))
         {
             return false;
         }
 
+        const auto normalizeShift = [](float shift)
+        {
+            const float normalized = shift - std::floor(shift);
+            // 負の微小値で差が 1 に丸められた場合も、周期の始点へ戻す。
+            return normalized < 1.0f ? normalized : 0.0f;
+        };
+        const float shiftA = normalizeShift(weights.ShiftA);
+        const float shiftB = normalizeShift(weights.ShiftB);
         const auto fail = [this]()
         {
             m_Dispatches.clear();
@@ -281,23 +293,28 @@ namespace
             for (size_t index = 0u; index < targetCount; ++index)
             {
                 const SkyCloudBlendTarget& target = targets[index];
-                if (!IsSkyCloudBlendSampledTexture(target.Clear) ||
+                if (!IsSkyCloudBlendSampledTexture(target.ClearA) ||
+                    !IsSkyCloudBlendSampledTexture(target.ClearB) ||
                     !IsSkyCloudBlendSampledTexture(target.UnitOvercast) ||
                     !IsSkyCloudBlendSampledTexture(target.Output) ||
                     target.Output->GetFormat() != RHI::Format::R16G16B16A16_FLOAT ||
                     (target.Output->GetUsage() & RHI::ResourceUsage::UnorderedAccess) == RHI::ResourceUsage::None ||
-                    target.Clear->GetWidth() != target.UnitOvercast->GetWidth() ||
-                    target.Clear->GetHeight() != target.UnitOvercast->GetHeight() ||
-                    target.Clear->GetWidth() != target.Output->GetWidth() ||
-                    target.Clear->GetHeight() != target.Output->GetHeight() ||
-                    target.UnitOvercast->GetMipLevels() < target.Clear->GetMipLevels() ||
-                    target.Output->GetMipLevels() != target.Clear->GetMipLevels())
+                    target.ClearA->GetWidth() != target.ClearB->GetWidth() ||
+                    target.ClearA->GetHeight() != target.ClearB->GetHeight() ||
+                    target.ClearA->GetMipLevels() != target.ClearB->GetMipLevels() ||
+                    target.ClearA->GetWidth() != target.UnitOvercast->GetWidth() ||
+                    target.ClearA->GetHeight() != target.UnitOvercast->GetHeight() ||
+                    target.ClearA->GetWidth() != target.Output->GetWidth() ||
+                    target.ClearA->GetHeight() != target.Output->GetHeight() ||
+                    target.UnitOvercast->GetMipLevels() < target.ClearA->GetMipLevels() ||
+                    target.Output->GetMipLevels() != target.ClearA->GetMipLevels())
                 {
                     return fail();
                 }
                 for (size_t other = 0u; other < targetCount; ++other)
                 {
-                    if (target.Output == targets[other].Clear ||
+                    if (target.Output == targets[other].ClearA ||
+                        target.Output == targets[other].ClearB ||
                         target.Output == targets[other].UnitOvercast ||
                         (other < index && target.Output == targets[other].Output))
                     {
@@ -306,8 +323,9 @@ namespace
                 }
             }
 
-            const bool bCopyClear = clearWeight == 1.0f && overcastWeight.x == 0.0f &&
-                overcastWeight.y == 0.0f && overcastWeight.z == 0.0f;
+            const bool bCopyClear = weights.ClearWeightA == 1.0f && weights.ClearWeightB == 0.0f &&
+                weights.OvercastWeight.x == 0.0f && weights.OvercastWeight.y == 0.0f &&
+                weights.OvercastWeight.z == 0.0f && shiftA == 0.0f;
             for (size_t index = 0u; index < targetCount; ++index)
             {
                 const SkyCloudBlendTarget& target = targets[index];
@@ -316,10 +334,13 @@ namespace
                 for (uint32_t mip = 0u; mip < target.Output->GetMipLevels(); ++mip)
                 {
                     SkyCloudBlendConstants constants;
-                    constants.ClearWeight[0] = clearWeight;
-                    constants.OvercastWeight[0] = overcastWeight.x;
-                    constants.OvercastWeight[1] = overcastWeight.y;
-                    constants.OvercastWeight[2] = overcastWeight.z;
+                    constants.ClearWeights[0] = weights.ClearWeightA;
+                    constants.ClearWeights[1] = weights.ClearWeightB;
+                    constants.ClearWeights[2] = shiftA;
+                    constants.ClearWeights[3] = shiftB;
+                    constants.OvercastWeight[0] = weights.OvercastWeight.x;
+                    constants.OvercastWeight[1] = weights.OvercastWeight.y;
+                    constants.OvercastWeight[2] = weights.OvercastWeight.z;
                     constants.Target[0] = width;
                     constants.Target[1] = height;
                     constants.Target[2] = mip;
@@ -333,11 +354,13 @@ namespace
                     }
                     const RHI::DescriptorSetPtr& set = descriptor.Set;
                     set->BindConstantBuffer(0u, uniform.Buffer, uniform.GetOffset32(), uniform.GetSize32());
-                    set->BindTexture(1u, target.Clear);
+                    set->BindTexture(1u, target.ClearA);
                     set->BindSampler(1u, m_Sampler);
-                    set->BindTexture(2u, target.UnitOvercast);
+                    set->BindTexture(2u, target.ClearB);
                     set->BindSampler(2u, m_Sampler);
-                    set->BindStorageTexture(3u, target.Output, mip);
+                    set->BindTexture(3u, target.UnitOvercast);
+                    set->BindSampler(3u, m_Sampler);
+                    set->BindStorageTexture(4u, target.Output, mip);
                     set->Update();
                     m_Dispatches.push_back({set, width, height});
                     width = (std::max)(1u, width >> 1u);

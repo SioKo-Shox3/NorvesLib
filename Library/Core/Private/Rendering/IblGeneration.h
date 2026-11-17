@@ -88,12 +88,23 @@ namespace NorvesLib::Core::Rendering
                                                      uint32_t mipLevels,
                                                      const char* name);
 
-    /// 晴天と単位曇天の入力、およびハンドルを維持する混ぜ先。
+    /// 晴天のキー a・b と単位曇天の入力、およびハンドルを維持する混ぜ先。
     struct SkyCloudBlendTarget
     {
-        RHI::TexturePtr Clear;
-        RHI::TexturePtr UnitOvercast;
-        RHI::TexturePtr Output;
+        RHI::TexturePtr ClearA;       // 晴天のキー a
+        RHI::TexturePtr ClearB;       // 晴天のキー b（a と同じテクスチャでもよい）
+        RHI::TexturePtr UnitOvercast; // 単位曇天（方位に依らないのでずらさない）
+        RHI::TexturePtr Output;       // 永続の混ぜ先
+    };
+
+    /// 晴天のキーごとの重み・経度のずらしと、単位曇天の色付きの重み。
+    struct SkyCloudBlendInputWeights
+    {
+        float ClearWeightA = 1.0f;
+        float ClearWeightB = 0.0f;
+        Math::Vector3 OvercastWeight = Math::Vector3::Zero; // 単位曇天の重み × 曇天の色味
+        float ShiftA = 0.0f; // キー a の u のずらし（幅に対する割合。出力の u でキーの u - ShiftA を読む）
+        float ShiftB = 0.0f; // キー b の u のずらし
     };
 
     /// フレームの持ち主から定数と記述子を借り、空と IBL の混ぜを記録する。
@@ -109,16 +120,16 @@ namespace NorvesLib::Core::Rendering
         bool IsReady() const;
 
         /// グラフの Declare で呼び、各出力の全ミップについて定数と記述子を借りて束ねる。
-        /// 入力は同じ大きさで、単位曇天のミップ数は晴天以上、出力のミップ数は晴天と同じにする。
-        /// 出力は RGBA16F の読み書き可能な 2D テクスチャとし、いずれの入力とも重複させない。
-        /// 出力同士も重複させない。空の入力集合は準備する仕事がない成功として扱う。
-        /// 晴天の重みが 1 かつ曇天の重みが全成分 0 のとき、シェーダーに晴天を写す印を渡す。
-        /// 再度呼ぶと前の準備は捨て、失敗時も準備を空にする。
+        /// 全入力は同じ大きさの読み取り可能な 2D テクスチャとし、晴天のキー a・b のミップ数をそろえる。
+        /// 単位曇天のミップ数は晴天以上、出力のミップ数は晴天と同じにする。
+        /// 出力は RGBA16F の読み書き可能な 2D テクスチャとし、全対象の入力・他の出力と重複させない。
+        /// 重みとずらしは有限値に限り、ずらしを 0 以上 1 未満にそろえて晴天の u だけを回り込ませる。
+        /// a の重みが 1、b と曇天の重みが 0、そろえた a のずらしが 0 なら a をそのまま写す印を渡す。
+        /// 空の入力集合は準備する仕事がない成功として扱う。再度呼ぶと前の準備は捨て、失敗時も準備を空にする。
         bool Prepare(FrameResourceLane& lane,
                      const SkyCloudBlendTarget* targets,
                      size_t targetCount,
-                     float clearWeight,
-                     const Math::Vector3& overcastWeight);
+                     const SkyCloudBlendInputWeights& weights);
 
         bool HasPrepared() const;
 
