@@ -7902,7 +7902,7 @@
 - notes: 完了条件はロードマップ 2620〜2621 行の撮影と計測の部分（G12A-S9 で経路を MegaGeometry の散布にしたので、Entity の経路との GBuffer の比較は、白の色味で既存の散布の撮影が変わらないことの確認に置き換えた）。`grassland-scatter-stress` は G5-GR90-SCATTER-RUNTIME が足す開発ビルドの引数。比較の基準の撮影（`G5-BASE/mega-bananas`）が無ければ、この段階の前のコミットで同じ引数で撮ってから比べる。計測は RelWithDebInfo（AGENTS.md の絶対規則 8）。直す必要が出たら、この項目では直さずに `G12-GR47-FIX-<名前>` を足す。
 
 ## G12-GR92-ASSET-BIND: 資産を持つ全コンポーネントが論理パスを正本に持ち、読み込みの後に非同期で資産を解決して束縛し、シーンから保存・復元できる
-- status: todo
+- status: done
 - after: G12-GR92-ASSETREF-SCENE-V3, G2-GR83-LOOSE-SKELETAL
 - gr: GR92
 - needs-gr: GR82, GR83

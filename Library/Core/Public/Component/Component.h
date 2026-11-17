@@ -76,6 +76,12 @@ namespace NorvesLib::Core::Component
          * @brief 終了時に呼ばれる
          */
         virtual void EndPlay();
+        /**
+         * @brief プロパティの値を外から書き換えた後に呼ばれる（エディタ・ブリッジ・シーンの適用）
+         *
+         * ClassProperty::ApplyValueはsetterを通さないので、資産の参照などの派生の状態を持つ型はここで作り直す。
+         */
+        virtual void OnPropertyApplied(const ClassProperty& property) { (void)property; }
 
         // 毎フレームの処理は型ごとに World::RegisterComponentTick で登録する（ComponentTickRegistration）。
         // 実破棄はWorldの安全なcleanup位置で行う。

@@ -1096,6 +1096,23 @@ namespace NorvesLib::Core::Rendering
         return it->second.MegaMesh;
     }
 
+    Container::String MegaGeometryResourceStore::GetModelSourcePath(ModelHandle handle) const
+    {
+        if (!handle.IsValid())
+        {
+            return {};
+        }
+
+        Thread::ScopedLock lock(m_Mutex);
+        auto it = m_Models.find(handle.Id);
+        if (it == m_Models.end())
+        {
+            return {};
+        }
+
+        return it->second.SourcePath;
+    }
+
     size_t MegaGeometryResourceStore::GetModelCount() const
     {
         Thread::ScopedLock lock(m_Mutex);

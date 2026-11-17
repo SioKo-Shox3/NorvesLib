@@ -22,6 +22,7 @@ set(PRIVATE_SOURCES
     Private/Animation/GroundQuery.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
+    Private/Asset/AssetBinding.cpp
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
@@ -587,6 +588,7 @@ set(PUBLIC_HEADERS
     Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
     Public/Save/SettingsStore.h
+    Public/Asset/AssetBinding.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
