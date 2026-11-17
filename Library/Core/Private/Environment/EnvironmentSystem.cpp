@@ -491,6 +491,18 @@ namespace NorvesLib::Core::Environment
         }
         resolved.Environment.SunRevisionQuantizationDegrees = IsClockActive() && !bSunOverridden
             ? ClockSunRevisionQuantizationDegrees : 0.0f;
+        const NightLightState night = EvaluateNightLight(m_NightLight, resolved.Sky.SunAltitudeDegrees,
+                                                         resolved.Sky.SunAzimuthDegrees);
+        if (night.Weight > 0.0f)
+        {
+            resolved.Sky.MoonIlluminanceLux = night.MoonIlluminanceLux;
+            resolved.Sky.MoonAltitudeDegrees = night.MoonAltitudeDegrees;
+            resolved.Sky.MoonAzimuthDegrees = night.MoonAzimuthDegrees;
+            resolved.Sky.MoonColor = Math::Vector3(night.MoonColor[0], night.MoonColor[1], night.MoonColor[2]);
+            resolved.Sky.bMoonCastShadows = night.bMoonCastShadows;
+            resolved.Sky.bOverrideAutoExposureMinEV100 = night.bOverrideMinEV100;
+            resolved.Sky.AutoExposureMinEV100 = night.MinEV100;
+        }
         return resolved;
     }
 
@@ -777,6 +789,11 @@ namespace NorvesLib::Core::Environment
         if (!LoadSunPath(m_PresetRoot, m_SunPath, &error))
         {
             WarnClockDataLoadFailure("SunPath.json", error);
+        }
+        m_NightLight = NightLightSettings{};
+        if (!LoadNightLight(m_PresetRoot, m_NightLight, &error))
+        {
+            WarnClockDataLoadFailure("NightLight.json", error);
         }
         m_WeatherSchedule = MakeDefaultWeatherScheduleSettings();
         if (!LoadWeatherSchedule(m_PresetRoot, m_WeatherSchedule, &error))

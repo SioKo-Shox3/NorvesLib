@@ -32,6 +32,7 @@
 #include "Core/Public/Rendering/RenderingCoordinator.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Rendering/SceneView.h"
+#include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Resource/GLTFAnalyzer.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "GameModes/Rendering3DTest/M9WorldSkeletal.h"
@@ -3646,14 +3647,14 @@ namespace Game::GameModes
             }
         }
 
-        // 操作の角度（矢印キー・ImGui）を空の太陽の仰角・方位へ写す。太陽は地平線より下へ
-        // 行かせない（光が上向きに進む角度は水平へ戻す）。変わったときだけ空へ渡し、
+        // 操作の角度（矢印キー・ImGui）を空の太陽の仰角・方位へ写す。太陽は -20° より下へ
+        // 行かせない（それより上向きに進む光の角度は -20° へ戻す）。変わったときだけ空へ渡し、
         // 空由来のIBLの作り直しを角度が動いたフレームに限る。
         if (data.m_SkyAtmosphere.bEnabled)
         {
-            if (data.m_LightController.GetPitch() > 0.0f)
+            if (data.m_LightController.GetPitch() > -SkySunMinAltitudeDegrees)
             {
-                data.m_LightController.SetDirection(data.m_LightController.GetYaw(), 0.0f);
+                data.m_LightController.SetDirection(data.m_LightController.GetYaw(), -SkySunMinAltitudeDegrees);
             }
             float altitude = 0.0f;
             float azimuth = 0.0f;

@@ -7492,7 +7492,7 @@
 - notes: 要件 `#### GR55` の (S) と時計の結合・SceneRevision の扱い（要件 5391・5395・5397 行）。名前は G7 の項目（G7-GR49-ENV-SYSTEM・G7-GR49-ENV-PARAMS: `EnvironmentState`・`EnvironmentSystem`・`SkipTime`・`EnvironmentParameters`・`DiscontinuityId`）に合わせた。試験の置き場は G7 の `Test/Core/Engine/EnvironmentStateTest.cpp` の隣。SceneRevision の量子化は要件の案のうち「量子化してハッシュ」を採る（空の太陽をハッシュから外して LightRevision に任せる案は、今の RTGI の履歴の判定〔LightingPass の SceneRevision 比較〕を変えるので採らない）。天候の値を入れない理由: 毎フレーム変わると RTGI の履歴が毎フレーム捨てられる（ロードマップ 2008 行、段階をまたぐ注意 4462 行）。雲の層は空の上にだけ描かれ、照明と RTGI には入らない（SkyAtmosphere.h:95-101 のコメント）ので外しても履歴の誤りにならない。霧の値をハッシュから外すのは G7 の決定（G7-S3 の (A)）。PT は `HashPathSky` で別に再累積するので変えない。不連続の印は、段階をまたぐ注意（4415 行）のとおり 5 つあるが、ここは G7 の `DiscontinuityId` だけを使い、新しい印を作らない（`OnTimeSkipped` は時刻を飛ばしたことの通知で、履歴を切る印ではない）。ファストトラベル・寝床の画面と暗転は G15（GR68・GR71）。連続して太陽を動かしたときの引っ掛かりは G11-GR54-SUN-KEYFRAMES が入るまで残る（Clock は既定で無効）。`GameApplicationHandler.cpp`・`Rendering3DTestRoutine.cpp` は共有のファイルなので差分を小さくする。危険地帯（RenderThread の契約・RTGI の履歴）。評価者の反証を省かない。試験を足す理由: 反証する契約は「スキップの後の濡れと履歴の印」「SceneRevision が 1° ごとにだけ変わる」。履歴が毎フレーム捨てられても絵は一見同じでノイズが増えるだけで、黙って起きる。ロードマップ 1988・1999 行。
 
 ## G11-GR55-NIGHT: 太陽が地平線の下（−20° まで）でも空・照明が壊れず暗くなり、月明かりの弱い方向光と夜の露出の下限で夜が見えるようにする
-- status: todo
+- status: done
 - after: G11-GR55-CLOCK-SKIP, G11-GR54-SUN-KEYFRAMES, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR55
 - needs-gr: GR49, GR50
