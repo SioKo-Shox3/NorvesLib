@@ -171,20 +171,32 @@ namespace NorvesLib::Core::Particle
             EnumParameter("Response", kCollisionResponseNames, CountOf(kCollisionResponseNames), 0u, "衝突したときの扱い"),
             VectorParameter("Restitution", VfxValueType::Float, 0.0, 1.0, "", 0.5f, 0.0f, 0.0f, 0.0f, "Bounce の反発係数"),
             NameParameter("ChildEmitter", 0u, 63u, "", "SpawnChild で生成する子のエミッタ名"),
-            VectorParameter("ChildProbability", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "SpawnChild で子を生成する確率")
+            VectorParameter("ChildProbability", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "SpawnChild で子を生成する確率"),
+            // 追加の衝突引数は GPU 専用。CPU の衝突では読まない。
+            NameParameter("SecondChildEmitter", 0u, 63u, "", "SpawnChild で ChildEmitter と同時に生む 2 つ目の子のエミッタ名（面の向きを問わない）"),
+            VectorParameter("ChildMinNormalY", VfxValueType::Float, -1.0, 1.0, "", -1.0f, 0.0f, 0.0f, 0.0f, "ChildEmitter を生む命中の法線の y の下限（2 つ目の子には掛けない）")
         };
         constexpr VfxParameterSchema kCollisionHeightFieldParameters[] = {
             EnumParameter("Response", kCollisionResponseNames, CountOf(kCollisionResponseNames), 0u, "衝突したときの扱い"),
             VectorParameter("Restitution", VfxValueType::Float, 0.0, 1.0, "", 0.5f, 0.0f, 0.0f, 0.0f, "Bounce の反発係数"),
             NameParameter("ChildEmitter", 0u, 63u, "", "SpawnChild で生成する子のエミッタ名"),
-            VectorParameter("ChildProbability", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "SpawnChild で子を生成する確率")
+            VectorParameter("ChildProbability", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "SpawnChild で子を生成する確率"),
+            // 追加の衝突引数は GPU 専用。CPU の衝突では読まない。
+            NameParameter("SecondChildEmitter", 0u, 63u, "", "SpawnChild で ChildEmitter と同時に生む 2 つ目の子のエミッタ名（面の向きを問わない）"),
+            VectorParameter("ChildMinNormalY", VfxValueType::Float, -1.0, 1.0, "", -1.0f, 0.0f, 0.0f, 0.0f, "ChildEmitter を生む命中の法線の y の下限（2 つ目の子には掛けない）"),
+            NameParameter("ShelterChildEmitter", 0u, 63u, "", "高さ場の下で深度の面に当たったときに生む子のエミッタ名（樹冠の下の滴り）"),
+            VectorParameter("ShelterChildProbability", VfxValueType::Float, 0.0, 1.0, "", 0.0f, 0.0f, 0.0f, 0.0f, "ShelterChildEmitter を生む確率"),
+            VectorParameter("ShelterMinClearance", VfxValueType::Float, 0.0, 1000.0, "space", 3.0f, 0.0f, 0.0f, 0.0f, "屋根と当たった点の高さの差がこれを超える所だけ ShelterChildEmitter を生む")
         };
         constexpr VfxParameterSchema kCollisionDepthParameters[] = {
             VectorParameter("Thickness", VfxValueType::Float, 0.0, 100.0, "space", 0.1f, 0.0f, 0.0f, 0.0f, "深度の厚み"),
             EnumParameter("Response", kCollisionResponseNames, CountOf(kCollisionResponseNames), 0u, "衝突したときの扱い"),
             VectorParameter("Restitution", VfxValueType::Float, 0.0, 1.0, "", 0.5f, 0.0f, 0.0f, 0.0f, "Bounce の反発係数"),
             NameParameter("ChildEmitter", 0u, 63u, "", "SpawnChild で生成する子のエミッタ名"),
-            VectorParameter("ChildProbability", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "SpawnChild で子を生成する確率")
+            VectorParameter("ChildProbability", VfxValueType::Float, 0.0, 1.0, "", 1.0f, 0.0f, 0.0f, 0.0f, "SpawnChild で子を生成する確率"),
+            // 追加の衝突引数は GPU 専用。CPU の衝突では読まない。
+            NameParameter("SecondChildEmitter", 0u, 63u, "", "SpawnChild で ChildEmitter と同時に生む 2 つ目の子のエミッタ名（面の向きを問わない）"),
+            VectorParameter("ChildMinNormalY", VfxValueType::Float, -1.0, 1.0, "", -1.0f, 0.0f, 0.0f, 0.0f, "ChildEmitter を生む命中の法線の y の下限（2 つ目の子には掛けない）")
         };
         constexpr VfxParameterSchema kGpuSpriteRendererParameters[] = {
             EnumParameter("Orientation", kGpuSpriteOrientationNames, CountOf(kGpuSpriteOrientationNames), 0u, "スプライトの向き"),
@@ -197,7 +209,8 @@ namespace NorvesLib::Core::Particle
             BoolParameter("SubPixelCompensation", true, "幅 1px 未満の補償"),
             VectorParameter("NearFadeDistance", VfxValueType::Float, 0.0, 100.0, "space", 0.5f, 0.0f, 0.0f, 0.0f, "近距離のフェード"),
             NameParameter("Texture", 0u, 63u, "", "テクスチャの資産名"),
-            BoolParameter("DrawInSlotOrder", false, "スロットの順に描く（詰めずに描き、重なりの順を毎フレーム保つ）")
+            BoolParameter("DrawInSlotOrder", false, "スロットの順に描く（詰めずに描き、重なりの順を毎フレーム保つ）"),
+            UIntParameter("FlipbookFrames", 0u, 255u, "count", 0u, "手続きのフリップブックのコマ数（0 はなし。寿命をコマ数で区切って形を変える）")
         };
 
         constexpr VfxObjectSchema kEmitterSchema = {
@@ -817,10 +830,20 @@ namespace NorvesLib::Core::Particle
                 {
                     const VfxObjectSchema& schema = *FindVfxModuleSchema(module.Type);
                     const uint32_t responseIndex = static_cast<uint32_t>(FindVfxParameterIndex(schema, "Response"));
-                    if (module.Values[responseIndex].UInt == static_cast<uint32_t>(VfxCollisionResponse::SpawnChild))
+                    const bool bSpawnChild = module.Values[responseIndex].UInt == static_cast<uint32_t>(VfxCollisionResponse::SpawnChild);
+                    constexpr const char* childParameters[] = {"ChildEmitter", "SecondChildEmitter", "ShelterChildEmitter"};
+                    for (const char* parameter : childParameters)
                     {
-                        const uint32_t childIndex = static_cast<uint32_t>(FindVfxParameterIndex(schema, "ChildEmitter"));
-                        const Container::String& childName = module.Values[childIndex].Name;
+                        const int32_t childIndex = FindVfxParameterIndex(schema, parameter);
+                        if (childIndex < 0 || (!bSpawnChild && std::strcmp(parameter, "ChildEmitter") == 0))
+                        {
+                            continue;
+                        }
+                        const Container::String& childName = module.Values[static_cast<uint32_t>(childIndex)].Name;
+                        if (childName.empty())
+                        {
+                            continue;
+                        }
                         bool bFound = false;
                         if (!(childName == emitter.Name))
                         {
@@ -835,7 +858,7 @@ namespace NorvesLib::Core::Particle
                         }
                         if (!bFound)
                         {
-                            return Fail(outError, "unknown_child_emitter", schema.Name, "ChildEmitter");
+                            return Fail(outError, "unknown_child_emitter", schema.Name, parameter);
                         }
                     }
                 }
