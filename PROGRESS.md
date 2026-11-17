@@ -12218,3 +12218,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 取り込み設定の surfaceSamples と、面積に比例して決定的に選ぶ cook: 着地(直し 0 回)
 - U3 読み込みで表を SkinnedMeshAssetLease に持たせ、GPU のバッファへ 1 回だけ上げる: 着地(直し 1 回)
 - U6 放出のシェーダーとシミュレーションのパスで SkinSurface・Bone を出す: 着地(直し 0 回)
+
+## G10-GR60-SKIN-SURFACE-EMITTER スキンの表面の標本と骨から GPU の粒を出す（2026-11-18、run 20261118-063214）
+- Done: NVSKEL role2 の SkinnedMesh の任意節 `SURF`（1 点 16 B: 3 頂点の番号 21 bit×3・重心座標 unorm16×2・アルベド RGBA8）の型 `SurfaceSampleRecord`（`Library/Core/Public/Asset/SurfaceSampleTable.h`）と読み書き・検査。表が空なら出力は今とバイト一致。書式は `Docs/Architecture/RigSplitV1Wire.md`。
+- Done: 取り込み設定の `surfaceSamples` の節（`count` 既定 16384、1〜1048576。節が無ければ source hash も出力も不変。`Docs/Architecture/ImportSettings.md`）と、`--rig-split` の cook が LOD0 の三角形の面積に比例して層別に決定的に選び、基本色のテクスチャ（bake と同じ係数）からアルベドを読む `Tools/AssetCook/SurfaceSampleTableBuilder`。
+- Done: 読み込みで `SkinnedMeshAssetLease` が表を持ち、`SkinnedMeshGpuStore` が頂点と同じ時に BDA つきの storage buffer へ 1 回だけ上げる（`SkinnedMeshResources::TryGetSurfaceSource`）。表のある split メッシュは描画の lease を持つ（`RigSplitPublicationIdentity.cpp` の照合を合わせた）。
+- Done: `GpuEmitterParams`（304 B）に SkinSurface（形 5）・Bone（形 6）の欄、`GpuSkinSource`（96 B）、`GpuParticleEmitterFrame::SkinComponentId`、`humanoid_v1` のロールか骨の組から骨・マスクを決める `GpuSkinEmitter.h` の道具。
+- Done: `Assets/Shaders/Common/SkinnedSurface.glsl`（CPU の `Animation::SkinPosition` と同じ無効な影響の除外・重みの割り方で 3 頂点をスキニングして補間）。`ParticleSpawn.comp` は SkinSurface を表から最大 8 回抽選し（一様・ディゾルブの縁の帯 m ∈ [0, EdgeWidth]・骨の組の重みの割合）、全部外れたら死んだ粒を書く。Bone は world × palette[bone] × bindPos。初速 = 法線 × s + 体の速度（前のパレットとの差 / 描画間のゲーム時間）× 継承の係数。`GpuParticleSimulationPass` が同じビューの不透明の描画の列から部品の今・前のパレット・材質のディゾルブの値・インスタンスの P0 を集め、binding 12（mat4 の列）・13（源の行）に束ねる。
+- 確かめ: `cmake --build build --config Debug --target AssetCook Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた版。`AssetCook.exe`・`Game.exe` まで）。粒のシェーダー 5 本（ParticleSpawn・ParticleUpdate・ParticleCompact・ParticleDraw.vert・ParticleDraw.frag）の `glslc --target-env=vulkan1.2` 終了コード 0。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: ランナーの評価者の反証（危険地帯: アセットの形式・RenderThread）。効果の定義と灰雲・破片は G10-GR60-VANISH-EFFECT。
+- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の (4) `SurfaceSampleTableTest`・(5) `SkinSurfaceEmitterVulkanTest` は作っていない。ctest・撮影・GPU の計測は回さない決まり。
+- Notes: 人が見るときの見どころ: SkinSurface・Bone のエミッタを使う効果は G10-GR60-VANISH-EFFECT で載るので、今は起動画面とランチャーの各シーンの粒・スキンメッシュの見た目が変わらないこと（スキンの形でないエミッタの初期化は今と同じ式・同じ乱数の番号）を見る。
+- Notes: 既知の限界: 源は同じビューの不透明の描画の列から引くので、視野の外で GBuffer に描かれない部品・残像（透明）だけの部品からは粒を出さない。BDA を使えない機器・表の無いメッシュ（SURF なし）では SkinSurface は出さない（Bone はパレットだけで出る）。2 回の cook のバイト一致は、手元のスキン付きの glTF の参照 `.bin` が欠けていて実物では測っていない。
+- Notes: 判断: 選定課題 G9-S3（人型のシ者の骨格の出所）はタスクの notes どおり Kimodo の SOMA 版の骨格に合わせる。エンジンは骨格に依らず、`humanoid_v1` のロールの表と骨の組をデータで持つ。SOMA の関節を写す profile（`Assets/Retarget/`）は実物の出力を取り込むときに置く。
