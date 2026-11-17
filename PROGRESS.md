@@ -11936,3 +11936,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 ParticleDraw.vert（板・筋・面に沿う板）: 着地(直し 0 回)
 - U4 ParticleDraw.frag（形・ソフト・霧・環境光・出力）: 着地(直し 0 回)
 - U5 GpuParticleDrawPass（PreTAA と PostTAA の 2 インスタンス）と登録: 着地(直し 0 回)
+- U6 PreTAA の被覆率を Scene.Reactive へ書き、全体を確かめる: 着地(直し 0 回)

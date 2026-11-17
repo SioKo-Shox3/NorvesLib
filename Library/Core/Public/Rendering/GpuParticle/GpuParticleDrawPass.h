@@ -3,6 +3,7 @@
 
 #include "Rendering/GpuParticle/GpuParticleDraw.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/RenderExtension/RenderExtensionHelpers.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/IDescriptorSet.h"
 
@@ -10,7 +11,10 @@ namespace NorvesLib::Core::Rendering
 {
     class RenderExtensionRegistry;
 
-    /** @brief 描画段に合う GPU の粒を深度テクスチャで判定して重ねる。 */
+    /**
+     * @brief 描画段に合う GPU の粒を深度テクスチャで判定して重ねる。
+     * PreTAA の premultiplied の粒は被覆率を Scene.Reactive へ書く。
+     */
     class GpuParticleDrawPass final : public IViewPass, public IRenderGraphPass
     {
     public:
@@ -28,6 +32,8 @@ namespace NorvesLib::Core::Rendering
     private:
         void ResetHandles();
         bool EnsureTarget(const RHI::TexturePtr& target);
+        bool EnsureReactivePipeline();
+        void ReportReactiveFailure(const char* reason);
 
         uint32_t m_DrawPass;
         RHI::IDevice* m_Device = nullptr;
@@ -41,12 +47,17 @@ namespace NorvesLib::Core::Rendering
         RHI::FramebufferPtr m_Framebuffer;
         RHI::PipelinePtr m_PremultipliedPipeline;
         RHI::PipelinePtr m_AdditivePipeline;
+        ReactiveTargetBinder m_ReactiveTargetBinder;
+        RHI::PipelinePtr m_ReactivePipeline;
+        RHI::RenderPassPtr m_ReactiveRenderPass;
         const RHI::ITexture* m_ColorTarget = nullptr;
         RHI::Format m_TargetFormat = RHI::Format::UNKNOWN;
         RGBufferHandle m_PoolHandle;
         RGTextureHandle m_ColorHandle;
         RGTextureHandle m_DepthHandle;
         RGTextureHandle m_SkyHandle;
+        bool m_bReactiveDeclared = false;
+        bool m_bReportedReactiveFailure = false;
         bool m_bReportedInitializationFailure = false;
     };
 

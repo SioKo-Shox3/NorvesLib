@@ -117,6 +117,7 @@ namespace NorvesLib::Core::Rendering
             return fail();
         }
         m_Device = context.Device;
+        m_ReactiveTargetBinder.Initialize(m_Device);
         m_VertexShader = context.ShaderMgr->LoadShader("Particles/ParticleDraw.vert", RHI::ShaderStage::Vertex);
         m_FragmentShader = context.ShaderMgr->LoadShader("Particles/ParticleDraw.frag", RHI::ShaderStage::Pixel);
         if (!m_VertexShader || !m_FragmentShader)
@@ -149,6 +150,7 @@ namespace NorvesLib::Core::Rendering
         m_ColorHandle = {};
         m_DepthHandle = {};
         m_SkyHandle = {};
+        m_bReactiveDeclared = false;
     }
 
     void GpuParticleDrawPass::Shutdown()
@@ -156,6 +158,9 @@ namespace NorvesLib::Core::Rendering
         m_Framebuffer.reset();
         m_PremultipliedPipeline.reset();
         m_AdditivePipeline.reset();
+        m_ReactivePipeline.reset();
+        m_ReactiveRenderPass.reset();
+        m_ReactiveTargetBinder.Reset();
         m_RenderPass.reset();
         m_BlackTexture.reset();
         m_DepthSampler.reset();
@@ -189,9 +194,15 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         bool bHasEmitters = false;
+        bool bHasPremultipliedEmitters = false;
         for (const GpuParticleEmitterFrame& emitter : context->SnapshotScene->GpuParticles.Emitters)
         {
-            bHasEmitters = bHasEmitters || IsDrawEmitter(emitter, m_DrawPass);
+            if (IsDrawEmitter(emitter, m_DrawPass))
+            {
+                bHasEmitters = true;
+                bHasPremultipliedEmitters = bHasPremultipliedEmitters ||
+                    ((emitter.Params.RenderFlags >> kGpuEmitterRenderBlendShift) & kGpuEmitterRenderBlendMask) == 0u;
+            }
         }
         if (!bHasEmitters || !builder.HasBuffer(kGpuParticlePoolResourceName) ||
             !builder.TryGetBuffer(kGpuParticlePoolResourceName, m_PoolHandle))
@@ -220,6 +231,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         builder.TryReadTexture(RenderGraphResourceNames::SkyAtmosphereRadiance, m_SkyHandle, RHI::ResourceState::ShaderResource);
+        if (m_DrawPass == kGpuParticleDrawPassPreTAA && bHasPremultipliedEmitters)
+        {
+            m_bReactiveDeclared = m_ReactiveTargetBinder.Declare(builder, false);
+            if (!m_bReactiveDeclared)
+            {
+                ReportReactiveFailure("描画先を宣言できませんでした");
+            }
+        }
         builder.PreserveInsertionOrder();
     }
 
@@ -289,21 +308,96 @@ namespace NorvesLib::Core::Rendering
         return m_Framebuffer && m_PremultipliedPipeline && m_AdditivePipeline;
     }
 
+    bool GpuParticleDrawPass::EnsureReactivePipeline()
+    {
+        const RHI::RenderPassPtr renderPass = m_ReactiveTargetBinder.GetRenderPass();
+        if (m_ReactivePipeline && m_ReactiveRenderPass == renderPass)
+        {
+            return true;
+        }
+        m_ReactivePipeline.reset();
+        m_ReactiveRenderPass.reset();
+        if (!m_Device || !renderPass)
+        {
+            return false;
+        }
+
+        RHI::GraphicsPipelineDesc desc;
+        desc.vertexShader = m_VertexShader;
+        desc.pixelShader = m_FragmentShader;
+        desc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+        desc.rasterState.cullMode = RHI::CullMode::None;
+        desc.depthStencilState.depthTestEnable = false;
+        desc.depthStencilState.depthWriteEnable = false;
+        RHI::BlendAttachmentDesc blend;
+        blend.blendEnable = true;
+        blend.srcColorBlendFactor = RHI::BlendFactor::SrcAlpha;
+        blend.dstColorBlendFactor = RHI::BlendFactor::InvSrcAlpha;
+        blend.srcAlphaBlendFactor = RHI::BlendFactor::SrcAlpha;
+        blend.dstAlphaBlendFactor = RHI::BlendFactor::InvSrcAlpha;
+        blend.colorWriteMask = RHI::ColorWriteMask::R;
+        desc.blendState.attachments.push_back(blend);
+        desc.renderPass = renderPass;
+        desc.descriptorSetLayouts.push_back(MakeDescriptorSetDesc());
+        m_ReactivePipeline = m_Device->CreateGraphicsPipeline(desc);
+        if (!m_ReactivePipeline)
+        {
+            return false;
+        }
+        m_ReactiveRenderPass = renderPass;
+        return true;
+    }
+
+    void GpuParticleDrawPass::ReportReactiveFailure(const char* reason)
+    {
+        (void)reason;
+        if (!m_bReportedReactiveFailure)
+        {
+            NORVES_LOG_ERROR("GpuParticleDraw", "粒のリアクティブ出力に失敗しました: %s", reason);
+            m_bReportedReactiveFailure = true;
+        }
+    }
+
     void GpuParticleDrawPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
-        if (!m_PoolHandle.IsValid() || !m_ColorHandle.IsValid() || !m_DepthHandle.IsValid() || !context.CommandList)
+        const bool bReactivePrepared = m_bReactiveDeclared && m_ReactiveTargetBinder.Prepare(resources);
+        if (m_bReactiveDeclared && !bReactivePrepared)
         {
+            ReportReactiveFailure("描画先を準備できませんでした");
+        }
+        if (!context.CommandList)
+        {
+            if (bReactivePrepared)
+            {
+                ReportReactiveFailure("コマンドリストがありません");
+            }
+            return;
+        }
+        RHI::ICommandList& commands = *context.CommandList;
+        const auto finishReactiveWithoutDraw = [&]()
+        {
+            if (bReactivePrepared)
+            {
+                // 描画を見送っても、最初の書き手によるゼロクリアを実行する。
+                commands.BeginRenderPass(m_ReactiveTargetBinder.GetRenderPass(), m_ReactiveTargetBinder.GetFramebuffer());
+                commands.EndRenderPass();
+            }
+        };
+        if (!m_PoolHandle.IsValid() || !m_ColorHandle.IsValid() || !m_DepthHandle.IsValid())
+        {
+            finishReactiveWithoutDraw();
             return;
         }
         const RHI::TexturePtr color = resources.GetTexture(m_ColorHandle);
         if (!color)
         {
+            finishReactiveWithoutDraw();
             return;
         }
-        RHI::ICommandList& commands = *context.CommandList;
         const auto finishWithoutDraw = [&]()
         {
             commands.TextureBarrier(color, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+            finishReactiveWithoutDraw();
         };
         const RHI::BufferPtr pool = resources.GetBuffer(m_PoolHandle);
         const RHI::TexturePtr depth = resources.GetTexture(m_DepthHandle);
@@ -410,19 +504,47 @@ namespace NorvesLib::Core::Rendering
             finishWithoutDraw();
             return;
         }
-        RHI::IDescriptorSet& set = *descriptor.Set;
-        set.BindConstantBuffer(kGpuParticleDrawBindingConstants, uniform.Buffer, uniform.GetOffset32(), uniform.GetSize32());
-        set.BindStorageBuffer(kGpuParticleDrawBindingPool, pool, 0, PoolBytes);
-        set.BindStorageBuffer(kGpuParticleDrawBindingEmitters, emitterData.Buffer, emitterData.GetOffset32(), emitterData.GetSize32());
-        set.BindStorageBuffer(kGpuParticleDrawBindingSlotToEmitter, slotData.Buffer, slotData.GetOffset32(), slotData.GetSize32());
-        set.BindStorageBuffer(kGpuParticleDrawBindingCurveKeys, curveData.Buffer, curveData.GetOffset32(), curveData.GetSize32());
-        set.BindTexture(kGpuParticleDrawBindingSceneDepth, depth);
-        set.BindSampler(kGpuParticleDrawBindingSceneDepth, m_DepthSampler);
-        set.BindTexture(kGpuParticleDrawBindingDiffuseIrradiance, bLightingAvailable ? published.DiffuseIrradianceTexture : m_BlackTexture);
-        set.BindSampler(kGpuParticleDrawBindingDiffuseIrradiance, m_LinearSampler);
-        set.BindTexture(kGpuParticleDrawBindingHeightFogSky, sky ? sky : m_BlackTexture);
-        set.BindSampler(kGpuParticleDrawBindingHeightFogSky, m_LinearSampler);
-        set.Update();
+        const auto bindDescriptor = [&](RHI::IDescriptorSet& set, const FrameUploadAllocation& allocation)
+        {
+            set.BindConstantBuffer(kGpuParticleDrawBindingConstants, allocation.Buffer, allocation.GetOffset32(), allocation.GetSize32());
+            set.BindStorageBuffer(kGpuParticleDrawBindingPool, pool, 0, PoolBytes);
+            set.BindStorageBuffer(kGpuParticleDrawBindingEmitters, emitterData.Buffer, emitterData.GetOffset32(), emitterData.GetSize32());
+            set.BindStorageBuffer(kGpuParticleDrawBindingSlotToEmitter, slotData.Buffer, slotData.GetOffset32(), slotData.GetSize32());
+            set.BindStorageBuffer(kGpuParticleDrawBindingCurveKeys, curveData.Buffer, curveData.GetOffset32(), curveData.GetSize32());
+            set.BindTexture(kGpuParticleDrawBindingSceneDepth, depth);
+            set.BindSampler(kGpuParticleDrawBindingSceneDepth, m_DepthSampler);
+            set.BindTexture(kGpuParticleDrawBindingDiffuseIrradiance, bLightingAvailable ? published.DiffuseIrradianceTexture : m_BlackTexture);
+            set.BindSampler(kGpuParticleDrawBindingDiffuseIrradiance, m_LinearSampler);
+            set.BindTexture(kGpuParticleDrawBindingHeightFogSky, sky ? sky : m_BlackTexture);
+            set.BindSampler(kGpuParticleDrawBindingHeightFogSky, m_LinearSampler);
+            set.Update();
+        };
+        bindDescriptor(*descriptor.Set, uniform);
+
+        FrameDescriptorAllocation reactiveDescriptor;
+        if (bReactivePrepared)
+        {
+            if (EnsureReactivePipeline())
+            {
+                GpuParticleDrawConstants reactiveConstants = constants;
+                reactiveConstants.Flags[2] = kGpuParticleDrawOutputReactive;
+                const FrameUploadAllocation reactiveUniform = lane.AllocateConstants(reactiveConstants);
+                reactiveDescriptor = lane.AllocateDescriptorSet(m_DescriptorSetLayout);
+                if (reactiveUniform.IsValid() && reactiveDescriptor.IsValid())
+                {
+                    bindDescriptor(*reactiveDescriptor.Set, reactiveUniform);
+                }
+                else
+                {
+                    reactiveDescriptor = {};
+                    ReportReactiveFailure("定数または記述子を確保できませんでした");
+                }
+            }
+            else
+            {
+                ReportReactiveFailure("パイプラインを作成できませんでした");
+            }
+        }
 
         // ShaderResource の同期段には頂点が無いので、頂点の storage 読みを含む GenericRead へ明示的に移す。
         commands.BufferBarrier(pool, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
@@ -455,6 +577,32 @@ namespace NorvesLib::Core::Rendering
             }
         }
         commands.EndRenderPass();
+        if (bReactivePrepared)
+        {
+            commands.BeginRenderPass(m_ReactiveTargetBinder.GetRenderPass(), m_ReactiveTargetBinder.GetFramebuffer());
+            const RHI::TexturePtr reactive = m_ReactiveTargetBinder.GetTexture();
+            RHI::Viewport reactiveViewport;
+            reactiveViewport.width = static_cast<float>(reactive->GetWidth());
+            reactiveViewport.height = static_cast<float>(reactive->GetHeight());
+            RHI::ScissorRect reactiveScissor;
+            reactiveScissor.right = static_cast<int32_t>(reactive->GetWidth());
+            reactiveScissor.bottom = static_cast<int32_t>(reactive->GetHeight());
+            commands.SetViewport(reactiveViewport);
+            commands.SetScissor(reactiveScissor);
+            if (m_ReactivePipeline && reactiveDescriptor.IsValid())
+            {
+                commands.SetPipeline(m_ReactivePipeline);
+                commands.SetDescriptorSet(reactiveDescriptor.Set, 0);
+                for (const GpuEmitterParams& emitter : emitters)
+                {
+                    if (((emitter.RenderFlags >> kGpuEmitterRenderBlendShift) & kGpuEmitterRenderBlendMask) == 0u)
+                    {
+                        commands.DrawInstanced(6, emitter.Capacity, 0, emitter.PoolOffset);
+                    }
+                }
+            }
+            commands.EndRenderPass();
+        }
         // インポートの最終状態はグラフが自動では戻さないため、次の描画段と次フレームの入口へ戻す。
         commands.BufferBarrier(pool, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
     }
