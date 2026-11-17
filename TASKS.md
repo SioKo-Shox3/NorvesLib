@@ -7624,7 +7624,7 @@
 - notes: GR52 の P1 の (c)（要件 5182 行）。選定課題 G11-S7（雲間の光の筋の作り方。ロードマップ 4554 行）は推奨の (C) を採る: SunGap を主にし、雲の影のマスクを従にする。地面の直達に雲の影を掛けるかは見た目で決める選択制で既定は掛けない（掛けるとラスタと PT の方式差が増える）。要件の「ノイズの雲被覆（fBm の小さな compute）」は作らず、今ある雲の層（SCN-CLOUDS・SCN-WL-CLOUD-* で Cycles に合わせた体積の雲）の密度から作る: 空に見える雲と光の筋の位置が合い、雲の式を 2 つ持たない。雲の層は今は太陽を遮らず IBL にも入らない（SkyAtmosphere.h:95-101）。マスクは霧の散乱と（選んだときの）地面の直達だけに掛け、空由来 IBL には入れない。局所霧と雲の影は PT・RT・DDGI が知らない（方式差として記録。ロードマップ 2011 行）。雲の層の値は SceneRevision に入っている（RenderingCoordinator.cpp:230-236）が、マスクの欄は入れない。危険地帯（volumetrics・lighting.frag・CloudLayerPass）。評価者の反証を省かない。共有のファイル（CloudLayerPass.inl・lighting.frag・SceneView.cpp）は差分を小さくする。試験を足す理由: 反証する契約は「SunGap の所に筋が出て、無効で消える」「雲の影の写しの向き」。向きの誤りは筋が雲の切れ間からずれて出る形で、撮影 1 枚では見分けにくく黙って起きる。ロードマップ 1986・1997 行。
 
 ## G11-GR52-LOCAL-FOG: Entity に付けて動かせる楕円体の局所霧（最大 8）を、密度の解析の線積分と、風で流れる濃淡で霧の経路と前向きの描画に入れる
-- status: todo
+- status: done
 - after: G11-GR52-FOG-STEPS, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR51-HEIGHTFOG-INCLUDE, G7-GR51-FORWARD-FOG
 - gr: GR52
 - needs-gr: GR46, GR49, GR51
@@ -7731,7 +7731,7 @@
 
 ## G10-GR63-LOD-RUNTIME: 焼いた LOD と部位の表を実行時に持ち、画面の誤差とヒステリシスで部位ごとの LOD を選んで範囲で描き、LOD0 に固定する口を足す
 - status: todo
-- after: G10-GR63-LOD-BUILDER, G10-GR63-SKIN-CULL
+- after: G10-GR63-LOD-BUILDER, G10-GR63-SKIN-CULL, G2-GR79-SKINNED-MATERIAL-BUILDER-P1
 - gr: GR63
 - needs-gr: GR32, GR82
 - done-when: (1) `SkinnedMeshAssetLease`（`Library/Core/Public/Rendering/SkinnedMeshTypes.h:60`）に、G10-GR63-LOD-BUILDER の `LODS`・`PART` から作る不変の LOD の表・部位の表を持たせる（RigSplit の読み込みから。表の無い資産は空）。(2) `SkinnedDrawParams`（`DrawCommand.h:63`）に部位の描画の列 `PartDraws`（FirstIndex・IndexCount・Lod）を値で足し、描画の全経路が範囲ごとに描く: fallback の `SceneRenderer::RecordSkinnedDrawCall`（`SceneRenderer.cpp:572`）は範囲ごとの `DrawIndexed`、可視バッファのラスタと `SkinningComputePass` の計画（`SkinningComputePlanDraw` の `SourceFirstIndex`・`SourceIndexCount`）は範囲ごとの描画、CSM・点光源の影・VSM の塊は影の LOD の範囲。表の無い資産は今どおり全体を 1 回描き、表のある資産で `PartDraws` が空なら描かない（全 LOD が重なって描かれる事故を防ぐ）。(3) 選択: G10-GR63-SKIN-CULL の `SkinnedLodSelection` に純関数を足す。画面の誤差 px = 誤差(m) × ワールドの最大スケール × ビューポートの高さ /(2 × 距離 × tan(fov/2))、距離は部位の境界までの最短距離（部位の境界が無い間は描画全体の境界）。GBuffer は閾値 1 px・上げ 1.0・下げ 0.8 のヒステリシス、CSM はカスケードの `TexelSize` で誤差/テクセル ≤ 1、点光源の影は面の解像度、VSM は段のテクセルで同様に決め、影の LOD は GBuffer の LOD 以上に粗い。閾値は描画の定数で既定は仮。ヒステリシスの状態は RenderThread の `SkinnedMeshGpuStore` に ComponentId を鍵で持ち、`CollectReleased` と同じ寿命で消す。(4) `SkinnedMeshProxy`（`SkinnedMeshTypes.h:175`）に `MinLod`（これより細かくしない）と `ForcedLod`（固定。-1 は無し）を足し、`SkinnedMeshComponent` の `SetMinLod`・`SetForcedLod` から値で渡す（GR19 のアンカーの間と GR64 のゴーストが使う）。 (5) `SkinnedLodSelectionTest` にケースを足す: 距離に対して LOD が単調に粗くなる、距離を ±5% で往復させても LOD がちらつかない、影の LOD が GBuffer 以上に粗い、`ForcedLod` は常にその LOD・`MinLod` より細かくならない、表の無い資産は全体の 1 描画。(6) GPU の `RenderingSkinnedLodVulkanTest`（`RenderingHdrSceneCaptureTest` に scenario を足し、可視バッファの on と `--visibility-buffer=off` の `RenderingSkinnedLodGBufferFallbackVulkanTest` を登録）: LOD を焼いた縮小の `SkinnedGiantFixture` を 3 つの距離に置き、記録されたスキンの描画数・三角形数が選択の結果と一致し、LOD0 の画像との差が FLIP の閾値内（手順は `Docs/RenderingValidation/PerceptualDiffSelection.md`、閾値の TSV は `Test/Core/Rendering/Thresholds/RenderingValidation/`）。G10-GR63-SKIN-CULL の試験、`SkinnedSubmeshDrawContractTest`・`ComputeSkinningVulkanTest`・`VirtualShadowMapVulkanTest` と golden 4 本が通る。

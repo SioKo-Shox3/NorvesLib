@@ -40,6 +40,7 @@ layout(set = 0, binding = 0) uniform MVPData
     ivec4 skyOcclusionWindowOrigin[4];
     vec4 skyOcclusionTexelMeters;
     HeightFogParams heightFog; // 高さフォグ（C++ の GPUHeightFogParams。offset 912）
+    LocalFogParams localFog; // 局所霧（C++ の GPULocalFogParams。offset 1008）
 } mvp;
 
 layout(set = 0, binding = 1) uniform sampler2D albedoTexture;
@@ -398,4 +399,5 @@ void main()
     // 背後の不透明は霧の後の色なので、straight alpha の混合で霧を掛けた色を重ねる。
     outColor = ApplyHeightFogStraightAlpha(litColor,
                                          EvaluateHeightFogForward(mvp.heightFog, heightFogSkyRadiance, fragWorldPos));
+    outColor = ApplyLocalFogStraightAlpha(outColor, EvaluateLocalFogForward(mvp.localFog, mvp.heightFog, heightFogSkyRadiance, fragWorldPos));
 }
