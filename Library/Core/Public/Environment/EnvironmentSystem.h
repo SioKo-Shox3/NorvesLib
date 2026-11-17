@@ -50,7 +50,8 @@ namespace NorvesLib::Core::Environment
      *
      * Tick には TimeSystem の World チャンネルの dt を渡し、ポーズの門の中でのみ呼ぶ。
      * World の倍率は遷移と濡れにも適用され、FramePacket::TotalTime の壁時計は使わない。
-     * SetImmediate・SnapToTarget・LoadState・SkipTime は描画履歴を切る DiscontinuityId を増やす。
+     * SetImmediate・SnapToTarget・LoadState・SkipTime・SkipTo は描画履歴を切る DiscontinuityId を増やす。
+     * OnTimeSkipped は時刻の通知であり、描画履歴を切る印ではない。
      * SetTarget と上書きの層は増やさない。無効中の状態変更命令は無視して警告する。
      */
     class EnvironmentSystem
@@ -59,6 +60,9 @@ namespace NorvesLib::Core::Environment
         static constexpr uint64_t StepsPerSecond = 30;
         static constexpr double MaxTickDeltaSeconds = 1.0;
         static constexpr double MaxSkipSeconds = 86400.0;
+        /// 濡れの復元で積分する過去の長さ（秒）と刻み（秒）。
+        static constexpr double WetnessRestoreWindowSeconds = 3600.0;
+        static constexpr double WetnessRestoreStepSeconds = 10.0;
         /// 時計が太陽を動かすときに SceneRevision へ渡す量子化の幅（度）。
         static constexpr float ClockSunRevisionQuantizationDegrees = 1.0f;
         /// 手動の太陽の上書きに使う上書きの層の識別子。
@@ -88,6 +92,10 @@ namespace NorvesLib::Core::Environment
         /// JSON から読んだ状態（FromJson）を当てる口。DiscontinuityId を 1 進める。
         void LoadState(const EnvironmentState& state);
         void SkipTime(double seconds);
+        /// ゲーム時刻を T（秒）まで飛ばす。T が今以下・非有限なら何もしない。飛ばす長さは MaxSkipSeconds で挟む。
+        /// Clock では天候を T の値にし、濡れを予定表の雨量で復元する。DiscontinuityId を 1 進め、OnChanged（TimeSkipped）と
+        /// OnTimeSkipped をそれぞれ 1 回呼ぶ。暗転などの画面の演出は呼ぶ側が受け持つ。
+        void SkipTo(double gameTimeSeconds);
         void Tick(float worldDeltaSeconds);
 
         /// 上書きの層を掛けた後の状態。読み手はこれを読む。
@@ -107,6 +115,8 @@ namespace NorvesLib::Core::Environment
 
         /// 状態を変える命令のたびに、変化の種類と上書き後の状態を通知する。
         MulticastDelegate<EEnvironmentChange, const EnvironmentState&>& OnChanged();
+        /// 時刻を飛ばしたあとに、飛ばす前と後のゲーム時刻（秒）を通知する。履歴を切る印ではない（印は DiscontinuityId）。
+        MulticastDelegate<double, double>& OnTimeSkipped();
 
     private:
         struct FieldTransition
@@ -130,6 +140,8 @@ namespace NorvesLib::Core::Environment
         void ApplyClock();
         bool EvaluateClockWeather(double gameTimeSeconds, EnvironmentTarget& outTarget) const;
         float ScheduledRainAt(double gameTimeSeconds) const;
+        float RestoreClockWetness(double windowStartSeconds, double endSeconds, float startWetness) const;
+        void SkipBy(double seconds);
         void ClearTransitions();
         float EvaluateField(EEnvironmentField field, uint64_t step) const;
         void RefreshFields();
@@ -157,5 +169,6 @@ namespace NorvesLib::Core::Environment
         FieldTransition m_Transitions[EnvironmentFieldCount] = {};
         Container::VariableArray<OverrideEntry> m_Overrides;
         MulticastDelegate<EEnvironmentChange, const EnvironmentState&> m_OnChanged;
+        MulticastDelegate<double, double> m_OnTimeSkipped;
     };
 } // namespace NorvesLib::Core::Environment

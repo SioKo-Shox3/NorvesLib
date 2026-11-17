@@ -96,6 +96,12 @@ namespace NorvesLib::Core::Environment
         m_bEnabled = true;
         m_bRestorePending = false;
         ApplyClock();
+        if (IsClockActive())
+        {
+            const double endSeconds = m_BaseState.GameTimeSeconds;
+            m_BaseState.Wetness = RestoreClockWetness(endSeconds - WetnessRestoreWindowSeconds,
+                                                      endSeconds, m_BaseState.Wetness);
+        }
         RebuildEffective();
         Notify(EEnvironmentChange::Enabled);
     }
@@ -295,15 +301,40 @@ namespace NorvesLib::Core::Environment
         }
         m_StepCount = StepsForNanoseconds(m_TotalNanoseconds);
         ApplyClock();
+        if (IsClockActive())
+        {
+            const double endSeconds = m_BaseState.GameTimeSeconds;
+            m_BaseState.Wetness = RestoreClockWetness(endSeconds - WetnessRestoreWindowSeconds,
+                                                      endSeconds, m_BaseState.Wetness);
+        }
         RebuildEffective();
         Notify(EEnvironmentChange::Loaded);
     }
 
     void EnvironmentSystem::SkipTime(double seconds)
     {
+        SkipBy(seconds);
+    }
+
+    void EnvironmentSystem::SkipTo(double gameTimeSeconds)
+    {
         if (!m_bEnabled)
         {
-            WarnDisabledCommand("SkipTime");
+            WarnDisabledCommand("SkipTo");
+            return;
+        }
+        if (!std::isfinite(gameTimeSeconds) || gameTimeSeconds <= m_BaseState.GameTimeSeconds)
+        {
+            return;
+        }
+        SkipBy(gameTimeSeconds - m_BaseState.GameTimeSeconds);
+    }
+
+    void EnvironmentSystem::SkipBy(double seconds)
+    {
+        if (!m_bEnabled)
+        {
+            WarnDisabledCommand("SkipTo");
             return;
         }
         if (!std::isfinite(seconds) || seconds <= 0.0)
@@ -311,11 +342,37 @@ namespace NorvesLib::Core::Environment
             return;
         }
 
-        const double delta = seconds < MaxSkipSeconds ? seconds : MaxSkipSeconds;
-        AdvanceNanoseconds(static_cast<uint64_t>(std::llround(delta * static_cast<double>(NanosecondsPerSecond))));
+        if (seconds > MaxSkipSeconds)
+        {
+            LOG_WARNING("EnvironmentSystem の SkipTo の移動時間が上限を超えたため丸めます");
+            seconds = MaxSkipSeconds;
+        }
+
+        const double oldTimeSeconds = m_BaseState.GameTimeSeconds;
+        const uint64_t nanoseconds = static_cast<uint64_t>(std::llround(seconds * static_cast<double>(NanosecondsPerSecond)));
+        if (IsClockActive())
+        {
+            const uint64_t maximum = std::numeric_limits<uint64_t>::max();
+            m_TotalNanoseconds = nanoseconds > maximum - m_TotalNanoseconds
+                ? maximum : m_TotalNanoseconds + nanoseconds;
+            m_StepCount = StepsForNanoseconds(m_TotalNanoseconds);
+            RefreshFields();
+            m_BaseState.GameTimeSeconds = static_cast<double>(m_TotalNanoseconds) * 1e-9;
+            ApplyClock();
+            const double windowStartSeconds = m_BaseState.GameTimeSeconds - WetnessRestoreWindowSeconds;
+            m_BaseState.Wetness = RestoreClockWetness(oldTimeSeconds > windowStartSeconds
+                                                          ? oldTimeSeconds : windowStartSeconds,
+                                                      m_BaseState.GameTimeSeconds, m_BaseState.Wetness);
+        }
+        else
+        {
+            AdvanceNanoseconds(nanoseconds);
+        }
+        const double newTimeSeconds = m_BaseState.GameTimeSeconds;
         ++m_BaseState.DiscontinuityId;
         RebuildEffective();
         Notify(EEnvironmentChange::TimeSkipped);
+        m_OnTimeSkipped.Broadcast(oldTimeSeconds, newTimeSeconds);
     }
 
     void EnvironmentSystem::Tick(float worldDeltaSeconds)
@@ -455,6 +512,11 @@ namespace NorvesLib::Core::Environment
         return m_OnChanged;
     }
 
+    MulticastDelegate<double, double>& EnvironmentSystem::OnTimeSkipped()
+    {
+        return m_OnTimeSkipped;
+    }
+
     void EnvironmentSystem::LoadClockData()
     {
         Container::String error;
@@ -509,6 +571,31 @@ namespace NorvesLib::Core::Environment
         return EvaluateClockWeather(gameTimeSeconds, target) &&
                (target.Mask & EnvironmentFieldBit(EEnvironmentField::RainIntensity)) != 0
             ? target.Values.RainIntensity : m_BaseState.RainIntensity;
+    }
+
+    float EnvironmentSystem::RestoreClockWetness(double windowStartSeconds, double endSeconds, float startWetness) const
+    {
+        float wetness = startWetness;
+        double timeSeconds = windowStartSeconds;
+        while (timeSeconds < endSeconds)
+        {
+            const double nextStepSeconds = timeSeconds + WetnessRestoreStepSeconds;
+            const double nextTimeSeconds = nextStepSeconds < endSeconds ? nextStepSeconds : endSeconds;
+            const double deltaSeconds = nextTimeSeconds - timeSeconds;
+            float rain = ScheduledRainAt(timeSeconds + deltaSeconds * 0.5);
+            for (const OverrideEntry& entry : m_Overrides)
+            {
+                if ((entry.Target.Mask & EnvironmentFieldBit(EEnvironmentField::RainIntensity)) != 0)
+                {
+                    rain = entry.Target.Values.RainIntensity;
+                }
+            }
+            wetness = AdvanceEnvironmentWetness(wetness, rain, deltaSeconds,
+                                                m_BaseState.WetTimeConstantSeconds,
+                                                m_BaseState.DryTimeConstantSeconds);
+            timeSeconds = nextTimeSeconds;
+        }
+        return wetness;
     }
 
     void EnvironmentSystem::ApplyClock()
