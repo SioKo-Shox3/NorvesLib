@@ -103,6 +103,7 @@ namespace NorvesLib::Core::Rendering
                                   const Container::String &debugName = "",
                                   const Container::String &sourcePath = "");
         MegaGeometry::MegaMeshHandle GetModelMegaMeshHandle(ModelHandle handle) const;
+        Container::String GetModelSourcePath(ModelHandle handle) const;
         void ReleaseModel(ModelHandle handle);
         /** @brief 登録中の Model の数（観測用） */
         size_t GetModelCount() const;

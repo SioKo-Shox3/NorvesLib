@@ -11943,17 +11943,53 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 採った判断: 仰角の薄めは空の画素だけでなく全画素に同じ式で掛けた（稜線と空の境目に段を出さないため。下向きは 1）。列の幅は角度で一定（0.003 rad、1 周 2094 列）、筋の長さは層の距離の 2〜6 %、破線の占める割合は 35 %（シェーダーの const。RainTuning の欄は増やしていない）。風は突風を入れず平均の風だけを使う（遠景の筋が揺らがないように）。正射影のカメラでは描かない
 - 既知の限界: 世界の向きに固定した近似で視差は無い。巻いた時刻が 4096 秒で戻るとき筋の位相が 1 回跳ぶ。近い物の手前に描かないのは式どおり 0.8 × 最小の層の距離（既定 14.4 m）より手前で厳密に 0 で、14.4〜18 m には最初の層がわずかに乗る
 - Next: ランナーの評価者の反証（RenderThread・パスの並び = 危険地帯）。GPU での確かめは G7-GR58-CHECK（回さない決まりで backlog）
-- U1 空の遮蔽のクリップマップに樹冠だけの組を足し、RTGI・DDGI の拡散に掛ける: 着地(直し 0 回)
-- U2 instance mask 0x04 を定義し、印を DrawParams・バッチの鍵・TLAS の mask・RT の影の光線へ通す: 着地(直し 0 回)
-- U3 散布の樹冠の種と手置きの物に印を立て、Game をビルドする: 着地(直し 0 回)
-- U4 空の遮蔽が無効のフレームは樹冠の印を TLAS の mask に使わず、0x01 のまま光線に当てる: 着地(直し 0 回)
 
-## G11-GR56-SKY-OCC-RT 樹冠だけの空の遮蔽で RTGI・DDGI の拡散を補い、樹冠を instance mask 0x04 で TLAS へ入れる（2026-11-17、run 20261117-113256）
-- Done: 空の遮蔽のクリップマップの可視率の画像を max(2 × 段の数, 2) 層にし、層 N+k に「樹冠だけ」の L1 の組を `Integrate.comp` が全種別の組と同じ歩みで積分して書く（樹冠の区間だけを数え、地面の高さより下に入った向きはそこまでの樹冠の厚さで止める）。`lighting.frag` は空の遮蔽が公開され RTGI か DDGI が使えるフレームだけ、`EvaluateSkyCanopyVisibility`（`Common/SkyOcclusion.glsl`）の可視率を `rtgiDiffuseRadiance`（`EvaluateRTGIEndpoint` の拡散）と `ddgiIrradiance`（DDGI の照度）に掛ける。鏡面は円錐のまま。UBO・binding は変えず、`GpuLayoutRegistry.md` に層の並びを書いた。
-- Done: `RayTracingInstanceMaskSkyMapProxy = 0x04`（`FramePacket.h`・`Common/RayTracingInstanceMask.glsl`）。`MeshProxy`・`MegaGeometryProxy`・`DrawParams`・`MeshBatch`（バッチの鍵の bit 1）に `bSkyMapProxy` を足し、`BuildFrameSnapshot` と MegaGeometry の席（全量・写しの経路）の mask を「影を落とさない物 0x02 / 印つきの影を落とす物 0x04 / ほか 0x01」にした。proxy の hash・instanced の物体 ID の照合にも入れた。RT の影の光線の cull mask を 0x05 にし、RT の影のパスの fallback は `HasRayTracingShadowCasters()`（0x01|0x04）で判定する。DDGI・RTGI の光線（0x01、拡散の 0x03）と PT（0xFF）は変えていない。
-- Done: 印を立てる側。`MeshComponent` の `PROPERTY(bool, bSkyMapProxy)`（`SetSkyMapProxy`・`IsSkyMapProxy`。派生の `MegaGeometryComponent` も proxy へ写す）と、`MegaGeometryScatterComponent` の同じ PROPERTY・行の Flags の bit 2。`ScatterSystem` は Mega の経路の種で、空の遮蔽が有効かつ樹冠の種別なら印を立てる。空の遮蔽が無効のフレーム（既定）は印があっても 0x01 で TLAS に入れ、光線が樹冠を解く。
-- 証拠: `.harness/runs/20261117-113256/verify-G11-GR56-SKY-OCC-RT-U3.txt`（`lighting.frag`・`SkyOcclusion/Integrate.comp`・`forward_transparent.frag`・`RayTracing/RayTracingShadowRayGen.glsl`・`RTGI/DiffuseIndirect.comp`・`DDGI/ProbeRadiance.comp` が glslangValidator（Vulkan 1.2。BOM を外し include の拡張を足した写し）で EXIT=0、`cmake --build build --config Debug --target Game -- /m:1` が BUILD_EXIT=0）と `verify-G11-GR56-SKY-OCC-RT-U4.txt`（全単位を着地させた木で同じ Game のビルドが終了コード 0・Game.exe までリンク、numstat の 2 通りが一致）。verify の ctest の行が選ぶ試験は回さない決まりの試験（Vulkan・Golden）なので回していない。done-when の試験の追加（RTGI・DDGI・PT の mask 0x04 のケース、樹冠の場面の RTGI 有効の変種）は試験を作らない決まりで作っていない。
-- 人が見るときの見どころ: 今の散布で樹冠の種別の種は草原の低木（Foliage の経路で TLAS に入らない）だけなので、ランチャーと各シーン（Rendering3DTest・草原・荒野）の TLAS と見た目は変わらない。Mega の経路の樹木に樹冠の空の遮蔽を付けた森で `--sky-occlusion` と RTGI か DDGI を有効にしたとき、樹冠の下の地面が RTGI を切ったときと近い暗さになること（二重に暗くならないこと）と、樹木の RT の影が落ちることを見る。
-- 採った判断: done-when の「0x02|0x04」から 0x02 を外し、樹冠は 0x04 だけにした（0x02 を立てると `SetRTGINonShadowCasterOcclusion` の拡散の光線 0x03 に当たり、樹冠の下が二重に暗くなる）。影を落とさない物は印があっても 0x02 のまま。空の遮蔽が無効のフレームは補いが働かないので、印つきの物も 0x01 に戻す。樹冠の照り返し（`skyOcclusionBounce`）は RT の経路に足していない。下草の層は樹冠だけの組に入れていない（要件の「樹冠の種別だけ」）。
-- 既知の限界: RTGI・DDGI の当たりの点の太陽の影の問い合わせ（`DiffuseIndirect.comp`・`ProbeRadiance.comp`・`ProbeEmitterSampling.glsl` の 0x01）は樹冠を見ないので、光線が当たった樹冠の下の地面は日なたとして照り返しを返す。CPU の正解（`SkyOcclusionReference`）に樹冠だけの組は無い。半透明（`forward_transparent.frag`）は樹冠だけの組を使わない。空の遮蔽の公開を見送ったフレーム（遮蔽物の列の上限超え）は、TLAS は 0x04 のまま照明の補いだけが抜ける。
-- Next: ランナーの評価者の反証（RT の契約・lighting.frag・Public API の危険地帯）。起動と GPU 時間の確かめは G11-GR56-SKY-OCC-CHECK。
+### G12-GR92-ASSET-BIND（2026-11-17、run 20261117-103232・反復 1）
+- U1 資産の束縛の核（AssetBinding.h/.cpp）と Component::OnPropertyApplied の口を足す: 着地(直し 0 回)
+- U2 MegaGeometryResources に GetModelSourcePath(ModelHandle) を足す: 着地(直し 0 回)
+- U3 MegaGeometryComponent が ModelAssetRef を正本に持ち、非同期で束縛する: 着地(直し 0 回)
+- U4 MeshComponent の MeshHandle を PROPERTY から外し、ProceduralMeshSpec を PROPERTY にする: 着地(直し 0 回)
+- U5 BoardComponent（と BillboardComponent）が TextureAssetRef を正本に持ち、非同期で束縛する: 着地(直し 0 回)
+- U9 BoardComponent の「束縛まで不可視」をテクスチャのハンドルの有無で決める: 着地(直し 0 回)
+- U6 ImpostorComponent が焼いたアトラスを TextureAssetRef とメタデータの値で保存し、非同期で束縛する: 着地(直し 0 回)
+- U7 SkinnedMeshComponent が骨格の資産・材質の AssetRef と再生の状態を PROPERTY に持ち、非同期で束縛する: 着地(直し 0 回)
+- U8 Rendering3DTest の SetMegaMeshHandle の呼び出しへ元パスを渡し、Game をビルドする: 着地(直し 0 回)
+- Done: 資産を持つ 5 種のコンポーネントが論理パスの参照を保存の正本に持ち、ハンドルは保存しない派生の状態になった。`MegaGeometryComponent`（`ModelAssetRef`）・`BoardComponent`/`BillboardComponent`（`TextureAssetRef`）・`ImpostorComponent`（焼いたアトラスの `TextureAssetRef` と、メタデータを 8 個の整数の文字列で保存する `ImpostorAtlasMetadataValue`）・`SkinnedMeshComponent`（`SkeletalAssetRef`・基本色の `TextureAssetRef`・clip の名前・再生中・ループ・速さ・時刻）・`MeshComponent`（ハンドルの代わりに手続きの形の `ProceduralMeshSpec`）。BeginPlay で `Asset::AssetBinding` が非同期の読み込みを要求し、完了の通知は `AssetBindingState` を `TWeakPtr` で捕まえて結果を書くだけで、コンポーネントは自分の更新（Board/Impostor は `TickFlipbook` の先頭の `PollAssetBindings`、SkinnedMesh は `AdvanceAnimationTime` の先頭、MegaGeometry は要求したときだけ登録する束縛の Tick）で結果を付ける。束縛までは描画しない。参照の setter は `Component::OnPropertyApplied` を呼び、参照が変わったら解決し直す。C++ で組み立てる経路のために `MegaGeometryResources::GetModelSourcePath` と `SetMegaMeshHandle(handle, sourcePath)` を足し、起動画面の外周のスキャン資産・岩・小屋は元のパスを参照に入れる（読み込みは始めないので見た目と順序は前のまま）。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が全単位を合わせた状態でエラー 0 で ImpostorComponent.cpp・SkinnedMeshComponent.cpp・Rendering3DTestRoutine.cpp などを再コンパイルし、Core.lib と Game.exe を生成した。
+- 作らなかったもの: done-when (4) の `SceneAssetBindTest` と 5 種のコンポーネントの保存・読み込みで `DroppedProperties` が 0 になることの確かめ、既存の試験の実行は、試験を作らない・回さない決まりにより作らず回していない（試験のディレクトリは既に無い）。
+- 人が見るときの見どころ: ランチャーから Rendering3DTest に入り、天球・地面・球・岩・小屋・外周のスキャン資産が前と同じに見えること。5 種のコンポーネントを置いたシーンを保存して読み直すと、モデル・テクスチャ・骨格が後から非同期に現れ、それまでは見えないこと。存在しない論理パスは Failed になり、ログに論理パスが出て、ほかの配置は読まれること。
+- 採った判断: 同じ種別・パスの二重の要求は、コンポーネントの中では `AssetBinding::BeginRequest` が束ね、コンポーネントをまたぐ進行中のモデルの読み込みは GLTFAnalyzer の進行中の表、テクスチャはテクスチャのキャッシュが束ねる。参照から読んだテクスチャはキャッシュが持つので Release せず、モデルは失効した通知と Finalize で Release する。SkinnedMesh の基本色テクスチャから作る材質はコンポーネントが持ち、Finalize と参照の変更で Release する。シーンの読み込みはプロパティを BeginPlay の前に適用するので、読み込みの要求は BeginPlay が出す。
+- 既知の限界: 汎用のプロパティの書き込み（Bridge の値の設定・World のプレハブの値の復元）はまだ `OnPropertyApplied` を呼ばないので、実行中にそれらで参照を変えても解決し直さない（Bridge は G12-GR92-BRIDGE-SCENE の範囲）。読み込みに失敗した資産は再試行せず不可視のまま。参照を持つ Impostor で `ReleaseBakedAtlas` を呼ぶと、参照が残るので不可視になる（今の呼び出しは参照を持たない）。名前が空・重複する clip は名前で一意に戻せず既定の clip になる。
+- Next: ランナーの評価者の反証（Object/Resource の寿命・資産の読み込み・RenderThread との窓・Public API の危険地帯）。
+- 反復 2（再検証の落ち）: ランナーの再検証のビルドは、`Component.h` の変更で Core の約 75 本の翻訳単位をまとめて再コンパイルするところで `error C1060`（コンパイラのヒープの不足）で落ちた。エラーはこれだけで、24 論理コアの `/MP` が 15.7 GB の機械でほかの枠のビルドと重なったための資源の不足。コードは変えず、主の枠で cl の並列を 6 に絞って `cmake --build build --config Debug --target Game -- /m:1` を通し（終了コード 0・Game.exe を生成。`.harness/runs/20261117-103232/aux-G12-GR92-ASSET-BIND-rebuild-game.txt`）、絞らない同じ行の増分のビルドも再コンパイルなしで Game.exe まで通ることを確かめた。
+
+- U1 太陽の軌道の純関数と SunPath.json、データ読み込みの共通の補助: 着地(直し 0 回)
+- U2 天候の予定表のデータ(遷移表・補間の長さ)の読み書きと検証、WeatherSchedule.json: 着地(直し 0 回)
+- U3 種から 96 セルの WeatherTrack を作り、WeatherAt で境界を補間し、プリセットを混ぜる: 着地(直し 0 回)
+
+## G11-GR55-SUN-WEATHER 太陽の軌道と、種と時刻だけで決まる天候の予定表（2026-11-17、run 20261117-103236 の反復 1）
+
+- Done: `Library/Core/Public/Environment/SunPath.h`・`Private/Environment/SunPath.cpp` に `ComputeSunAltAz(hours, dayOfYear, latitudeDegrees, northAzimuthOffsetDegrees)` を足した。赤緯 δ=23.44°·sin(2π(284+N)/365)、時角 H=15°(h−12)、sin α=sin φ sin δ + cos φ cos δ cos H を double で計算し、高度は負も返す。方位は北から東回りの角 A を atan2 で求め、エンジンの方位 = A + 北のずれ（[0, 360) に巻く）。エンジンは右手系 Y 上（`MatrixUtils` の LookAt）で、`MakeSunDirection` の +X→+Z の回りが上から見て時計回りなので東回りと同じ向き。北のずれ 0 で北 = +X・東 = +Z。入力が有限でなければ {0, 0}。
+- Done: `SunPathSettings`（緯度・日付・北のずれ）の JSON v1 の読み書きと `LoadSunPath`。既定のデータ `Assets/Data/Environment/SunPath.json`（北緯 55°・日付 172・北のずれ 0。仮の値）。欠けた欄は既定、型違い・範囲外・formatVersion 違いは拒否して前の値を保つ。ファイル読み（BOM 除去・大きさの上限）は Private の `EnvironmentDataFile.{h,cpp}` の `ReadEnvironmentDataFile` に置き、天候の予定表と共有する。
+- Done: `WeatherSchedule.{h,cpp}` に天候の予定表を足した。データ `WeatherScheduleSettings` は G7 のプリセット名（`clear`・`overcast`・`rain`・`heavy_rain`）・重みつきの遷移表（(From, To) の昇順の正規形）・補間の長さ（分、(0, 15]）。検証は名前の形と重複、重み 1〜1000000、出ていく遷移の有無、各プリセットからちょうど 96 歩で戻れること。既定の表は曇天中心（晴れ → 雨・強雨、曇り → 強雨は無い）で、`Assets/Data/Environment/WeatherSchedule.json` と同じ値。
+- Done: `MakeWeatherTrack(settings, seed)` は SplitMix64 の (種, セル番号) だけのハッシュで 96 セル（15 分）を選ぶ。セル 0 から「残りの歩数でセル 0 へ戻れる集合」に候補を絞る環状の歩みなので、セル 95 → セル 0 も遷移表に従う。`SampleWeatherTrack`・`WeatherAt(settings, seed, T)` は T を 24 時間に巻き、セルの境界を中心に補間の長さで smoothstep して前後のプリセットを混ぜる（境界ちょうどで 0.5、24 時間の継ぎ目も同じ式）。`LoadWeatherPresets`・`BlendWeatherPresets`（濡れは除く、風の向きは短い弧、雲の層の有無は 0.5 で切り替え）・`EvaluateWeather` で `EnvironmentTarget` を返す。風は既存の欄（向き・速さ・突風）のまま持ち、`WindParameters` への写しはここに持たない。描画・環境状態は変えていない（呼ぶ側はまだ無い）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0、新しいファイルからの警告なし（`.harness/runs/20261117-103236/G11-GR55-SUN-WEATHER-U3-verify.txt`）。新規ファイルは UTF-8 BOM + CRLF、`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: 月明かり・夜は G11-GR55-NIGHT、時計・スキップ（環境状態へ時刻と天候をつなぐ）は G11-GR55-CLOCK-SKIP。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `SunPathTest`・`WeatherScheduleTest` は作っていない。verify の ctest の行が選ぶ試験は無い。人が見る所は、G11-GR55-CLOCK-SKIP で環境状態へつないだ後に、ランチャーの荒野・Rendering3DTest で時刻を進めたときの太陽の向き（正午に南、北緯 55°・夏至の正午で高度約 58°）と、天候が 15 分のセルの境界で滑らかに移ること。
+- Notes: 判断: 選定課題 G11-S6 は推奨の (A)（仮の既定値で作り、企画が決まったらデータだけ差し替える）。重みの上限 1000000 は JSON の読みと検証で同じにし、検証を通った設定は必ず書けて読み直せる。既知の限界: 24 時間の並びは毎日同じ繰り返し（種を日ごとに変えると日の継ぎ目が連続しない）。
+
+- U1 空のモデルに晴天の鍵・混ぜる重み・単位曇天の標本を足し、保持体を晴天の鍵と単位曇天の源に分ける: 着地(直し 0 回)
+- U2 晴天と単位曇天を重みで混ぜる compute シェーダーを足す: 着地(直し 0 回)
+- U3 IblGeneration に永続の出力テクスチャの作成と、混ぜのディスパッチの準備・記録の道具を足す: 着地(直し 0 回)
+- U4 Game に雲量を 0 → 1 へ指定のフレーム数で動かす開発用の引数を足す: 着地(直し 0 回)
+- U5 空のパスを晴天の鍵で作り直し、単位曇天を 1 回だけ作り、重みが変わったフレームだけ GPU で永続の最終テクスチャへ混ぜて公開する: 着地(直し 0 回)
+## G11-GR54-CLOUD-BLEND 雲量の連続した変化を、晴天と単位曇天の空 LUT・IBL の GPU の重み付き和で追う（2026-11-17、run 20261117-103235 の反復 1）
+- Done: 作り直しの鍵と混ぜる重みを分けた。`AreSkyAtmosphereClearKeysEqual`・`MakeSkyAtmosphereClearKey`（曇天の 7 欄を除いた鍵）を足し、`SkyAtmosphereSourceCache` は晴天の鍵でモデルを作る（雲量・曇天の調整値だけの変化では何も作らない）。空のパスの LUT と晴天の IBL の作り直しの判定も晴天の鍵にした。
+- Done: 天頂 1 に正規化した単位曇天を `SkyAtmosphereModel::SampleUnitOvercastSkyView`（sky-view 表と同じ行の補間、地面の行は GroundAlbedo×(2r+1)/(3r)、地面の判定は March と同じ `DistanceToGround`）で求め、保持体の `AcquireUnitOvercastRadianceSource`（鍵は惑星半径・地表高度・地表アルベド・天頂と地平線の比だけ）から `CreateIblResources` で単位曇天の環境・拡散・鏡面と平均照度を 1 回だけ作る（ログ `Sky unit overcast IBL generated ... unit_overcast_builds=N`）。
+- Done: `ComputeSkyCloudBlendWeights` で 晴天の重み a=1-c、単位曇天の重み c·Lz·tint（Lz は晴天の水平面の全天照度×F から求める天頂の放射輝度）を求め、`Assets/Shaders/Sky/SkyCloudBlend.comp` が永続の最終テクスチャ（空の放射輝度 LUT・環境・拡散・鏡面の全ミップ、RGBA16F・同じ大きさとミップ）へ 晴天×a ＋ 単位曇天×(b×色味) を書く（alpha は晴天のまま）。重み・入力が変わったフレームだけ Declare で準備して `UnorderedAccess → ShaderResource` の書き込みを宣言し、Execute で記録する。雲量 0 では重みが厳密に (1,0) になり、晴天をそのまま写す。全球の平均照度も同じ重みで混ぜて公開する。公開の名前（`SkyAtmosphereRadiance`・`Ibl.*`）は最終テクスチャを指し、`m_LastParameters` は雲量を含めたまま（PT の `HashPathSky` は雲量で再累積する）。空気遠近の太陽の照度は実際の雲量の直達の係数で毎フレーム弱める。
+- Done: Game に開発用の引数 `--cloud-cover-sweep=<frames>`（開発ビルドだけ）を足した。気象を当てるときに雲量 0 から始め、毎フレーム `EnvironmentSystem::SetTarget`（雲量の欄だけ・遷移時間 0。DiscontinuityId を進めない）で k/frames を当て、1 に着いたら止める（ログ `CLOUD_COVER_SWEEP start/done frames=N`）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（Game.exe まで。U1〜U3 を着地させた後の版に U5 を載せた作業ツリー。`.harness/runs/20261117-103235/verify-G11-GR54-CLOUD-BLEND-U5.txt`）。U4（Game のみ）も同じ版の上で Game のビルドが終了コード 0。シェーダーは ShaderManager と同じく BOM を外した写しで `glslc -fshader-stage=compute --target-env=vulkan1.2` が終了コード 0。
+- Next: ランナーの評価者の反証（危険地帯: 照明・RenderThread・永続テクスチャの更新の順）。計測（雲量 0 → 1 を 120 フレームで、フレーム時間の最大が中央値の 2 倍以内）は G11-GR54-SKY-MEASURE。撮影・計測の確かめは回さない決まり。人が見るときの見どころ: 荒野か Rendering3DTest を `--cloud-cover-sweep=120` で起動し、空の背景・霧の色・地面の環境光・鏡面の映り込みが引っ掛からずに晴天から均一な曇天へ移ること、ログで `Sky LUT generated`・`Sky IBL generated` が雲量の変化の間に出ないこと（`Sky unit overcast IBL generated` は起動後に 1 行だけ）。雲量 0 のままの起動画面が前と同じに見えること。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyCloudBlendVulkanTest` と `SkyAtmosphereSourceCacheTest` のケースは作っていない。`RenderingGolden*`・`PathTracingOutdoorVulkanTest`・`SkyAtmosphereModelTest` も回していない。
+- Notes: 判断: 混ぜの道具（永続の出力の作成 `CreateSkyCloudBlendOutputTexture` と、記述子・定数をフレームの持ち主から借りて全ミップをディスパッチする `SkyCloudBlendRecorder`）は paths の内の `IblGeneration.{h,cpp}` に置いた。放射輝度 LUT の混ぜの単位曇天の入力は、同じ大きさの単位曇天の環境（1 ミップ）を使う。混ぜが使えない文脈（記録器の初期化の失敗・フレームの持ち主の無い手組みの文脈）では晴天の入力をそのまま公開する（雲量は空の LUT・IBL に効かない）。
+- Notes: 既知の限界: スイープの開始のフレームは、雲量 0 を当てた同じフレームで 1/frames まで進む。単位曇天の入力が作れなかったときは重みを (1,0) にして晴天を写す（警告 1 回）。

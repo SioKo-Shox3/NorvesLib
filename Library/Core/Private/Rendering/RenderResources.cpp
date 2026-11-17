@@ -1392,6 +1392,14 @@ namespace NorvesLib::Core::Rendering
                    : MegaGeometry::MegaMeshHandle::Invalid();
     }
 
+    Container::String MegaGeometryResources::GetModelSourcePath(ModelHandle handle) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources
+                   ? impl->MegaGeometryResources->GetModelSourcePath(handle)
+                   : Container::String{};
+    }
+
     size_t MegaGeometryResources::GetModelCount() const
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;

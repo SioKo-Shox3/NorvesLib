@@ -22,6 +22,7 @@ set(PRIVATE_SOURCES
     Private/Animation/GroundQuery.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
+    Private/Asset/AssetBinding.cpp
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
@@ -347,6 +348,10 @@ set(PRIVATE_SOURCES
     Private/Rendering/EnvironmentParameters.cpp
     Private/Environment/EnvironmentState.cpp
     Private/Environment/EnvironmentSystem.cpp
+    Private/Environment/EnvironmentDataFile.h
+    Private/Environment/EnvironmentDataFile.cpp
+    Private/Environment/SunPath.cpp
+    Private/Environment/WeatherSchedule.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
@@ -587,6 +592,7 @@ set(PUBLIC_HEADERS
     Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
     Public/Save/SettingsStore.h
+    Public/Asset/AssetBinding.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
@@ -773,6 +779,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/EnvironmentParameters.h
     Public/Environment/EnvironmentState.h
     Public/Environment/EnvironmentSystem.h
+    Public/Environment/SunPath.h
+    Public/Environment/WeatherSchedule.h
     Public/Rendering/EnvironmentGpuParams.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h
