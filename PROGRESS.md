@@ -12037,3 +12037,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 カメラの箱の上面へ戻す衝突の応答を CPU と GPU に足す: 着地(直し 0 回)
 - U2 カメラの箱で折り返す粒の描画に箱の縁のフェードを掛ける: 着地(直し 0 回)
 - U3 EnvironmentSystem が近距離の雨のインスタンスを持ち、毎フレーム雨量と風から値を渡す: 着地(直し 1 回)
+- U4 近距離の雨の効果のデータを置き、全体を確かめる: 着地(直し 0 回)
