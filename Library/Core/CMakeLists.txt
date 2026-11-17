@@ -22,6 +22,7 @@ set(PRIVATE_SOURCES
     Private/Animation/GroundQuery.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
+    Private/Asset/AssetBinding.cpp
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
@@ -359,6 +360,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/PathTracingExrOutput.cpp
     Private/Rendering/DDGIProbePass.cpp
     Private/Rendering/VolumetricsPass.cpp
+    Private/Rendering/RainCurtainPass.cpp
     Private/Rendering/SkyAtmospherePass.cpp
     Private/Rendering/IblGeneration.h
     Private/Rendering/IblGeneration.cpp
@@ -586,6 +588,7 @@ set(PUBLIC_HEADERS
     Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
     Public/Save/SettingsStore.h
+    Public/Asset/AssetBinding.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
@@ -777,6 +780,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SkyOcclusionMapPass.h
     Public/Rendering/OverheadHeightMapPass.h
     Public/Rendering/VolumetricsPass.h
+    Public/Rendering/RainCurtainPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h
     Public/Rendering/FrameCaptureHdrWriter.h

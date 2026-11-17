@@ -3,6 +3,7 @@
 
 #include "Animation/SkeletalAnimationSampler.h"
 #include "Animation/SkeletalAssetResource.h"
+#include "Asset/AssetBinding.h"
 #include "Component.h"
 #include "Ecs/EcsRenderTypes.h"
 #include "Math/Matrix4x4.h"
@@ -31,14 +32,21 @@ namespace NorvesLib::Core::Component
 
         void Initialize() override;
         void Finalize() override;
+        void BeginPlay() override;
+        void OnPropertyApplied(const ClassProperty& property) override;
         /// Animation の群の本体（World の順序付きの系が呼ぶ）。再生中の clip の時刻を進める
         void AdvanceAnimationTime(float deltaTime);
         /// PoseFinalize の群の本体。外部（Animator）が姿勢を渡していなければ dirty な姿勢を評価する
         void TickPoseFinalizeGroup();
 
         void SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset);
+        void SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset, Container::StringView sourcePath);
         const Container::TSharedPtr<SkeletalAssetResource>& GetSkeletalAsset() const;
-        // 同aggregateに属する明示clipだけを受理する。失敗時は旧選択を保持する。
+        const SkeletalAssetRef& GetSkeletalAssetPath() const { return SkeletalAssetPath.Get(); }
+        void SetSkeletalAssetPath(const SkeletalAssetRef& reference);
+        const TextureAssetRef& GetMaterialTexture() const { return MaterialTexture.Get(); }
+        void SetMaterialTexture(const TextureAssetRef& reference);
+        // 同aggregateに属する明示clipだけを受理する。空なら明示選択を外し、失敗時は旧選択を保持する。
         [[nodiscard]] bool SetAnimationClip(const Container::TSharedPtr<AnimationClipResource>& clip);
         // 明示選択が無い場合だけ旧先頭別名を使う。membership喪失時は空でfallbackしない。
         Container::TSharedPtr<AnimationClipResource> GetAnimationClip() const;
@@ -145,13 +153,25 @@ namespace NorvesLib::Core::Component
         void OnEcsRowAttached() override;
         void OnEcsRowDetaching() override;
 
-        // 描画の値（メッシュの handle・可視・影を落とす）は World の木にいる間 ECS の行（EcsSkinnedRender）の列にあり、
-        // 無い間は予備の値にある。メッシュの handle はアセットから求めた値の写しで、保存の対象にならない型
-        ECS_PROPERTY(Ecs::EcsSkinnedRender, MeshHandle, Rendering::SkinnedMeshHandle, MeshHandle)
+        PROPERTY(SkeletalAssetRef, SkeletalAssetPath)
+        PROPERTY(TextureAssetRef, MaterialTexture)
+        PROPERTY(Container::String, AnimationClipName)
+        PROPERTY(bool, bPlaying)
+        PROPERTY(bool, bLooping)
+        PROPERTY(float, PlaybackRate)
+        PROPERTY(float, AnimationTimeSeconds)
+
+        // 可視・影の値は World の木にいる間 ECS の行にあり、無い間は予備の値にある。
         ECS_PROPERTY(Ecs::EcsSkinnedRender, bVisible, bool, bVisible)
         ECS_PROPERTY(Ecs::EcsSkinnedRender, bCastShadow, bool, bCastShadow)
 
       private:
+        void ApplySkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset);
+        void ApplyAnimationClipName();
+        void PollAssetBindings();
+        void ReleaseOwnedMaterial();
+        Rendering::SkinnedMeshHandle LoadMeshHandle() const;
+        void StoreMeshHandle(Rendering::SkinnedMeshHandle handle);
         // 材質の handle は行が付いている間 ECS の列（EcsSkinnedRender）が正で、無い間は下の予備のメンバが正
         Rendering::MaterialHandle LoadMaterial() const;
         void StoreMaterial(Rendering::MaterialHandle material);
@@ -167,6 +187,8 @@ namespace NorvesLib::Core::Component
         void ReservePoseEvaluationBuffers(size_t jointCount);
         Math::Matrix4x4 BuildOwnerWorldTransform() const;
 
+        Asset::AssetBinding m_SkeletalBinding;
+        Asset::AssetBinding m_MaterialTextureBinding;
         Container::TSharedPtr<SkeletalAssetResource> m_SkeletalAsset;
         Container::TSharedPtr<AnimationClipResource> m_SelectedClip;
         Math::Matrix4x4 m_MeshNodeGlobalTransform;
@@ -184,15 +206,13 @@ namespace NorvesLib::Core::Component
         Container::TWeakPtr<SkinnedMeshResource> m_EvaluatedMesh;
         Container::TWeakPtr<SkeletonResource> m_EvaluatedSkeleton;
         Container::TWeakPtr<AnimationClipResource> m_EvaluatedClip;
+        Rendering::SkinnedMeshHandle m_MeshHandle;
         Rendering::MaterialHandle m_Material;
+        Rendering::MaterialHandle m_OwnedMaterial;
         float m_ShadingParams[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
         float m_Opacity = 1.0f;
         Skeletal::SkeletalMaterialBindings m_SlotMaterials;
-        float m_AnimationTimeSeconds = 0.0f;
-        float m_PlaybackRate = 1.0f;
         bool m_bExternalAnimationDriven = false;
-        bool m_bPlaying = true;
-        bool m_bLooping = true;
         bool m_bPoseDirty = true;
     };
 } // namespace NorvesLib::Core::Component

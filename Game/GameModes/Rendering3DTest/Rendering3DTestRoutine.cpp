@@ -933,7 +933,7 @@ namespace Game::GameModes
                 const NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
                 object->SetRotation(NorvesLib::Math::Quaternion(yAxis, spec.YawDegrees * (3.14159265f / 180.0f)));
                 auto *component = world.CreateComponent<Component::MegaGeometryComponent>(object);
-                component->SetMegaMeshHandle(megaMeshHandle);
+                component->SetMegaMeshHandle(megaMeshHandle, megaGeometry.GetModelSourcePath(state->m_Handle));
                 component->SetCastShadow(true);
                 // 消費したモデルはスコープに解放を委ねる。
                 ctx.ScopeRef.TrackModel(state->m_Handle);
@@ -4015,7 +4015,7 @@ namespace Game::GameModes
                         data.m_pBoulderObject->SetPosition(3.0f, -0.93f, 0.0f);
 
                         data.m_pBoulderMegaGeometryComponent = world.CreateComponent<Component::MegaGeometryComponent>(data.m_pBoulderObject);
-                        data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
+                        data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle, megaGeometry.GetModelSourcePath(data.m_BoulderModelHandle));
                         data.m_pBoulderMegaGeometryComponent->SetCastShadow(true);
                     }
 
@@ -4076,7 +4076,7 @@ namespace Game::GameModes
                 data.m_pCottageObject->SetPosition(0.0f, -0.984f, -18.0f);
                 data.m_pCottageMegaGeometryComponent =
                     world.CreateComponent<Component::MegaGeometryComponent>(data.m_pCottageObject);
-                data.m_pCottageMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
+                data.m_pCottageMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle, megaGeometry.GetModelSourcePath(data.m_CottageModelHandle));
                 data.m_pCottageMegaGeometryComponent->SetCastShadow(true);
                 if (data.m_bStressGeometry)
                 {

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Component.h"
+#include "Asset/AssetBinding.h"
 #include "Ecs/EcsRenderTypes.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/SceneProxy.h"
@@ -25,7 +26,9 @@ namespace NorvesLib::Core::Component
         virtual ~BoardComponent();
 
         virtual void Initialize() override;
+        virtual void Finalize() override;
         virtual void BeginPlay() override;
+        virtual void OnPropertyApplied(const ClassProperty& property) override;
 
         /**
          * @brief Flipbook を deltaTime だけ進める（毎フレームの本体。World の順序付きの系が主群で呼ぶ）
@@ -35,7 +38,10 @@ namespace NorvesLib::Core::Component
         Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::Board; }
 
         void SetTextureHandle(Rendering::TextureHandle texture);
-        Rendering::TextureHandle GetTextureHandle() const { return getTextureHandle().Get(); }
+        void SetTextureHandle(Rendering::TextureHandle texture, Container::StringView sourcePath);
+        Rendering::TextureHandle GetTextureHandle() const { return LoadTextureHandle(); }
+        const TextureAssetRef& GetTextureAsset() const { return TextureAsset.Get(); }
+        void SetTextureAsset(const TextureAssetRef& reference);
 
         void SetVisible(bool bNewVisible);
         bool IsVisible() const { return getbVisible().Get() && IsActive(); }
@@ -106,6 +112,11 @@ namespace NorvesLib::Core::Component
                                      const Rendering::MaterialResources *materials = nullptr) const;
 
     protected:
+        virtual void PollAssetBindings();
+        bool IsWaitingForAssetBinding() const;
+        virtual void OnEcsRowAttached() override;
+        virtual void OnEcsRowDetaching() override;
+
         void UpdateWorldTransform();
         void CalculateWorldMatrix(Math::Matrix4x4 &outMatrix) const;
         void InitializeFlipbookDefaults();
@@ -122,7 +133,10 @@ namespace NorvesLib::Core::Component
         void AdvanceFlipbook(float deltaTime);
 
         // 描画の値は World の木にいる間 ECS の行（EcsBoardRender）の列にあり、無い間は予備の値にある
-        ECS_PROPERTY(Ecs::EcsBoardRender, Texture, Rendering::TextureHandle, TextureHandle)
+        /**
+         * @brief 論理パス。シーンから読むと BeginPlay で非同期に解決して束縛する。
+         */
+        PROPERTY(TextureAssetRef, TextureAsset)
         ECS_PROPERTY(Ecs::EcsBoardRender, bVisible, bool, bVisible)
         ECS_PROPERTY(Ecs::EcsBoardRender, Layer, Rendering::RenderLayer, RenderLayerProp)
         ECS_PROPERTY(Ecs::EcsBoardRender, Space, Rendering::BoardSpace, Space)
@@ -163,6 +177,13 @@ namespace NorvesLib::Core::Component
         uint32_t m_CachedAtlasCellWidth = 0;
         uint32_t m_CachedAtlasCellHeight = 0;
         uint32_t m_CachedFirstFrameIndex = 0;
+
+    private:
+        Rendering::TextureHandle LoadTextureHandle() const;
+        void StoreTextureHandle(Rendering::TextureHandle texture);
+
+        Rendering::TextureHandle m_TextureHandle = Rendering::TextureHandle::Invalid();
+        Asset::AssetBinding m_TextureBinding;
     };
 
     using BoardComponentPtr = Container::TSharedPtr<BoardComponent>;

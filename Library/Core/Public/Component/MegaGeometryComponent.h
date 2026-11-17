@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "MeshComponent.h"
+#include "Asset/AssetBinding.h"
+#include "Asset/AssetRef.h"
 #include "Ecs/EcsRenderTypes.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
@@ -9,10 +11,9 @@ namespace NorvesLib::Core::Component
 {
 
     /**
-     * @brief MegaGeometry rendering component.
+     * @brief World と Component の経路で MegaMesh を同期するコンポーネント。
      *
-     * Synchronizes MegaMesh instances through the standard World/Component path.
-     * Transform and visibility state reuse MeshComponent behavior.
+     * 変換と可視性は MeshComponent の状態を使う。
      */
     class MegaGeometryComponent : public MeshComponent
     {
@@ -32,8 +33,17 @@ namespace NorvesLib::Core::Component
         }
 
         void SetMegaMeshHandle(Rendering::MegaGeometry::MegaMeshHandle handle);
-        Rendering::MegaGeometry::MegaMeshHandle GetMegaMeshHandle() const { return getMegaMeshHandleValue().Get(); }
-        bool HasMegaMesh() const { return getMegaMeshHandleValue().Get().IsValid(); }
+        void SetMegaMeshHandle(Rendering::MegaGeometry::MegaMeshHandle handle, Container::StringView sourcePath);
+        Rendering::MegaGeometry::MegaMeshHandle GetMegaMeshHandle() const { return LoadMegaMeshHandle(); }
+        bool HasMegaMesh() const { return LoadMegaMeshHandle().IsValid(); }
+
+        const ModelAssetRef& GetModelAsset() const { return ModelAsset.Get(); }
+        void SetModelAsset(const ModelAssetRef& reference);
+
+        void BeginPlay() override;
+        void Finalize() override;
+        void OnPropertyApplied(const ClassProperty& property) override;
+        void PollAssetBinding();
 
         /**
          * @brief SceneView 同期用の MegaGeometry proxy を構築する
@@ -43,8 +53,20 @@ namespace NorvesLib::Core::Component
         bool BuildMegaGeometryProxy(Rendering::MegaGeometryProxy &outProxy) const;
 
     protected:
-        // MegaMesh の handle は World の木にいる間 ECS の行（EcsMegaMesh）の列にあり、無い間は予備の値にある
-        ECS_PROPERTY(Ecs::EcsMegaMesh, Handle, Rendering::MegaGeometry::MegaMeshHandle, MegaMeshHandleValue)
+        /// 論理パス。シーンから読むと BeginPlay で非同期に解決して束縛する。
+        PROPERTY(ModelAssetRef, ModelAsset)
+
+        void OnEcsRowAttached() override;
+        void OnEcsRowDetaching() override;
+
+    private:
+        Rendering::MegaGeometry::MegaMeshHandle LoadMegaMeshHandle() const;
+        void StoreMegaMeshHandle(Rendering::MegaGeometry::MegaMeshHandle handle);
+        void RequestModelBinding();
+
+        // 行が無い間だけ使う、保存対象ではない派生の状態。
+        Rendering::MegaGeometry::MegaMeshHandle m_MegaMeshHandleFallback = Rendering::MegaGeometry::MegaMeshHandle::Invalid();
+        Asset::AssetBinding m_ModelBinding;
     };
 
     using MegaGeometryComponentPtr = Container::TSharedPtr<MegaGeometryComponent>;
@@ -52,5 +74,5 @@ namespace NorvesLib::Core::Component
 
 } // namespace NorvesLib::Core::Component
 
-// Phase2: cast flag bit for this hot type (CastTo flag fast-path)
+// CastTo の高速経路で使う型のフラグ。
 DECLARE_CLASS_CAST_FLAG(NorvesLib::Core::Component::MegaGeometryComponent, NorvesLib::Core::EClassCastFlags::MegaGeometryComponent)
