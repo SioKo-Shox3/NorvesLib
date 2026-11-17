@@ -250,6 +250,7 @@ namespace NorvesLib::Core::Rendering
 
         bool bVisible = true;
         bool bCastShadow = true;
+        bool bRayTracing = true; // TLAS の選択に入れるか
         // 空の遮蔽のマップ（樹冠だけの組）が光線の代わりに遮蔽を受け持つ物か。
         // 影を落とす物はTLASへinstance mask 0x04で入り、DDGI・RTGIの光線に当たらない。
         bool bSkyMapProxy = false;

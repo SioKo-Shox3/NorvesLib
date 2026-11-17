@@ -22,10 +22,14 @@ namespace NorvesLib::Core::Asset
         inline constexpr size_t SpeciesRecordSize = 96;
         inline constexpr size_t ChunkRecordSize = 48;
         inline constexpr size_t RangeRecordSize = 16;
+        inline constexpr size_t CollisionSpeciesRangeRecordSize = 8;
+        inline constexpr size_t CollisionRecordSize = 48;
         inline constexpr size_t InstanceRecordSize = 16;
+        inline constexpr size_t VariationSeedRecordSize = 4;
         inline constexpr uint32_t InstanceAlignment = 16;
         inline constexpr uint32_t MaxSpeciesCount = 64;
         inline constexpr uint32_t MaxLodCount = 4;
+        inline constexpr uint32_t MaxCollisionShapesPerSpecies = 16;
         inline constexpr AssetPackageFourCC PackageEntryType = MakeAssetPackageFourCC('S', 'c', 't', '0');
         inline constexpr const char* ManifestFormat = "nvsct.v0.inst16";
 
@@ -58,8 +62,8 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t StringTableSize = 152;
             inline constexpr size_t InstanceOffset = 160;
             inline constexpr size_t InstanceSize = 168;
-            inline constexpr size_t Reserved2 = 176;
-            inline constexpr size_t Reserved3 = 184;
+            inline constexpr size_t CollisionTableSize = 176;
+            inline constexpr size_t VariationSeedSize = 184;
         }
 
         namespace SpeciesRecordOffset
@@ -99,11 +103,52 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t Count = 8;
         }
 
-        static_assert(HeaderOffset::Reserved3 + 8 == HeaderSize);
+        // 衝突の表の節は、種ごとの範囲 {first, count} を種の数だけ並べ、その後に形の記録を並べる。
+        // 形が 1 つも無いファイルでは節ごと無い(ヘッダ 176 の大きさが 0)。
+        namespace CollisionSpeciesRangeOffset
+        {
+            inline constexpr size_t First = 0;
+            inline constexpr size_t Count = 4;
+        }
+
+        namespace CollisionRecordOffset
+        {
+            inline constexpr size_t Type = 0;
+            inline constexpr size_t Reserved0 = 4;
+            inline constexpr size_t A = 8;
+            inline constexpr size_t B = 20;
+            inline constexpr size_t Radius = 32;
+            inline constexpr size_t Reserved1 = 36;
+            inline constexpr size_t Reserved2 = 40;
+        }
+
+        static_assert(HeaderOffset::VariationSeedSize + 8 == HeaderSize);
         static_assert(SpeciesRecordOffset::SkyOccluderHeightMeters + 4 == SpeciesRecordSize);
+        static_assert(CollisionSpeciesRangeOffset::Count + 4 == CollisionSpeciesRangeRecordSize);
+        static_assert(CollisionRecordOffset::Reserved2 + 8 == CollisionRecordSize);
         static_assert(ChunkRecordOffset::Reserved + 8 == ChunkRecordSize);
         static_assert(RangeRecordOffset::Count + 8 == RangeRecordSize);
     }
+
+    inline constexpr uint32_t ScatterSpeciesFlagCollision = 1u << 0;
+    inline constexpr uint32_t ScatterSpeciesFlagNoRayTracing = 1u << 1;
+    inline constexpr uint32_t ScatterSpeciesFlagNoCastShadow = 1u << 2;
+    inline constexpr uint32_t ScatterSpeciesKnownFlags = 0x7u;
+
+    enum class ScatterCollisionShapeType : uint32_t
+    {
+        Capsule = 0,
+        Sphere = 1,
+        Box = 2,
+    };
+
+    struct CookedScatterCollisionShape
+    {
+        ScatterCollisionShapeType Type = ScatterCollisionShapeType::Capsule;
+        float A[3] = {};
+        float B[3] = {};
+        float Radius = 0.0f;
+    };
 
     enum class ScatterRenderPath : uint32_t
     {
@@ -147,6 +192,9 @@ namespace NorvesLib::Core::Asset
         float SkyOccluderHeightMeters = 0.0f;
         float SkyOccluderBaseRatio = 0.0f;
         float SkyOccluderKappa = 0.0f;
+        // 種の記録ではなく、衝突の表の節の頭の種ごとの範囲に入る。
+        uint32_t CollisionFirst = 0;
+        uint32_t CollisionCount = 0;
     };
 
     struct CookedScatterChunk
@@ -198,6 +246,7 @@ namespace NorvesLib::Core::Asset
         InvalidChunkBounds,
         InstanceRangeOutOfRange,
         InvalidSkyOccluder,
+        CollisionOutOfRange,
     };
 
     struct CookedScatterData
@@ -215,11 +264,16 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<CookedScatterChunk> Chunks;
         // chunkIndex * Species.size() + speciesIndex。
         Container::VariableArray<CookedScatterRange> SpeciesRanges;
+        Container::VariableArray<CookedScatterCollisionShape> CollisionShapes;
         uint64_t InstanceOffset = 0;
         uint64_t InstanceSize = 0;
+        uint64_t VariationSeedOffset = 0;
+        uint64_t VariationSeedSize = 0;
 
         // 16 バイト単位の非所有ビュー。寿命は Source に従う。
         [[nodiscard]] Container::Span<const uint8_t> GetInstances(uint32_t chunkIndex, uint32_t speciesIndex) const noexcept;
+        [[nodiscard]] Container::Span<const CookedScatterCollisionShape> GetCollisionShapes(uint32_t speciesIndex) const noexcept;
+        [[nodiscard]] Container::Span<const uint8_t> GetVariationSeeds(uint32_t chunkIndex, uint32_t speciesIndex) const noexcept;
     };
 
     struct CookedScatterParseResult
@@ -257,6 +311,7 @@ namespace NorvesLib::Core::Asset
                                              double originX, double originZ, ScatterInstanceValue& out) noexcept;
     // ファイル上の 16 バイトをバイト順と整列に依らず読み取る。
     [[nodiscard]] bool ReadScatterInstance(Container::Span<const uint8_t> bytes, InstanceRecord16& out) noexcept;
+    [[nodiscard]] bool ReadScatterVariationSeed(Container::Span<const uint8_t> bytes, uint32_t& out) noexcept;
 
     struct CookedScatterWriteDesc
     {
@@ -271,6 +326,8 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<CookedScatterChunk> Chunks;
         Container::VariableArray<CookedScatterRange> SpeciesRanges;
         Container::VariableArray<InstanceRecord16> Instances;
+        Container::VariableArray<CookedScatterCollisionShape> CollisionShapes;
+        Container::VariableArray<uint32_t> VariationSeeds;
     };
 
     enum class CookedScatterWriteStatus : uint8_t
@@ -281,6 +338,8 @@ namespace NorvesLib::Core::Asset
         InvalidChunk,
         InvalidRanges,
         TooLarge,
+        InvalidCollision,
+        InvalidVariationSeeds,
     };
 
     // 入力順のまま書く。失敗時は outBytes を空にする。

@@ -18,6 +18,8 @@ NVSCT v0 は、地形上に個別に配置する物の種・チャンク・イ�
 | `EndianMarker` | `0x01020304` |
 | `SpeciesRecordSize` / `ChunkRecordSize` | 96 / 48 バイト |
 | `RangeRecordSize` / `InstanceRecordSize` | 16 / 16 バイト |
+| `CollisionRecordSize` / `VariationSeedRecordSize` | 48 / 4 バイト |
+| `MaxCollisionShapesPerSpecies` | 16 |
 | `MaxSpeciesCount` / `MaxLodCount` | 64 / 4 |
 | `InstanceAlignment` | 16 バイト |
 
@@ -25,11 +27,12 @@ NVSCT v0 は、地形上に個別に配置する物の種・チャンク・イ�
 C++ 構造体のメモリ配置をファイルへの変換に使わない。特記しない位置はファイル先頭からのバイト位置。
 
 ```text
-ヘッダ -> 種表 -> チャンク表 -> 範囲表 -> 文字列表 -> 0 埋め -> インスタンス配列
+ヘッダ -> 種表 -> チャンク表 -> 範囲表 -> 衝突の形の表 -> 文字列表 -> 0 埋め -> インスタンス配列 -> 個体差の種の配列
 ```
 
 表はこの順に隙間なく並び、文字列表の終端を 16 バイト境界に切り上げてインスタンス配列を置く。
-0 埋めの各バイトは予約欄で、配列の終端はファイルの終端と一致する。
+0 埋めの各バイトは予約欄。個体差の種の配列はインスタンス配列の直後から始まり、その終端がファイルの終端となる。
+衝突の形の表と個体差の種の配列は省略でき、省略時の長さは 0。
 `PayloadHash` は名前にかかわらず、ファイル全体のうちオフセット 32..39 の 8 バイトを**除いた**バイト列の FNV-1a64
 （offset basis `14695981039346656037`、prime `1099511628211`）。ハッシュ欄をゼロにして含める方式ではない。
 
@@ -57,9 +60,10 @@ C++ 構造体のメモリ配置をファイルへの変換に使わない。特�
 | 96 / 104 | `uint64` × 2 | `SpeciesTableOffset` / `SpeciesTableSize` | 192 / `SpeciesCount * 96` |
 | 112 / 120 | `uint64` × 2 | `ChunkTableOffset` / `ChunkTableSize` | 種表の直後 / `ChunkCount * 48` |
 | 128 / 136 | `uint64` × 2 | `RangeTableOffset` / `RangeTableSize` | チャンク表の直後 / `ChunkCount * SpeciesCount * 16` |
-| 144 / 152 | `uint64` × 2 | `StringTableOffset` / `StringTableSize` | 範囲表の直後 / 文字列のバイト数。最大 `UINT32_MAX` |
+| 144 / 152 | `uint64` × 2 | `StringTableOffset` / `StringTableSize` | 範囲表の終端 + `CollisionTableSize` / 文字列のバイト数。最大 `UINT32_MAX` |
 | 160 / 168 | `uint64` × 2 | `InstanceOffset` / `InstanceSize` | 文字列表の終端を 16 の倍数に切り上げた位置 / 配列のバイト数。大きさは 16 の倍数 |
-| 176 / 184 | `uint64` × 2 | `Reserved2` / `Reserved3` | 0 |
+| 176 | `uint64` | `CollisionTableSize` | 範囲表の直後にある衝突の形の表の節のバイト数。0、または `SpeciesCount * 8 + 48 * 形の数`（形は 1 つ以上） |
+| 184 | `uint64` | `VariationSeedSize` | インスタンス配列の直後にある個体差の種の配列のバイト数。0 または `(InstanceSize / 16) * 4` |
 
 原点と格子の外端 `OriginX + GridCountX * ChunkSizeMeters`、`OriginZ + GridCountZ * ChunkSizeMeters` は有限。
 
@@ -85,7 +89,7 @@ C++ 構造体のメモリ配置をファイルへの変換に使わない。特�
 | 68 | `float32` | `BrightnessVariation` | 明度の揺らぎ。有限で非負 |
 | 72 | `float32` | `WindStiffness` | 風の硬さ。有限で非負 |
 | 76 | `uint32` | `WindPhaseSeed` | 風の位相の種 |
-| 80 | `uint32` | `Flags` | bit 0 は衝突の印として予約。bit 1..31 は 0 |
+| 80 | `uint32` | `Flags` | bit 0 = 衝突の印、bit 1 = TLAS の選択に入れない、bit 2 = 影を落とさない。bit 3..31 は 0 |
 | 84 | `uint32` | `SkyOccluderBits` | bit 0..1 は形（0 = なし、1 = 楕円体、2 = 箱）、bit 2 は canopy、bit 8..15 は底の比、bit 16..23 は κ。その他のビットは 0 |
 | 88 | `float32` | `SkyOccluderRadiusMeters` | 遮蔽物の半径 [m]。形がある場合は有限の `(0, 256]` |
 | 92 | `float32` | `SkyOccluderHeightMeters` | 遮蔽物の高さ [m]。形がある場合は有限の `(0, 256]` |
@@ -96,6 +100,9 @@ C++ 構造体のメモリ配置をファイルへの変換に使わない。特�
 底の比と κ はそれぞれ `round(value * 255)` で量子化し、読み手は `q / 255` に戻す。
 底の比の量子化値は 0..242、κ は 0..255。形が 0 のとき 84..95 の 12 バイトはすべて 0 で、
 遮蔽物なしとして読む。旧形式の予約欄が 0 のファイルも遮蔽物なしとして読める。
+衝突の形の範囲は種の記録ではなく、衝突の形の表の節の頭に置く（後述）。
+衝突の印と形の数は独立で、規則による cook は形がなくても bit 0 を立てられる。
+bit 1・bit 2 の既定は 0 で、TLAS の選択に入り、影を落とす。
 
 ## チャンク表（1 件 48 バイト）
 
@@ -125,6 +132,34 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 `Offset <= InstanceSize / 16`、`Count <= InstanceSize / 16 - Offset`。読み手は範囲同士の重なりや
 配列に参照されないレコードの存在を制限しない。書き手は与えられた範囲・配列の順序を保持する。
 
+## 衝突の形の表（種ごとの範囲 1 件 8 バイト + 形 1 件 48 バイト）
+
+節は、種ごとの範囲を種表と同じ順に `SpeciesCount` 件並べ、その直後に形のレコードを並べる。
+形が 1 つも無いファイルは節ごと省き、`CollisionTableSize` を 0 にする（このとき全種の範囲は 0 として読む）。
+新しい欄を使わない規則の散布は、この節も個体差の種の配列も持たない。
+
+| オフセット | 型 | 項目 | 意味・規則 |
+| ---: | --- | --- | --- |
+| 0 | `uint32` | `CollisionFirst` | 形のレコードでの先頭番号 |
+| 4 | `uint32` | `CollisionCount` | 形の数。0..16 |
+
+`CollisionFirst + CollisionCount` は形の総数以下とし、`CollisionCount == 0` なら `CollisionFirst == 0`。
+
+形のレコードは種のローカル座標で表し、個体のヨーと拡大に従って回転・拡大する。
+`A`・`B`・`Radius` の値はすべて有限。種ごとの参照は重なってもよく、参照されない形も置ける。
+
+| オフセット | 型 | 項目 | 意味・規則 |
+| ---: | --- | --- | --- |
+| 0 | `uint32` | `Type` | 0 = `Capsule`、1 = `Sphere`、2 = `Box` |
+| 4 | `uint32` | `Reserved0` | 0 |
+| 8 | `float32[3]` | `A` | カプセルの線分の一端、球または箱の中心 |
+| 20 | `float32[3]` | `B` | カプセルの線分の他端、球では全成分 0、箱では各軸の半分の寸法 |
+| 32 | `float32` | `Radius` | カプセル・球では正の半径、箱では 0 |
+| 36 | `uint32` | `Reserved1` | 0 |
+| 40 | `uint64` | `Reserved2` | 0 |
+
+箱の `B` は全成分が正。箱の軸は種のローカル軸に沿う。
+
 ## インスタンス配列（1 件 16 バイト）
 
 | オフセット | 型 | 項目 | 意味 |
@@ -134,7 +169,7 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 | 8 | `uint8` | `Scale` | 種の拡大率の対数量子化値 |
 | 9 | `uint8` | `Rank` | 間引きの順序に使う値 |
 | 10 / 11 | `uint8` × 2 | `NormalOct` | 地面法線の八面体符号化 |
-| 12 / 13 / 14 | `uint8` × 3 | `Tint` | RGB の 0..1 を 0..255 に量子化 |
+| 12 / 13 / 14 | `uint8` × 3 | `Tint` | RGB の色の倍率の半分を 0..255 に量子化 |
 | 15 | `uint8` | `Dry` | 枯れ度の 0..1 を 0..255 に量子化 |
 
 量子化は範囲を 0..1 に写し、最も近い整数へ四捨五入する。チャンクの最小の角は
@@ -151,13 +186,22 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 `(x,y) = ((1-abs(y))*signNotZero(x), (1-abs(x))*signNotZero(y))` に折り返す。
 各成分を `round((v * 0.5 + 0.5) * 255)` に写す。復号時は `x = qx*2/255-1`、`y = qy*2/255-1`、
 `z = 1-abs(x)-abs(y)` を求め、`z < 0` なら同じ折り返しを X/Y に適用してから正規化する。
-`signNotZero(0) = +1`。色・枯れ度の復号は `q / 255`。
+`signNotZero(0) = +1`。`Tint` の各値 `q` は色の倍率の半分を表し、倍率は `2q / 255`。
+規則による cook の `128` はほぼ 1 倍に相当する。描画先へ渡すときは倍率を 1 で切るため、1 より明るくはできない。
+`ScatterSystem` は mega の描画入力の色味へ、各成分 `min(1, 2q/255)` を RGBA8 にして渡す（3 成分とも 1 以上なら白）。
+`EncodeScatterInstance` と `DecodeScatterInstance` の `ScatterInstanceValue::Tint` は倍率の半分を表し、
+復号値は `q / 255`。枯れ度の復号も `q / 255`。
 
 `EncodeScatterInstance` は範囲外や非有限の位置・拡大率・色・枯れ度、ゼロまたは非有限の法線を拒否する。
 各軸について符号化後に復号した位置と入力との差が `ChunkSizeMeters / 65535` を超える場合も失敗する。
 特に Y 範囲がチャンク寸法に比べて非常に広い場合は、16 ビットで必要な精度を表せない位置がある。
 極端に大きい原点でも浮動小数点の精度により同様に失敗する場合がある。ヨーは任意の有限値を受けて巡回させる。
 エンコードとデコードにはヘッダのチャンク寸法・原点、対象チャンク・種を渡し、座標は `double` で返す。
+
+## 個体差の種の配列（1 件 4 バイト）
+
+配列があるときはインスタンスと同数の `uint32` リトルエンディアン値を、インスタンス配列と同じ番号順に格納する。
+値 0 は既定の種を使う意味。配列がないとき `VariationSeedSize` は 0。
 
 ## 読み込みの拒否と検査の順
 
@@ -168,17 +212,25 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 3. 実際のファイル長と宣言が違えば `FileSizeMismatch`、ハッシュ不一致は `HashMismatch`。
 4. ヘッダ予約欄が 0 以外なら `ReservedNonZero`。チャンク寸法・格子・原点が不正なら `InvalidDimensions`。
 5. 種数が範囲外なら `SpeciesOutOfRange`、チャンク数が格子を超えれば `ChunkOutOfRange`。
-6. 表・文字列表・配列の位置、長さ、順序、整列、ファイル終端が不正なら `TableOutOfRange`。隙間が 0 以外なら `ReservedNonZero`。
-7. 種の描画経路・LOD 数・数値が不正なら `SpeciesOutOfRange`、文字列参照が空または範囲外なら `StringOutOfRange`。
+6. 衝突の形の表の長さ、表・文字列表・配列の位置、長さ、順序、整列、ファイル終端が不正なら `TableOutOfRange`。個体差の種の配列の長さもここで検査する。隙間が 0 以外なら `ReservedNonZero`。
+7. 各種について、描画経路・LOD 数、名前と LOD の文字列参照、未定義フラグと予約欄、遮蔽物、数値、衝突の形の参照の順に検査する。
+   描画経路・LOD 数・数値が不正なら `SpeciesOutOfRange`、文字列参照が空または範囲外なら `StringOutOfRange`。
    未使用 LOD 参照・予約欄・未定義フラグ・遮蔽物の未使用ビットが 0 以外、または形が 0 で 84..95 がすべて 0 でなければ `ReservedNonZero`。
    遮蔽物の形が範囲外、半径・高さが不正、底の比の量子化値が 242 を超える場合は `InvalidSkyOccluder`。
+   衝突の形の参照が不正なら `CollisionOutOfRange`。
 8. チャンク座標が範囲外または重複なら `ChunkOutOfRange`、Y 範囲または AABB が不正なら `InvalidChunkBounds`、予約欄が 0 以外なら `ReservedNonZero`。
 9. 範囲表の offset・count がインスタンス配列の外なら `InstanceRangeOutOfRange`。
+10. 各衝突の形について、予約欄が 0 以外なら `ReservedNonZero`、種類または数値が不正なら `CollisionOutOfRange`。
 
 成功時は `CookedScatterData::Source` が元のバイト列の寿命を保持する。
 `GetInstances(chunkIndex, speciesIndex)` はその範囲の非所有バイトビューを返し、無効な添字・範囲では空を返す。
-`ReadScatterInstance` で 16 バイトを構造体へ読み取る。blob の開始位置自体の整列を前提にしない。
-書き手は同じ制約を検査し、失敗時は出力を空にする。
+`GetVariationSeeds(chunkIndex, speciesIndex)` は同じ範囲の個体差の種の非所有バイトビューを返し、
+配列がない場合や無効な添字・範囲では空を返す。`GetCollisionShapes(speciesIndex)` は種が参照する形の非所有ビューを返し、
+範囲外では空を返す。形のビューの寿命は `CookedScatterData` の配列に従う。
+`ReadScatterInstance` と `ReadScatterVariationSeed` はそれぞれ 16 バイトと 4 バイトを読み取る。
+blob の開始位置自体の整列を前提にしない。
+書き手は同じ制約を検査し、衝突の形やその参照の不正は `InvalidCollision`、個体差の種の本数の不正は
+`InvalidVariationSeeds` とする。失敗時は出力を空にする。
 
 ## 配置の規則
 
@@ -357,3 +409,117 @@ payload_hash は NVSCT 内部ハッシュ。散布 manifest の cooked_hash は 
 - 倒木: `Assets/Models/Grassland/FallenLog/FallenLog.gltf`
 - 低木: `Assets/Models/Grassland/Shrub/Shrub.gltf`
 - 草本の株: `Assets/Models/Grassland/ForbClump/ForbClump.gltf`
+
+## 配置の一覧 JSON
+
+同じ AssetCook の入口で、最上位の `kind` が `"placement"` なら配置の一覧を読む。
+`kind` が無ければ散布 spec を読む。UTF-8（先頭 BOM 可）で、すべてのオブジェクトの未知・重複した鍵を拒否する。
+文字列は空でない有効な Unicode とし、NUL を含められない。
+
+```json
+{
+  "version": 0,
+  "kind": "placement",
+  "terrain": { "path": "../TerrainSpecs/Grassland/GrasslandTerrain.json", "cooked_hash": "3455d60b54f23a5c" },
+  "chunk_size_m": 32,
+  "seed": 47001,
+  "height_mode": "terrain",
+  "species": [{
+    "name": "conifer", "render_path": "mega",
+    "lods": ["Assets/Models/PolyHaven/dead_quiver_trunk/dead_quiver_trunk_4k.gltf"],
+    "mesh_radius_m": 3.0, "scale_range": [1.2, 2.0],
+    "slope_follow": 0.0, "brightness_variation": 0.0,
+    "cast_shadow": true, "ray_tracing": true,
+    "collision": [{ "shape": "capsule", "a": [0, 0, 0], "b": [0, 6, 0], "radius": 0.35 }],
+    "wind": { "stiffness": 1.0, "phase_seed": 0 }
+  }],
+  "instances": [
+    { "species": "conifer", "position": [12.5, -0.2, -80.25], "yaw_deg": 35.0, "scale": 1.4, "tint": [0.95, 0.95, 0.95], "seed": 1234 }
+  ]
+}
+```
+
+最上位で使える鍵は `version`・`kind`・`terrain`・`chunk_size_m`・`seed`・`height_mode`・`species`・`instances`。
+`version` は必須で 0、`kind` は必須で `"placement"`。
+`terrain`（`path`・`cooked_hash` のみ）・`chunk_size_m`・`seed` は必須で、散布 spec と同じ意味・検査を使う。
+地形の cooked_hash の照合、元の JSON バイト列・照合したハッシュ・地形入力からの source_hash の計算、
+`SCATTER_COOKED`・`SCATTER_SPECIES` の書式も同じである。
+`height_mode` は既定が `"absolute"`。`position.y` をワールド Y とし、法線は `(0,1,0)`。
+`"terrain"` では Y は地形面からの高さで、規則配置と同じ LOD0 の三角形の高さを加え、その面法線を NormalOct に記録する。
+
+### 種の表
+
+`species` は必須で1〜64件。各種で使える鍵と既定値は次のとおり。
+
+| 鍵 | 必須・既定値 | 値と意味 |
+| --- | --- | --- |
+| `name` | 必須 | 重複しない種名 |
+| `render_path` | 必須 | `mega` または `foliage` |
+| `lods` | 必須 | LOD0 から順に1〜4件のメッシュ論理パス |
+| `mesh_radius_m` | 必須 | 有限で正のメッシュ半径 |
+| `scale_range` | 必須 | 散布 spec と同じ有限で正の `[min,max]`。min <= max、float の正規化最小値以上 |
+| `slope_follow` | 0 | 有限の0〜1。種表に保存 |
+| `brightness_variation` | 0 | 有限の0〜1。種表に保存し、配置一覧の色味には乱数を加えない |
+| `cast_shadow` | true | false なら `ScatterSpeciesFlagNoCastShadow` |
+| `ray_tracing` | true | false なら `ScatterSpeciesFlagNoRayTracing` |
+| `collision` | `[]` | 0〜16件の衝突の形。空でなければ `ScatterSpeciesFlagCollision` |
+| `wind` | 下位項目の既定 | 散布 spec と同じ。`stiffness` は既定1、有限で非負。`phase_seed` は既定0、uint32 の10進整数または10進文字列 |
+| `sky_occluder` | 任意。省略時は遮蔽物なし | 鍵と範囲は散布 spec JSON の `sky_occluder` と同じ |
+
+種表の `MinSpacingMeters` は `2 * mesh_radius_m * scale_range[1]`。有限で正の float で表せる値が必要で、間隔による配置の除外には使わない。
+寸法・属性は有限の float で表せる範囲とする。
+
+衝突の形は次の3形式で、形ごとの鍵は示したものだけを許す。座標は種のローカル座標。
+
+```json
+{ "shape": "capsule", "a": [0, 0, 0], "b": [0, 6, 0], "radius": 0.35 }
+{ "shape": "sphere", "center": [0, 1, 0], "radius": 1 }
+{ "shape": "box", "center": [0, 1, 0], "half_extents": [1, 1, 1] }
+```
+
+値はすべて有限、半径と半分の寸法は正。カプセルの `a`・`b` は A・B、球と箱の `center` は A に写す。
+球の B は0、箱の `half_extents` は B、箱の Radius は0。形の配列を種の順に連結し、種の `CollisionFirst`・`CollisionCount` で参照する。
+
+### 個体とチャンク
+
+`instances` は必須で1〜4,000,000件。各個体で使える鍵は次のとおり。
+
+| 鍵 | 必須・既定値 | 値と意味 |
+| --- | --- | --- |
+| `species` | 必須 | 種表にある名前 |
+| `position` | 必須 | 有限の `[x,y,z]`。Y の意味は height_mode に従う |
+| `yaw_deg` | 0 | 有限の角度。度で巡回してからラジアンに変換 |
+| `scale` | 1 | 有限で、参照する種の scale_range 内 |
+| `tint` | `[1,1,1]` | 色の倍率。各成分が有限の0〜2。EncodeScatterInstance へ tint / 2 を渡し、`q = round(tint * 127.5)` |
+| `seed` | 未指定 | 1〜4294967295の整数 token。0・小数・指数・文字列は拒否 |
+
+地形原点を格子原点とし、格子数は規則配置と同じ
+`ceil(CellCount * CellSizeM / chunk_size_m)`。個体のチャンクは X/Z とも
+`floor((position - Origin) / chunk_size_m)` で求め、格子外は拒否する。
+個体が入るチャンクだけを Z、X の順で書く。MinY・MaxY と AABB は全種の個体位置を囲む値とし、float の丸めでも範囲を縮めない。
+
+各チャンク・各種の中は Rank 昇順、同じ Rank は入力順。入力の番号は0から始め、Rank は
+`Mix(Mix(seed + 0x9e3779b97f4a7c15) ^ SpeciesKey(name) ^ 入力の番号)` の上位8ビット。
+Mix と種名の鍵は規則配置と共通。Dry は0。量子化と個体の検査には `EncodeScatterInstance` を使う。
+どれかの個体に seed があれば、出力する個体と同じ順に全個体ぶんの VariationSeeds を書き、未指定の個体は0とする。
+どの個体にも seed が無ければ配列を書かない。
+
+### エラーの種別
+
+診断は `配置の一覧 <name>: <日本語の説明>（個体の番号や種の名前）` の形で、文脈がある場合は末尾に添える。
+個体の番号は0から始まる。
+
+| name | 意味 |
+| --- | --- |
+| `json` | 構文、未知・重複した鍵、型の違い |
+| `invalid_species` | 種表の値・件数の不正、種名の重複 |
+| `unknown_species` | 個体の種名が種表に無い |
+| `non_finite` | 個体の位置・ヨー・拡大・色味を有限値で表せない。`1e400` も含む |
+| `scale_out_of_range` / `tint_out_of_range` | 個体の拡大または色味が範囲外 |
+| `invalid_seed` | seed が整数・範囲の条件を満たさない |
+| `invalid_collision` | 衝突の形・寸法・件数の不正 |
+| `invalid_chunk_size` | チャンク寸法が非有限・非正・地形タイル寸法の約数でない、または格子を表せない |
+| `out_of_grid` | 個体が格子外、または地形位置を標本化できない |
+| `terrain_mismatch` | 地形 cooked_hash が記録と実際で異なる |
+| `quantization` | NVSCT の個体の量子化または表の書き出しに失敗 |
+| `too_many_instances` | 個体数が1〜4,000,000件の範囲外 |

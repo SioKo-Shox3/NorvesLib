@@ -12157,3 +12157,38 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 体積の霧のパスの定数に局所霧を詰め、局所霧だけでもパスを回す: 着地(直し 0 回)
 - U6 半透明とワールドの板の前向きの描画に局所霧を掛ける: 着地(直し 0 回)
 - U3 Entity に付けて動かせる LocalFogVolumeComponent を足し、全体のビルドとシェーダーの検査で仕上げる: 着地(直し 1 回)
+
+- U1 NVSCT v0 に種の印・衝突の形の表・個体差の種の配列を足す: 着地(直し 0 回)
+- U2 SceneView の RT の除外の印と、TLAS の選択からの除外: 着地(直し 0 回)
+- U4 ScatterSystem が色味・個体差の種・影・RT の印を描画先へ渡す: 着地(直し 0 回)
+- U3 AssetCook に配置の一覧（JSON）の cook を足す: 着地(直し 0 回)
+- U5 ScatterSystem に空間の照会・1 本の非表示・非表示の集合の保存と復元を足す: 着地(直し 0 回)
+- U6 grassland の森の配置の見本を足して焼く: 着地(直し 0 回)
+- U7 grassland が森の配置を規則の散布と並べて置き、開発引数で外せるようにする: 着地(直し 1 回)
+
+## G12-GR47-PLACEMENT-COOK 手で置く森・岩の配置の一覧を NVSCT に焼き、散布に空間の照会・1 本の非表示・RT の指定を足す（2026-11-16、run 20261116-141756）
+- Done: NVSCT v0 に入力の口を足した（新しい形式は作らない）。種の Flags の bit1 = TLAS に入れない・bit2 = 影を落とさない、種ごとの衝突の形の表（幹のカプセルなど。種のローカル）、個体差の種の配列。新しい欄がすべて 0 のときは旧の予約欄と同じ並びで、規則で焼くファイルはバイト単位で今と同じ。`Docs/Architecture/NVSCTv0.md` を合わせた。
+- Done: AssetCook の散布の入口（`--kind world --format nvsct.v0.inst16`）が、規則の spec のほかに配置の一覧の JSON（種の表: メッシュの論理パス・描く経路・影・`ray_tracing`（既定 真）・衝突の形の一覧、個体の列: 種・位置・ヨー・拡大・色味・種）を読み、地形の格子のチャンクに位置で分けて同じ書き手で焼く（`Tools/AssetCook/ScatterPlacementList.{h,cpp}`）。量子化は NVSCT v0 の規則に従い、範囲外の拡大・NaN・未知の種・チャンクの寸法の不正を種別つきで拒否する。
+- Done: `ScatterSystem` が NVSCT の色味・個体差の種を `MegaScatterInstance` へ渡し、種の印で影と TLAS への参加を切り替える（TLAS は `SceneView` が ComponentId ごとの除外の印を持ち、公開の時に `MegaGeometryProxy::bRayTracing` を付けて SCN-MEGA-RT-SELECT の選択から外す。既存の散布は印が無いので今どおり入る）。`ForEachInstanceInRadius`（常駐のチャンクだけを AABB で先に捨てて走り、範囲が全部常駐かを返す）、`SetInstanceHidden`・`IsInstanceHidden`（`ScatterInstanceId` = 散布・チャンク・チャンク内の番号。チャンクの解放と読み直しをまたいで覚え、常駐のたびに当て直す）、`SerializeHiddenInstances`・`RestoreHiddenInstances`（セーブへ渡す口。結線は GR76 の側）を足した。
+- Done: `Assets/Scatter/grassland.forest.placement.json`（針葉樹 14000・枯れ木 4000（`ray_tracing` 偽）・岩 2000 の 2 万本、仮のメッシュ）を足し、資産の一覧 `GrasslandTerrain.json` で `Assets/Terrain/Grassland/GrasslandForest.nvsct` に焼く。grassland は地形の準備ができたら森を別の散布 `grassland_forest`（距離の常駐。木 384 m・岩 256 m）として規則の散布と並べて置き、シーンの終了・入場の失敗で外す。開発ビルドだけ `--grassland-forest=off` で森だけを外せる（既定 on。重複・不正な値は起動を止める）。
+- 証拠: `.harness/runs/20261116-141756/verify-G12-GR47-PLACEMENT-COOK-U7.txt`（`cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT=0、Game.exe までリンク。CookAssets で森を焼いて `SCATTER_COOKED chunks=204 species=3 instances=20000`・`COOK_ASSETS cooked=1 skipped=0`・EXIT=0）。
+- 回さなかったもの: done-when の `ScatterSystemQueryTest` の新設と `CookedScatterTest` のケースの追加は、試験を作らない決まり（絶対規則 11）で作っていない。verify の ctest の行も回していない。撮影・アプリの起動はしない決まり。
+- Next: ランナーの評価者の反証（危険地帯: アセットのクック・Public API の `ScatterSystem`・TLAS の選択）。人が見るときの見どころ: grassland（ランチャーの草原）で規則の散布（岩・倒木・低木・草花）と並んで針葉樹・枯れ木・岩の森が出ること、枯れ木だけが RT の反射・影の光線に映らないこと、`--grassland-forest=off` で森だけが消えて規則の散布は残ること、遠くへ動くと森が 384 m（岩は 256 m）で出入りすること。ほかのシーン（Rendering3DTest・荒野のバナナ・岩の散布）は見た目が変わらないこと。
+- Notes: `--grassland-forest=` の解析とモードへの受け渡しは置き場が `Game/GameApplicationHandler.{h,cpp}`（paths の外）にしか無いため、引数 1 つの解析とメンバ 2 つ・キャプチャ 1 つだけを足した。
+- Notes: （2026-11-17、判断役の判断で再開）verify の 3 行目を `CookAssets.ps1 -OnlyLogicalPath` から AssetCook で森の配置を直接焼く形に替え、試験の行を外した。全体のクック（`-OnlyLogicalPath` なしの CookAssets と `.harness/relay/precook` の系）は止めて再開しない。枠 NorvesLib-2 の `build/CookedAssets` に残る途中の全体のクック（14 項目の manifest）は使わない。manifest が無いときの `-OnlyLogicalPath` の拒否は SCN-MEGA-RT-SELECT-P1 で扱う。
+- U8 配置の一覧の種の表で空の遮蔽物の欄を規則の種の表と同じ読み手で受け、タスクの verify を回す: 着地(直し 0 回)
+
+## G12-GR47-PLACEMENT-COOK 統合ブランチの取り込みと仕上げ（2026-11-17、run 20261117-203902）
+- Done: 統合ブランチ feature/scene-launcher を取り込み、10 ファイルの衝突を解いた。NVSCT v0 の種の記録は統合ブランチの形（84〜96 は空の遮蔽物の欄）のまま残し、種ごとの衝突の形の範囲 {first, count} は衝突の表の節（ヘッダ 176）の頭に種の数だけ並べる形へ移した。形が 1 つも無いファイルは節ごと書かないので、新しい欄を使わない規則の散布のファイルは統合ブランチの出力と同じ並びになる。`Docs/Architecture/NVSCTv0.md` を合わせた。
+- Done: `SceneProxy` は `bRayTracing` と `bSkyMapProxy` を両方持ち、ハッシュにも両方入れる。`ray_tracing` が偽の種は TLAS の選択から外し、樹冠の空の遮蔽の組（instance mask 0x04）にも入れない。`ScatterSystem` は隠した個体を空の遮蔽物の配列にも入れず、常駐中に `SetInstanceHidden` で切り替えたときと `RestoreHiddenInstances` で集合を戻したときは、そのチャンクの遮蔽物の配列を作り直して公開する（常駐・解放のときは非表示の当て直しと同じ場所で配列を作る）。
+- Done: 配置の一覧の種の表で任意の `sky_occluder` を受ける。規則の散布 spec と同じ `ScatterSpecInput::SkyOccluder` で読み、種への写しは `CopyScatterSkyOccluder`（ScatterBaker と共有）で行う。欄の無い森の配置の出力はバイト単位で変わらない（SHA256 一致）。
+- 証拠: `.harness/runs/20261117-203902/verify-final.txt`（`cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT=0。AssetCook で森の配置を直接焼いて `SCATTER_COOKED chunks=204 species=3 instances=20000`・EXIT=0）。取り込み直後のビルドは `.harness/runs/20261117-203902/merge-build-1.txt`（EXIT=0）。
+- 回さなかったもの: 試験は作らない・回さない決まりで、ctest の行は回していない。撮影・アプリの起動はしない決まり。
+- Next: ランナーの評価者の反証（危険地帯: アセットのクック・Public API の `ScatterSystem`・TLAS の選択）。人が見るときの見どころ: grassland（ランチャーの草原）で規則の散布と並んで針葉樹・枯れ木・岩の森が出ること、枯れ木だけが RT の反射・影の光線に映らないこと、`--grassland-forest=off` で森だけが消えること、森が 384 m（岩は 256 m）で出入りすること。規則の散布の樹冠の空の遮蔽（統合ブランチで入った見た目）が取り込みの前と変わらないこと。
+- Notes: 判断役が決めた 2 点（衝突の形の範囲を種の記録の外に置く・`ray_tracing` 偽を樹冠の 0x04 より優先する）をそのまま採った。森の配置の見本には `sky_occluder` を付けていない（欄は任意）。
+- Notes: verify の `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` は回していない。全体のクックの manifest がこの枠に無く「対象外の項目が既存の manifest に無い」で落ちることを反復 2 に再現済みで、Debug の全体のクックは何時間もかかる。代わりに `worlds` を Grassland の 3 項目に絞った一時の資産の一覧（`-SpecDir`）で焼いた出力を証拠にした。
+- Notes: 要起票: 枠に全体のクックの manifest が無いと `CookAssets.ps1 -OnlyLogicalPath` の verify が「対象外の項目が既存の manifest に無い（先に全体をクック）」で EXIT=1 になる（反復 2、NorvesLib-2-u2 で地形を 14 分焼いたあと GrasslandGrassField.nvgfld で落ちた）。
+- Notes: （2026-11-17、run 20261117-103230）verify の `CookAssets.ps1 -OnlyLogicalPath` が前提にする全体のクック（cook_assets が真の 14 の一覧）を、この枠の `build/CookedAssets` へ RelWithDebInfo の AssetCook（`powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe`）で焼いている途中。焼いた項目は `.cookstate` の印で次の実行が飛ばすので、同じコマンドで続きから再開できる。15:55 の時点で荒野の地形の近景のタイル 66/100 が済み（崖のタイルは 1 件 40〜90 分、ほかは 1 件 20 秒前後）、近景の残り 34 件・地平の 98 件・`WastelandTerrainCliffOff` の 67 件が残る。全体が通って `manifest.json` が全項目になったら verify の 3 行を回して done にする。
+- Notes: 全体のクックを再開すると、焼き始めるまでの約 15〜20 分は済んだ項目の印の照合（元の画像・高さのハッシュ）だけで進む。途中で切ると毎回この分を失うので、次は 1 回の実行で最後まで焼く（16:22 の時点で近景 67/100）。
+- Notes: （2026-11-17 19:06、run 20261117-103230 の反復 3）全体のクックの続き: 荒野の地形の残りを 2 系に分けて同時に焼いた（`-SpecDir` に一覧の項目をそのまま写した部分の一覧、`-SkipPlacementGround`。印は全体の実行と同じで、焼いた項目は全体の実行で飛ばされる）。崖のある近景の 4 件（7_6・6_7・7_7・8_7）は計 8 分で済み、遅いのは地平のタイル（1 件 1〜3 分）だった。残りは `WastelandTerrain` の 29 件（崖の近景 7_8・8_8、外周 14・縁 8・継ぎ目 5）だけで、`WastelandTerrainCliffOff` は全部済んだ。続きは `.harness/relay/precook/rest1`・`rest2` の 2 系を同時に回し（各約 20 分の見込み）、そのあと RelWithDebInfo で全体を 1 回回して `manifest.json` を全項目にし（印の照合で約 15〜20 分）、verify を回す。
+- Notes: （2026-11-17 19:18）全体のクックの残りは `WastelandHorizon_outer_2_4` の 1 件だけ（`rest2` の系を回せば済む）。そのあと RelWithDebInfo で全体を 1 回回して `manifest.json` を全項目にし、verify を回す。
