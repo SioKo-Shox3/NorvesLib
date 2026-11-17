@@ -328,7 +328,7 @@ MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。�
 | 0 | 26 | `uniform VsmPointSampleBlock`（`std140`, `VsmPointSampleParams`） | `vsmPointBlock.point` | `BindConstantBuffer(26, vsmPointSampleUpload.Buffer, ...)` |
 | 0 | 27 | `sampler2D` | `rtgiSpecularHit` | `BindTexture(27, ...)`。このフレームの RTGI 履歴 `Depth`、または既定黒 |
 | 0 | 28 | `sampler2D` | `rtgiSpecularSky` | `BindTexture(28, ...)`。このフレームの RTGI 履歴 `Normal`、または既定黒 |
-| 0 | 29 | `sampler2DArray` | `skyOcclusionVisibility` | `BindTexture(29, ...)`。公開済み Visibility、またはゼロの既定配列 |
+| 0 | 29 | `sampler2DArray` | `skyOcclusionVisibility` | `BindTexture(29, ...)`。公開済み Visibility、またはゼロの既定配列。層 N+k は樹冠だけの組（N = 段の数） |
 | 0 | 30 | `sampler2DArray` | `skyOcclusionAux` | `BindTexture(30, ...)`。公開済み Aux、またはゼロの既定配列 |
 | 0 | 31 | `uniform PuddleSurfaceParamsBlock`（`std140`） | `u_PuddleSurface.params` | `BindConstantBuffer(LIGHTING_PUDDLE_SURFACE_BINDING, puddleSurfaceUpload.Buffer, ...)`。48 バイト（16 節） |
 | 0 | 32 | `sampler2D` | `overheadHeightMap` | `BindTexture(LIGHTING_OVERHEAD_HEIGHT_MAP_BINDING, ...)`。有効な雨の遮蔽マップ、または既定黒 |
@@ -380,13 +380,16 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全�
 
 ### 空の遮蔽クリップマップのチャネル
 
-各画像は R×R の 2D 配列で、層 k が段 k。テクセル幅は `BaseTexelMeters × 4^k`。窓の最小ワールドテクセルを (ox, oz) とし、[ox, ox+R) × [oz, oz+R) を覆う。中心は ((wx+0.5)·s, (wz+0.5)·s)、画像の番地は (wx mod R, wz mod R) の正の剰余である。
+各画像は R×R の 2D 配列で、層 k が段 k。Visibility は max(2 × N, 2) 層（N = 段の数）で、層 k が全種別の組の段 k、層 N+k が樹冠だけの組の段 k。テクセル幅は `BaseTexelMeters × 4^k`。窓の最小ワールドテクセルを (ox, oz) とし、[ox, ox+R) × [oz, oz+R) を覆う。中心は ((wx+0.5)·s, (wz+0.5)·s)、画像の番地は (wx mod R, wz mod R) の正の剰余である。
 
 | 画像 | 形式 | R | G | B | A |
 |---|---|---|---|---|---|
 | Occluders | RGBA32F | 地面高 G（絶対 m） | 樹冠の底 U（絶対 m） | 樹冠の頂 T（絶対 m。樹冠なしは G） | 樹冠の不透明度 κ |
-| Visibility | RGBA16F | b0 | cx | cy | cz |
+| Visibility（層 k、全種別） | RGBA16F | b0 | cx | cy | cz |
+| Visibility（層 N+k、樹冠だけ） | RGBA16F | b0 | cx | cy | cz |
 | Aux | RGBA16F | G − GroundHeightMeters | U − G | T − G | κ |
+
+樹冠だけの組は全種別と同じ歩みで樹冠の区間の光学的厚さだけを数え、不透明な樹冠は遮蔽率 1 とする。地面の下に入った向きは、その時点までの樹冠の厚さで遮蔽率を決めて歩みを止め、地面とその先の樹冠は数えない。
 
 ## 5. 表の更新手順
 

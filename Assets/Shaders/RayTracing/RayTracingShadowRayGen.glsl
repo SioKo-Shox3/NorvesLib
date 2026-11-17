@@ -61,7 +61,7 @@ void main()
     visibility = 1u;
     traceRayEXT(scene,
                 gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-                RayTracingInstanceMaskShadowCaster,
+                RayTracingInstanceMaskShadowCaster | RayTracingInstanceMaskSkyMapProxy,
                 0u,
                 0u,
                 0u,

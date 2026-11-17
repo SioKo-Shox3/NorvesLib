@@ -262,7 +262,7 @@ namespace NorvesLib::Core::Rendering
         outVisibilityTexture.reset();
         if (!bEnabled || !EnsurePipeline(context) || !context.SnapshotRayTracingScene ||
             !context.SnapshotRayTracingScene->TopLevel ||
-            !context.SnapshotRayTracingScene->HasShadowCasters() || !depthTexture || !normalTexture ||
+            !context.SnapshotRayTracingScene->HasRayTracingShadowCasters() || !depthTexture || !normalTexture ||
             depthTexture->GetWidth() == 0u || depthTexture->GetHeight() == 0u ||
             depthTexture->GetWidth() != normalTexture->GetWidth() ||
             depthTexture->GetHeight() != normalTexture->GetHeight() ||

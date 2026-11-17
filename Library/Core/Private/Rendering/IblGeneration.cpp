@@ -3,7 +3,11 @@
 
 #include "Rendering/DfgLut.h"
 #include "Rendering/EnvironmentMapSource.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/PaleFlatShading.h"
+#include "Rendering/ShaderManager.h"
+#include "RHI/ICommandList.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/IDevice.h"
 #include "RHI/ITexture.h"
 #include "Logging/LogMacros.h"
@@ -11,12 +15,48 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <limits>
 
 namespace NorvesLib::Core::Rendering
 {
 namespace
 {
+    struct alignas(16) SkyCloudBlendConstants
+    {
+        float ClearWeight[4] = {};
+        float OvercastWeight[4] = {};
+        uint32_t Target[4] = {};
+    };
+    static_assert(sizeof(SkyCloudBlendConstants) == 48u);
+
+    RHI::DescriptorSetDesc MakeSkyCloudBlendLayout()
+    {
+        const RHI::ResourceBindType types[] = {
+            RHI::ResourceBindType::ConstantBuffer,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::RWTexture};
+        RHI::DescriptorSetDesc desc;
+        for (uint32_t binding = 0u; binding < 4u; ++binding)
+        {
+            RHI::DescriptorBinding entry;
+            entry.binding = binding;
+            entry.type = types[binding];
+            entry.stages = RHI::ShaderStage::Compute;
+            desc.bindings.push_back(entry);
+        }
+        return desc;
+    }
+
+    bool IsSkyCloudBlendSampledTexture(const RHI::TexturePtr& texture)
+    {
+        return texture && texture->GetWidth() != 0u && texture->GetHeight() != 0u &&
+            texture->GetDepth() == 1u && texture->GetArraySize() == 1u &&
+            !texture->IsCubemap() && texture->GetMipLevels() != 0u &&
+            (texture->GetUsage() & RHI::ResourceUsage::ShaderRead) != RHI::ResourceUsage::None;
+    }
+
     static uint32_t ReverseBits32(uint32_t value)
     {
         value = (value << 16u) | (value >> 16u);
@@ -100,6 +140,244 @@ namespace
     }
 
 }
+
+    RHI::TexturePtr CreateSkyCloudBlendOutputTexture(RHI::IDevice* device,
+                                                     uint32_t width,
+                                                     uint32_t height,
+                                                     uint32_t mipLevels,
+                                                     const char* name)
+    {
+        constexpr uint32_t bytesPerPixel = 4u * sizeof(uint16_t);
+        constexpr uint32_t maxPitch = (std::numeric_limits<uint32_t>::max)();
+        if (!device || width == 0u || height == 0u || mipLevels == 0u ||
+            width > maxPitch / bytesPerPixel || height > maxPitch / (width * bytesPerPixel))
+        {
+            return nullptr;
+        }
+
+        uint32_t maxMipLevels = 0u;
+        for (uint32_t longest = (std::max)(width, height); longest != 0u; longest >>= 1u)
+        {
+            ++maxMipLevels;
+        }
+        if (mipLevels > maxMipLevels)
+        {
+            return nullptr;
+        }
+
+        try
+        {
+            RHI::TextureDesc desc;
+            desc.Width = width;
+            desc.Height = height;
+            desc.MipLevels = mipLevels;
+            desc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+            desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::UnorderedAccess |
+                RHI::ResourceUsage::TransferDst;
+            desc.DebugName = name;
+            RHI::TexturePtr texture = device->CreateTexture(desc);
+            if (!texture)
+            {
+                return nullptr;
+            }
+
+            const uint32_t baseSlicePitch = width * bytesPerPixel * height;
+            const Container::VariableArray<uint16_t> zeroData(baseSlicePitch / sizeof(uint16_t), 0u);
+            uint32_t mipWidth = width;
+            uint32_t mipHeight = height;
+            for (uint32_t mip = 0u; mip < mipLevels; ++mip)
+            {
+                const uint32_t rowPitch = mipWidth * bytesPerPixel;
+                texture->Update(zeroData.data(), rowPitch, rowPitch * mipHeight, mip);
+                mipWidth = (std::max)(1u, mipWidth >> 1u);
+                mipHeight = (std::max)(1u, mipHeight >> 1u);
+            }
+            return texture;
+        }
+        catch (const std::exception&)
+        {
+            return nullptr;
+        }
+    }
+
+    bool SkyCloudBlendRecorder::Initialize(RHI::IDevice* device, ShaderManager* shaderManager)
+    {
+        Shutdown();
+        if (device && shaderManager)
+        {
+            try
+            {
+                const RHI::DescriptorSetDesc layout = MakeSkyCloudBlendLayout();
+                m_Shader = shaderManager->LoadShader("Sky/SkyCloudBlend.comp", RHI::ShaderStage::Compute);
+                m_DescriptorSetLayout = device->GetOrCreateDescriptorSetLayout(layout);
+                if (m_Shader && m_DescriptorSetLayout)
+                {
+                    RHI::ComputePipelineDesc pipelineDesc;
+                    pipelineDesc.computeShader = m_Shader;
+                    pipelineDesc.descriptorSetLayouts.push_back(layout);
+                    m_Pipeline = device->CreateComputePipeline(pipelineDesc);
+
+                    RHI::SamplerDesc samplerDesc;
+                    samplerDesc.filterMin = RHI::FilterMode::Point;
+                    samplerDesc.filterMag = RHI::FilterMode::Point;
+                    samplerDesc.filterMip = RHI::FilterMode::Point;
+                    samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+                    samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+                    samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+                    m_Sampler = device->CreateSampler(samplerDesc);
+                }
+            }
+            catch (const std::exception&)
+            {
+                Shutdown();
+            }
+        }
+        if (!IsReady())
+        {
+            NORVES_LOG_WARNING("SkyCloudBlend", "空と IBL の混ぜの初期化に失敗しました");
+            Shutdown();
+            return false;
+        }
+        return true;
+    }
+
+    void SkyCloudBlendRecorder::Shutdown()
+    {
+        m_Dispatches.clear();
+        m_Outputs.clear();
+        m_Sampler.reset();
+        m_Pipeline.reset();
+        m_DescriptorSetLayout.reset();
+        m_Shader.reset();
+    }
+
+    bool SkyCloudBlendRecorder::IsReady() const
+    {
+        return m_Shader && m_DescriptorSetLayout && m_Pipeline && m_Sampler;
+    }
+
+    bool SkyCloudBlendRecorder::Prepare(FrameResourceLane& lane,
+                                        const SkyCloudBlendTarget* targets,
+                                        size_t targetCount,
+                                        float clearWeight,
+                                        const Math::Vector3& overcastWeight)
+    {
+        m_Dispatches.clear();
+        m_Outputs.clear();
+        if (!IsReady() || (targetCount != 0u && !targets))
+        {
+            return false;
+        }
+
+        const auto fail = [this]()
+        {
+            m_Dispatches.clear();
+            m_Outputs.clear();
+            return false;
+        };
+        try
+        {
+            for (size_t index = 0u; index < targetCount; ++index)
+            {
+                const SkyCloudBlendTarget& target = targets[index];
+                if (!IsSkyCloudBlendSampledTexture(target.Clear) ||
+                    !IsSkyCloudBlendSampledTexture(target.UnitOvercast) ||
+                    !IsSkyCloudBlendSampledTexture(target.Output) ||
+                    target.Output->GetFormat() != RHI::Format::R16G16B16A16_FLOAT ||
+                    (target.Output->GetUsage() & RHI::ResourceUsage::UnorderedAccess) == RHI::ResourceUsage::None ||
+                    target.Clear->GetWidth() != target.UnitOvercast->GetWidth() ||
+                    target.Clear->GetHeight() != target.UnitOvercast->GetHeight() ||
+                    target.Clear->GetWidth() != target.Output->GetWidth() ||
+                    target.Clear->GetHeight() != target.Output->GetHeight() ||
+                    target.UnitOvercast->GetMipLevels() < target.Clear->GetMipLevels() ||
+                    target.Output->GetMipLevels() != target.Clear->GetMipLevels())
+                {
+                    return fail();
+                }
+                for (size_t other = 0u; other < targetCount; ++other)
+                {
+                    if (target.Output == targets[other].Clear ||
+                        target.Output == targets[other].UnitOvercast ||
+                        (other < index && target.Output == targets[other].Output))
+                    {
+                        return fail();
+                    }
+                }
+            }
+
+            const bool bCopyClear = clearWeight == 1.0f && overcastWeight.x == 0.0f &&
+                overcastWeight.y == 0.0f && overcastWeight.z == 0.0f;
+            for (size_t index = 0u; index < targetCount; ++index)
+            {
+                const SkyCloudBlendTarget& target = targets[index];
+                uint32_t width = target.Output->GetWidth();
+                uint32_t height = target.Output->GetHeight();
+                for (uint32_t mip = 0u; mip < target.Output->GetMipLevels(); ++mip)
+                {
+                    SkyCloudBlendConstants constants;
+                    constants.ClearWeight[0] = clearWeight;
+                    constants.OvercastWeight[0] = overcastWeight.x;
+                    constants.OvercastWeight[1] = overcastWeight.y;
+                    constants.OvercastWeight[2] = overcastWeight.z;
+                    constants.Target[0] = width;
+                    constants.Target[1] = height;
+                    constants.Target[2] = mip;
+                    constants.Target[3] = bCopyClear ? 1u : 0u;
+
+                    const FrameUploadAllocation uniform = lane.AllocateConstants(constants);
+                    const FrameDescriptorAllocation descriptor = lane.AllocateDescriptorSet(m_DescriptorSetLayout);
+                    if (!uniform.IsValid() || !descriptor.IsValid())
+                    {
+                        return fail();
+                    }
+                    const RHI::DescriptorSetPtr& set = descriptor.Set;
+                    set->BindConstantBuffer(0u, uniform.Buffer, uniform.GetOffset32(), uniform.GetSize32());
+                    set->BindTexture(1u, target.Clear);
+                    set->BindSampler(1u, m_Sampler);
+                    set->BindTexture(2u, target.UnitOvercast);
+                    set->BindSampler(2u, m_Sampler);
+                    set->BindStorageTexture(3u, target.Output, mip);
+                    set->Update();
+                    m_Dispatches.push_back({set, width, height});
+                    width = (std::max)(1u, width >> 1u);
+                    height = (std::max)(1u, height >> 1u);
+                }
+                m_Outputs.push_back(target.Output);
+            }
+        }
+        catch (const std::exception&)
+        {
+            return fail();
+        }
+        return true;
+    }
+
+    bool SkyCloudBlendRecorder::HasPrepared() const
+    {
+        return !m_Dispatches.empty();
+    }
+
+    void SkyCloudBlendRecorder::Record(RHI::ICommandList& commands)
+    {
+        if (m_Dispatches.empty())
+        {
+            return;
+        }
+        commands.SetPipeline(m_Pipeline);
+        for (const PreparedDispatch& dispatch : m_Dispatches)
+        {
+            commands.SetDescriptorSet(dispatch.DescriptorSet, 0u);
+            const uint32_t groupsX = dispatch.Width / 8u + (dispatch.Width % 8u != 0u ? 1u : 0u);
+            const uint32_t groupsY = dispatch.Height / 8u + (dispatch.Height % 8u != 0u ? 1u : 0u);
+            commands.Dispatch(groupsX, groupsY, 1u);
+        }
+        for (const RHI::TexturePtr& output : m_Outputs)
+        {
+            commands.TextureBarrier(output, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
+        }
+        m_Dispatches.clear();
+        m_Outputs.clear();
+    }
 
     bool CreateIblResources(RHI::IDevice* device,
                                    const Container::VariableArray<float>& sourceData,

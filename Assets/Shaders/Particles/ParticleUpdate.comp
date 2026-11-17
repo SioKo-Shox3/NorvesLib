@@ -181,10 +181,12 @@ bool ApplyParticleCollision(GpuEmitterParams emitter, GpuCollisionParams collisi
         particle.posAge.xyz = hitPosition;
         particle.velLife.xyz = vec3(0.0);
         particle.meta.z |= kGpuParticleFlagStuck;
+        particle.meta.w = GpuParticlePackNormal(normal);
     }
     else if (collision.response == kVfxCollisionBounce)
     {
         particle.posAge.xyz = hitPosition;
+        particle.meta.w = GpuParticlePackNormal(normal);
         if (depthSurface)
         {
             float normalVelocity = dot(particle.velLife.xyz, normal);

@@ -123,6 +123,9 @@ namespace NorvesLib::Core::Rendering
 
         bool bVisible = true;                       // 描画するか
         bool bCastShadow = true;                    // シャドウを落とすか
+        // 空の遮蔽のマップ（樹冠だけの組）が光線の代わりに遮蔽を受け持つ物か。
+        // 影を落とす物はTLASへinstance mask 0x04で入り、DDGI・RTGIの光線に当たらない。
+        bool bSkyMapProxy = false;
         bool bReceiveShadow = true;                 // シャドウを受けるか
         bool bAffectDynamicIndirectLighting = true; // 動的間接光の影響を受けるか
         bool bAffectDistanceFieldLighting = false;  // ディスタンスフィールドライティング
@@ -246,6 +249,9 @@ namespace NorvesLib::Core::Rendering
 
         bool bVisible = true;
         bool bCastShadow = true;
+        // 空の遮蔽のマップ（樹冠だけの組）が光線の代わりに遮蔽を受け持つ物か。
+        // 影を落とす物はTLASへinstance mask 0x04で入り、DDGI・RTGIの光線に当たらない。
+        bool bSkyMapProxy = false;
         RenderLayer LayerMask = RenderLayer::Default;
 
         /// 散布の 1 本ごとの色味（RGBA8。白は色を変えない）。1 本ずつの MegaGeometryComponent は既定のまま

@@ -38,22 +38,22 @@ namespace NorvesLib::Core::Rendering
 
     const SkyAtmosphereModel* SkyAtmosphereSourceCache::AcquireModel(const SkyAtmosphereParameters& parameters)
     {
-        const SkyAtmosphereParameters sanitized = SanitizeSkyAtmosphereParameters(parameters);
-        if (!sanitized.bEnabled)
+        const SkyAtmosphereParameters clearKey = MakeSkyAtmosphereClearKey(parameters);
+        if (!clearKey.bEnabled)
         {
             return nullptr;
         }
 
-        if (m_Model && AreSkyAtmosphereParametersEqual(m_ModelParameters, sanitized))
+        if (m_Model && AreSkyAtmosphereClearKeysEqual(m_ModelParameters, clearKey))
         {
             return m_Model.get();
         }
 
         Container::TUniquePtr<SkyAtmosphereModel> created =
-            Container::MakeUnique<SkyAtmosphereModel>(sanitized, m_Model.get());
+            Container::MakeUnique<SkyAtmosphereModel>(clearKey, m_Model.get());
         created->BuildSkyViewTable();
         m_Model = std::move(created);
-        m_ModelParameters = sanitized;
+        m_ModelParameters = clearKey;
         ++m_ModelBuildCount;
         m_bRadianceSourceBuilt = false;
         m_bRadianceSourceValid = false;
@@ -132,6 +132,86 @@ namespace NorvesLib::Core::Rendering
         return &m_RadianceSource;
     }
 
+    const Container::VariableArray<float>* SkyAtmosphereSourceCache::AcquireUnitOvercastRadianceSource(
+        const SkyAtmosphereParameters& parameters, uint32_t width, uint32_t height)
+    {
+        const SkyAtmosphereParameters sanitized = SanitizeSkyAtmosphereParameters(parameters);
+        const SkyAtmosphereModel* model = AcquireModel(sanitized);
+        if (model == nullptr)
+        {
+            return nullptr;
+        }
+
+        if (width == 0u || height == 0u ||
+            static_cast<size_t>(width) > std::numeric_limits<size_t>::max() /
+                                         static_cast<size_t>(height))
+        {
+            return nullptr;
+        }
+        const size_t pixelCount = static_cast<size_t>(width) * height;
+        if (pixelCount > std::numeric_limits<size_t>::max() / 4u)
+        {
+            return nullptr;
+        }
+
+        if (m_bUnitOvercastSourceBuilt && m_UnitOvercastSourceWidth == width &&
+            m_UnitOvercastSourceHeight == height &&
+            m_UnitOvercastParameters.PlanetRadiusMeters == sanitized.PlanetRadiusMeters &&
+            m_UnitOvercastParameters.GroundAltitudeMeters == sanitized.GroundAltitudeMeters &&
+            m_UnitOvercastParameters.GroundAlbedo.x == sanitized.GroundAlbedo.x &&
+            m_UnitOvercastParameters.GroundAlbedo.y == sanitized.GroundAlbedo.y &&
+            m_UnitOvercastParameters.GroundAlbedo.z == sanitized.GroundAlbedo.z &&
+            m_UnitOvercastParameters.OvercastZenithToHorizonRatio == sanitized.OvercastZenithToHorizonRatio)
+        {
+            return m_bUnitOvercastSourceValid ? &m_UnitOvercastRadianceSource : nullptr;
+        }
+
+        m_UnitOvercastRadianceSource.clear();
+        m_UnitOvercastParameters = sanitized;
+        m_UnitOvercastSourceWidth = width;
+        m_UnitOvercastSourceHeight = height;
+        m_bUnitOvercastSourceBuilt = true;
+        m_bUnitOvercastSourceValid = false;
+        try
+        {
+            m_UnitOvercastRadianceSource.resize(pixelCount * 4u, 0.0f);
+        }
+        catch (const std::bad_alloc&)
+        {
+            return nullptr;
+        }
+        catch (const std::length_error&)
+        {
+            return nullptr;
+        }
+
+        for (uint32_t y = 0u; y < height; ++y)
+        {
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const SkyRadianceSample sample = model->SampleUnitOvercastSkyView(
+                    SkyDirectionFromEquirectangular(x, y, width, height),
+                    sanitized.OvercastZenithToHorizonRatio);
+                if (!sample.bValid || !std::isfinite(sample.Radiance.x) ||
+                    !std::isfinite(sample.Radiance.y) || !std::isfinite(sample.Radiance.z))
+                {
+                    m_UnitOvercastRadianceSource.clear();
+                    return nullptr;
+                }
+
+                const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
+                m_UnitOvercastRadianceSource[offset + 0u] = ClampSkyRadianceForFp16(sample.Radiance.x);
+                m_UnitOvercastRadianceSource[offset + 1u] = ClampSkyRadianceForFp16(sample.Radiance.y);
+                m_UnitOvercastRadianceSource[offset + 2u] = ClampSkyRadianceForFp16(sample.Radiance.z);
+                m_UnitOvercastRadianceSource[offset + 3u] = 1.0f;
+            }
+        }
+
+        m_bUnitOvercastSourceValid = true;
+        ++m_UnitOvercastBuildCount;
+        return &m_UnitOvercastRadianceSource;
+    }
+
     void SkyAtmosphereSourceCache::Reset()
     {
         m_Model.reset();
@@ -141,5 +221,11 @@ namespace NorvesLib::Core::Rendering
         m_RadianceSourceHeight = 0u;
         m_bRadianceSourceBuilt = false;
         m_bRadianceSourceValid = false;
+        m_UnitOvercastParameters = SkyAtmosphereParameters{};
+        m_UnitOvercastRadianceSource.clear();
+        m_UnitOvercastSourceWidth = 0u;
+        m_UnitOvercastSourceHeight = 0u;
+        m_bUnitOvercastSourceBuilt = false;
+        m_bUnitOvercastSourceValid = false;
     }
 }

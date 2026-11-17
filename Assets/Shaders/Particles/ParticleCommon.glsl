@@ -74,7 +74,8 @@ const uint kGpuCurveKeyCountStretchShift = 24u;
 // シフト前の曲線キー数のマスク。0 は曲線なし。
 const uint kGpuCurveKeyCountMask = 0xFFu;
 
-// 粒の位置・年齢、速度・寿命、通し番号・エミッタのスロット・状態の旗・予約 0。
+// 粒の位置・年齢、速度・寿命、通し番号・エミッタのスロット・状態の旗。
+// meta.w は命中の法線（GpuParticlePackNormal。0 は法線なし）。
 struct GpuParticle
 {
     vec4 posAge;
@@ -263,6 +264,56 @@ vec3 VfxTurbulenceAcceleration(vec3 position, float frequency, float strength, u
     }
 
     return acceleration;
+}
+
+// 命中の法線が格納されていることを示す旗。bit 30 は使わない。
+const uint kGpuParticleNormalValidBit = 1u << 31u;
+
+// 法線を八面体に写像し、x・y を各 15 bit の unorm に詰める。無効な法線は 0 を返す。
+uint GpuParticlePackNormal(vec3 n)
+{
+    if (any(isnan(n)) || any(isinf(n)))
+    {
+        return 0u;
+    }
+    float maximumComponent = max(max(abs(n.x), abs(n.y)), abs(n.z));
+    if (maximumComponent <= 1.0e-8)
+    {
+        return 0u;
+    }
+    // 先に最大成分で割り、有限で大きな入力でも和のオーバーフローを避ける。
+    n /= maximumComponent;
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec2 octahedral = n.xy;
+    if (n.z < 0.0)
+    {
+        // 軸上の 0 は正側に折り返し、負の Z 軸も四隅へ写す。
+        vec2 direction = vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+        octahedral = (vec2(1.0) - abs(octahedral.yx)) * direction;
+    }
+    vec2 unorm = clamp(octahedral * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+    uvec2 quantized = uvec2(floor(unorm * 32767.0 + 0.5));
+    return kGpuParticleNormalValidBit | quantized.x | (quantized.y << 15u);
+}
+
+// 格納した法線を復元して正規化する。法線なしは上向きを返し、戻り値を false にする。
+bool GpuParticleUnpackNormal(uint packed, out vec3 n)
+{
+    if ((packed & kGpuParticleNormalValidBit) == 0u)
+    {
+        n = vec3(0.0, 1.0, 0.0);
+        return false;
+    }
+    vec2 octahedral = vec2(float(packed & 0x7FFFu), float((packed >> 15u) & 0x7FFFu)) /
+        32767.0 * 2.0 - 1.0;
+    n = vec3(octahedral, 1.0 - abs(octahedral.x) - abs(octahedral.y));
+    if (n.z < 0.0)
+    {
+        vec2 direction = vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+        n.xy = (vec2(1.0) - abs(n.yx)) * direction;
+    }
+    n = normalize(n);
+    return true;
 }
 
 // 通し番号からリングのスロットを返す。capacity は 1 以上が前提で、0 なら poolOffset を返す。

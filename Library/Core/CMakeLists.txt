@@ -262,6 +262,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/GpuParticle/GpuParticleSpawnPlanner.cpp
     Private/Rendering/GpuParticle/GpuParticleEmitterAllocator.cpp
     Private/Rendering/GpuParticle/GpuParticleSimulationPass.cpp
+    Private/Rendering/GpuParticle/GpuParticleDrawPass.cpp
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
     Private/Rendering/CanvasView.cpp
@@ -348,6 +349,10 @@ set(PRIVATE_SOURCES
     Private/Rendering/EnvironmentParameters.cpp
     Private/Environment/EnvironmentState.cpp
     Private/Environment/EnvironmentSystem.cpp
+    Private/Environment/EnvironmentDataFile.h
+    Private/Environment/EnvironmentDataFile.cpp
+    Private/Environment/SunPath.cpp
+    Private/Environment/WeatherSchedule.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
     Private/Rendering/PuddleSurfaceParams.h
     Private/Rendering/SkyOcclusion.cpp
@@ -755,6 +760,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/GpuParticle/GpuParticleTypes.h
     Public/Rendering/GpuParticle/GpuParticleFrame.h
     Public/Rendering/GpuParticle/GpuParticleSimulationPass.h
+    Public/Rendering/GpuParticle/GpuParticleDrawPass.h
+    Public/Rendering/GpuParticle/GpuParticleDraw.h
     Public/Rendering/TextureAssetTypes.h
     Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h
@@ -776,6 +783,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/EnvironmentParameters.h
     Public/Environment/EnvironmentState.h
     Public/Environment/EnvironmentSystem.h
+    Public/Environment/SunPath.h
+    Public/Environment/WeatherSchedule.h
     Public/Rendering/EnvironmentGpuParams.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h

@@ -218,6 +218,17 @@ namespace NorvesLib::Core::Environment
                         WarnInvalid(path);
                     }
                 }
+                else if (group == _T("sun") && key == _T("timeScale"))
+                {
+                    if (ReadNumber(value, 0, 3600))
+                    {
+                        target.Values.ClockTimeScale = static_cast<float>(value.AsNumber());
+                    }
+                    else
+                    {
+                        WarnInvalid(path);
+                    }
+                }
                 else if (group == _T("cloudLayer") && key == _T("enabled"))
                 {
                     if (value.IsBoolean())
@@ -339,6 +350,7 @@ namespace NorvesLib::Core::Environment
         writer.WriteString("mode", value.SunMode == EEnvironmentSunMode::Clock ? "clock" : "manual");
         writer.WriteNumber("altitudeDeg", value.SunAltitudeDegrees);
         writer.WriteNumber("azimuthDeg", value.SunAzimuthDegrees);
+        writer.WriteNumber("timeScale", value.ClockTimeScale);
         writer.EndObject();
         writer.WriteNumber("seed", value.Seed);
         writer.EndObject();
@@ -521,6 +533,7 @@ namespace NorvesLib::Core::Environment
         result.SunAltitudeDegrees = ClampFinite(in.SunAltitudeDegrees, defaults.SunAltitudeDegrees, -90.0f, 90.0f);
         result.SunAzimuthDegrees = ClampFinite(in.SunAzimuthDegrees, defaults.SunAzimuthDegrees, -360.0f, 360.0f);
         result.TimeOfDayHours = WrapFinite(in.TimeOfDayHours, defaults.TimeOfDayHours, 24.0f);
+        result.ClockTimeScale = ClampFinite(in.ClockTimeScale, defaults.ClockTimeScale, 0.0f, 3600.0f);
         result.WetTimeConstantSeconds = ClampMinimumFinite(in.WetTimeConstantSeconds, defaults.WetTimeConstantSeconds, 0.001f);
         result.DryTimeConstantSeconds = ClampMinimumFinite(in.DryTimeConstantSeconds, defaults.DryTimeConstantSeconds, 0.001f);
         if (!std::isfinite(in.GameTimeSeconds))
