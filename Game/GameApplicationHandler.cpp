@@ -429,6 +429,7 @@ namespace Game
         // --rain=<0〜1>: 雨の強さ。--wetness=<0〜1>: 地表の濡れ。
         // --cloud-cover=<0〜1>: 均一な曇天の度合い。--wind=<方位>,<速さ>,<突風>: 風（0〜360 度、0〜100 m/s、0〜1）。
         // --cloud-cover-sweep=<frames>: 開発ビルドで雲量を指定フレーム数で 0 から 1 へ動かす。
+        // --sun-sweep=<開始の度>,<終わりの度>,<秒>: 開発ビルドで太陽の高度を連続して動かす。
         // --environment-preset=<name>: 気象のプリセット。明示の値をプリセットに重ねる。
         // どれかがあればシーンの準備の後に気象を有効にして当てる。無ければ気象は無効のまま。
         constexpr const TCHAR* kRainOption = TEXT("--rain=");
@@ -454,6 +455,11 @@ namespace Game
         bool s_bCloudCoverSweepActive = false;
         uint32_t s_CloudCoverSweepElapsedFrames = 0;
         bool s_bCloudCoverSweepConflictWarned = false;
+        constexpr const TCHAR* kSunSweepOption = TEXT("--sun-sweep=");
+        bool s_bHasSunSweep = false;
+        float s_SunSweep[3] = {};
+        bool s_bSunSweepActive = false;
+        float s_SunSweepElapsedSeconds = 0.0f;
 #endif
 
         String ResolveEnvironmentPresetRoot()
@@ -474,7 +480,7 @@ namespace Game
         bool HasEnvironmentArguments()
         {
 #if NORVES_BUILD_DEVELOPMENT
-            if (s_bHasCloudCoverSweep)
+            if (s_bHasCloudCoverSweep || s_bHasSunSweep)
             {
                 return true;
             }
@@ -497,6 +503,7 @@ namespace Game
             }
 #if NORVES_BUILD_DEVELOPMENT
             s_bCloudCoverSweepActive = false;
+            s_bSunSweepActive = false;
 #endif
             s_bEnvironmentApplyPending = (id != Game::GameModes::Launcher);
         }
@@ -519,8 +526,23 @@ namespace Game
             const auto& cloudLayer = coordinator.GetCloudLayer();
             const auto& wind = coordinator.GetWindParameters();
             auto& environment = engine.GetEnvironment();
+#if NORVES_BUILD_DEVELOPMENT
+            if (s_bHasSunSweep)
+            {
+                auto sweepSky = sky;
+                sweepSky.bDebugLogSunSweep = true;
+                environment.Enable(Environment::MakeEnvironmentStateFromScene(sweepSky, fog, cloudLayer, wind),
+                                   Environment::MakeEnvironmentSceneBase(sweepSky, fog, cloudLayer, wind));
+            }
+            else
+            {
+                environment.Enable(Environment::MakeEnvironmentStateFromScene(sky, fog, cloudLayer, wind),
+                                   Environment::MakeEnvironmentSceneBase(sky, fog, cloudLayer, wind));
+            }
+#else
             environment.Enable(Environment::MakeEnvironmentStateFromScene(sky, fog, cloudLayer, wind),
                                Environment::MakeEnvironmentSceneBase(sky, fog, cloudLayer, wind));
+#endif
 
             Environment::EnvironmentTarget target;
             if (s_bHasEnvironmentPreset)
@@ -569,6 +591,14 @@ namespace Game
                 s_CloudCoverSweepElapsedFrames = 0;
                 s_bCloudCoverSweepActive = true;
                 LOG_INFO("CLOUD_COVER_SWEEP start frames=%u", s_CloudCoverSweepFrames);
+            }
+            if (s_bHasSunSweep)
+            {
+                target.Values.SunAltitudeDegrees = s_SunSweep[0];
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::SunAltitude);
+                s_SunSweepElapsedSeconds = 0.0f;
+                s_bSunSweepActive = true;
+                LOG_INFO("SUN_SWEEP start from=%.3f to=%.3f seconds=%.3f", s_SunSweep[0], s_SunSweep[1], s_SunSweep[2]);
             }
 #endif
             environment.SetImmediate(target);
@@ -1188,6 +1218,12 @@ namespace Game
         s_bCloudCoverSweepActive = false;
         s_CloudCoverSweepElapsedFrames = 0;
         s_bCloudCoverSweepConflictWarned = false;
+        s_bHasSunSweep = false;
+        s_SunSweep[0] = 0.0f;
+        s_SunSweep[1] = 0.0f;
+        s_SunSweep[2] = 0.0f;
+        s_bSunSweepActive = false;
+        s_SunSweepElapsedSeconds = 0.0f;
 #endif
         s_bRendering3DTestHasSunElevation = false;
         s_bRendering3DTestHasSunAzimuth = false;
@@ -1355,6 +1391,24 @@ namespace Game
                 }
                 s_bHasCloudCoverSweep = true;
                 s_CloudCoverSweepFrames = frames;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kSunSweepOption, environmentValue))
+            {
+                const auto firstComma = environmentValue.find(TEXT(','));
+                const auto secondComma = firstComma == String::npos ? String::npos :
+                    environmentValue.find(TEXT(','), firstComma + 1);
+                if (firstComma == String::npos || secondComma == String::npos ||
+                    environmentValue.find(TEXT(','), secondComma + 1) != String::npos ||
+                    !TryParseBoundedFloat(environmentValue.substr(0, firstComma), -90.0f, 90.0f, s_SunSweep[0]) ||
+                    !TryParseBoundedFloat(environmentValue.substr(firstComma + 1, secondComma - firstComma - 1), -90.0f, 90.0f, s_SunSweep[1]) ||
+                    !TryParseBoundedFloat(environmentValue.substr(secondComma + 1), 0.0f, 3600.0f, s_SunSweep[2]) ||
+                    s_SunSweep[2] <= 0.0f)
+                {
+                    LOG_ERROR("--sun-sweep は <開始の度>,<終わりの度>,<秒>（-90〜90 度、-90〜90 度、0 より大きく 3600 秒以下）の 3 つの数で指定してください");
+                    return false;
+                }
+                s_bHasSunSweep = true;
                 continue;
             }
 #endif
@@ -5021,6 +5075,31 @@ namespace Game
                 {
                     s_bCloudCoverSweepActive = false;
                     LOG_INFO("CLOUD_COVER_SWEEP done frames=%u", s_CloudCoverSweepFrames);
+                }
+            }
+        }
+        if (s_bSunSweepActive)
+        {
+            auto* engine = NorvesLib::Core::Engine::GEngine;
+            if (engine == nullptr || !engine->GetEnvironment().IsEnabled())
+            {
+                s_bSunSweepActive = false;
+            }
+            else
+            {
+                if (std::isfinite(deltaTime) && deltaTime >= 0.0f)
+                {
+                    s_SunSweepElapsedSeconds += deltaTime;
+                }
+                const float fraction = std::fmin(1.0f, s_SunSweepElapsedSeconds / s_SunSweep[2]);
+                Environment::EnvironmentTarget target;
+                target.Mask = Environment::EnvironmentFieldBit(Environment::EEnvironmentField::SunAltitude);
+                target.Values.SunAltitudeDegrees = s_SunSweep[0] + (s_SunSweep[1] - s_SunSweep[0]) * fraction;
+                engine->GetEnvironment().SetTarget(target);
+                if (fraction >= 1.0f)
+                {
+                    s_bSunSweepActive = false;
+                    LOG_INFO("SUN_SWEEP done seconds=%.3f", s_SunSweep[2]);
                 }
             }
         }
