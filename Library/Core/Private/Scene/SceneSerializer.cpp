@@ -492,6 +492,58 @@ namespace NorvesLib::Core::Scene
             return false;
         }
 
+        const ObjectSnapshot* FindPrefabObjectByAlias(
+            const EntitySubtreeSnapshotNode& node, SubtreeSnapshotAliasId alias)
+        {
+            if (node.Alias == alias)
+            {
+                return &node.Object;
+            }
+            for (const ComponentSubtreeSnapshot& component : node.Components)
+            {
+                if (component.Alias == alias)
+                {
+                    return &component.Object;
+                }
+            }
+            for (const EntitySubtreeSnapshotNode& child : node.Children)
+            {
+                if (const ObjectSnapshot* object = FindPrefabObjectByAlias(child, alias))
+                {
+                    return object;
+                }
+            }
+            return nullptr;
+        }
+
+        const ObjectSnapshot* ResolvePrefabOverrideTarget(const PrefabAsset& prefab, const PrefabTargetPath& target)
+        {
+            // 入れ子に保存された上書きは、その入れ子自身の Prefab を基点とする。
+            const PrefabAsset* current = &prefab;
+            for (PrefabNestedInstanceId instanceId : target.NestedInstances)
+            {
+                const PrefabAsset* next = nullptr;
+                for (const PrefabNestedPrefabInstance& nested : current->GetNestedPrefabs())
+                {
+                    if (nested.InstanceId == instanceId)
+                    {
+                        next = nested.Prefab.Get();
+                        break;
+                    }
+                }
+                if (!next || !next->HasTree())
+                {
+                    return nullptr;
+                }
+                current = next;
+            }
+            if (!current->HasTree() || target.Alias == InvalidSubtreeSnapshotAliasId)
+            {
+                return nullptr;
+            }
+            return FindPrefabObjectByAlias(current->GetTree().Root, target.Alias);
+        }
+
         bool TryReadExactFormatVersion(const JsonValue& value, uint32_t& outVersion)
         {
             if (!value.IsNumber())
@@ -1754,36 +1806,307 @@ namespace NorvesLib::Core::Scene
         return document;
     }
 
+    namespace
+    {
+        void WriteSceneDocumentMembers(JsonWriter& writer, const SceneDocument& document, bool bPrefab)
+        {
+            writer.WriteUInt64("formatVersion", document.FormatVersion);
+            writer.WriteString("module", kModuleName);
+            if (bPrefab)
+            {
+                writer.WriteString("kind", "prefab");
+            }
+            writer.BeginArray("assets");
+            for (const SceneAssetDependency& asset : document.Assets)
+            {
+                writer.BeginObject();
+                writer.WriteString("path", asset.Path);
+                const size_t kindIndex = static_cast<size_t>(asset.Kind);
+                writer.WriteString("kind", kindIndex < 8 ? kSceneAssetKindNames[kindIndex] : "Unknown");
+                writer.WriteString("variant", asset.Variant);
+                writer.EndObject();
+            }
+            writer.EndArray();
+            writer.BeginArray("roots");
+            for (const SceneRootRecord& record : document.Roots)
+            {
+                writer.BeginObject();
+                writer.WriteUInt64("formatVersion", record.FormatVersion);
+                writer.WriteString("rootAlias", ToDecimalString(record.RootAlias));
+                writer.WriteString("rootPath", record.RootPath);
+                writer.BeginObject("root");
+                WriteEntityRecordMembers(writer, record.Root);
+                writer.EndObject();
+                writer.EndObject();
+            }
+            writer.EndArray();
+        }
+
+        bool ParseSceneDocument(const JsonValue& root, SceneDocument& outDocument, Container::String* pOutError)
+        {
+            if (!root.IsObject())
+            {
+                return SetParseError(pOutError, "scene: document root must be an object");
+            }
+
+            const JsonValue formatVersion = root.FindMember("formatVersion");
+            uint32_t version = 0;
+            if (!TryReadExactFormatVersion(formatVersion, version))
+            {
+                return SetParseError(pOutError, "scene: formatVersion is required");
+            }
+            if (version != SceneSerializer::SceneFileFormatVersion && version != 2 && version != kPreviousSceneFileFormatVersion)
+            {
+                return SetParseError(pOutError, "scene: unsupported formatVersion");
+            }
+            outDocument.FormatVersion = version;
+
+            // "module"フィールドは診断専用。ロード時は読み取り・検証せずSceneDocumentにも保持しない。
+
+            if (version == SceneSerializer::SceneFileFormatVersion && root.HasMember("assets"))
+            {
+                const JsonValue assets = root.FindMember("assets");
+                if (!assets.IsArray())
+                {
+                    return SetParseError(pOutError, "scene: assets は配列である必要があります");
+                }
+                for (size_t index = 0; index < assets.GetArraySize(); ++index)
+                {
+                    const JsonValue entry = assets.GetArrayElement(index);
+                    const JsonValue path = entry.FindMember("path");
+                    const JsonValue kind = entry.FindMember("kind");
+                    const JsonValue variant = entry.FindMember("variant");
+                    if (!entry.IsObject() || !path.IsString() || !kind.IsString() || !variant.IsString())
+                    {
+                        return SetParseError(pOutError, "scene: assets の各項目には文字列の path・kind・variant が必要です");
+                    }
+                    TAssetRef<Asset::AssetKind::Unknown> validatedPath;
+                    if (path.AsString().empty() || !validatedPath.DeserializeFromString(path.AsString()))
+                    {
+                        return SetParseError(pOutError, "scene: assets の論理パスが不正です");
+                    }
+                    bool bKnownKind = false;
+                    for (size_t kindIndex = 0; kindIndex < 8; ++kindIndex)
+                    {
+                        if (kind.AsString() == kSceneAssetKindNames[kindIndex])
+                        {
+                            outDocument.Assets.push_back(SceneAssetDependency{
+                                path.AsString(), kSceneAssetKinds[kindIndex], variant.AsString()});
+                            bKnownKind = true;
+                            break;
+                        }
+                    }
+                    if (!bKnownKind)
+                    {
+                        return SetParseError(pOutError, "scene: assets の種別が不明です");
+                    }
+                }
+            }
+
+            const JsonValue roots = root.FindMember("roots");
+            if (!roots.IsArray())
+            {
+                return SetParseError(pOutError, "scene: roots must be an array");
+            }
+
+            outDocument.Roots.reserve(roots.GetArraySize());
+            for (size_t index = 0; index < roots.GetArraySize(); ++index)
+            {
+                const JsonValue rootValue = roots.GetArrayElement(index);
+                if (!rootValue.IsObject())
+                {
+                    return SetParseError(pOutError, "scene: root entry must be an object");
+                }
+
+                SceneRootRecord record;
+                const JsonValue rootFormatVersion = rootValue.FindMember("formatVersion");
+                if (!TryReadExactFormatVersion(rootFormatVersion, record.FormatVersion))
+                {
+                    return SetParseError(pOutError, "scene: root formatVersion is required");
+                }
+                if (record.FormatVersion != version)
+                {
+                    return SetParseError(pOutError, "scene: root formatVersion does not match document formatVersion");
+                }
+                if (!ReadUInt64Member(rootValue, "rootAlias", record.RootAlias))
+                {
+                    return SetParseError(pOutError, "scene: rootAlias must be a decimal string");
+                }
+                record.RootPath = rootValue.FindMember("rootPath").AsString();
+                if (!ParseEntityRecord(rootValue.FindMember("root"), record.Root, pOutError))
+                {
+                    return false;
+                }
+                outDocument.Roots.push_back(std::move(record));
+            }
+
+            if (version == kPreviousSceneFileFormatVersion && !MigrateV1Document(outDocument, pOutError))
+            {
+                return false;
+            }
+
+            if (outDocument.FormatVersion == 2)
+            {
+                MigrateV2Document(outDocument);
+            }
+
+            Container::String physicalValidationError;
+            if (!ValidatePhysicalLightDocument(outDocument, &physicalValidationError))
+            {
+                return SetParseError(pOutError, physicalValidationError.c_str());
+            }
+            return true;
+        }
+
+        bool IsDecimalDigits(const Container::String& text)
+        {
+            if (text.empty())
+            {
+                return false;
+            }
+            for (size_t index = 0; index < text.size(); ++index)
+            {
+                if (text[index] < '0' || text[index] > '9')
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ReadPrefabIdMember(const JsonValue& object, const char* key, uint64_t& outValue)
+        {
+            const JsonValue member = object.FindMember(key);
+            return member.IsString() && IsDecimalDigits(member.AsString()) &&
+                ReadUInt64Member(object, key, outValue);
+        }
+
+        bool ReadNonzeroPrefabIdMember(const JsonValue& object, const char* key, uint64_t& outValue)
+        {
+            return ReadPrefabIdMember(object, key, outValue) && outValue != 0;
+        }
+
+        bool ReadNonzeroPrefabIdElement(const JsonValue& value, uint64_t& outValue)
+        {
+            return value.IsString() && IsDecimalDigits(value.AsString()) &&
+                TryParseUInt64(value.AsString(), outValue) && outValue != 0;
+        }
+
+        bool ParsePrefabOverride(const JsonValue& value, PrefabOverrideRecord& outRecord, Container::String* pOutError)
+        {
+            if (!value.IsObject())
+            {
+                return SetParseError(pOutError, "prefab: overrides の各項目はオブジェクトである必要があります");
+            }
+            const JsonValue target = value.FindMember("target");
+            if (!target.IsObject())
+            {
+                return SetParseError(pOutError, "prefab: target はオブジェクトである必要があります");
+            }
+            const JsonValue targetNested = target.FindMember("nested");
+            if (!targetNested.IsArray())
+            {
+                return SetParseError(pOutError, "prefab: target.nested は配列である必要があります");
+            }
+            outRecord.TargetNested.reserve(targetNested.GetArraySize());
+            for (size_t index = 0; index < targetNested.GetArraySize(); ++index)
+            {
+                uint64_t nestedId = 0;
+                if (!ReadNonzeroPrefabIdElement(targetNested.GetArrayElement(index), nestedId))
+                {
+                    return SetParseError(pOutError, "prefab: target.nested の各項目は0でない10進数の文字列である必要があります");
+                }
+                outRecord.TargetNested.push_back(nestedId);
+            }
+            if (!ReadNonzeroPrefabIdMember(target, "alias", outRecord.TargetAlias))
+            {
+                return SetParseError(pOutError, "prefab: target.alias は0でない10進数の文字列である必要があります");
+            }
+
+            const JsonValue property = value.FindMember("property");
+            if (!property.IsObject())
+            {
+                return SetParseError(pOutError, "prefab: property はオブジェクトである必要があります");
+            }
+            const JsonValue name = property.FindMember("name");
+            const JsonValue type = property.FindMember("type");
+            if (!name.IsString() || !type.IsString())
+            {
+                return SetParseError(pOutError, "prefab: property の name と type は文字列である必要があります");
+            }
+            outRecord.Property.Name = name.AsString();
+            outRecord.Property.TypeName = type.AsString();
+            if (!ReadPrefabIdMember(property, "propertyId", outRecord.Property.PropertyId) ||
+                !ReadPrefabIdMember(property, "typeId", outRecord.Property.TypeId))
+            {
+                return SetParseError(pOutError, "prefab: propertyId と typeId は10進数の文字列である必要があります");
+            }
+            const JsonValue serialized = value.FindMember("value");
+            if (!serialized.IsString())
+            {
+                return SetParseError(pOutError, "prefab: value は文字列である必要があります");
+            }
+            outRecord.Property.Value = serialized.AsString();
+            return true;
+        }
+
+        bool ParsePrefabNested(const JsonValue& value, PrefabNestedRecord& outRecord, Container::String* pOutError)
+        {
+            if (!value.IsObject())
+            {
+                return SetParseError(pOutError, "prefab: nested の各項目はオブジェクトである必要があります");
+            }
+            if (!ReadNonzeroPrefabIdMember(value, "instanceId", outRecord.InstanceId))
+            {
+                return SetParseError(pOutError, "prefab: instanceId は0でない10進数の文字列である必要があります");
+            }
+            if (!ReadNonzeroPrefabIdMember(value, "parentAlias", outRecord.ParentAlias))
+            {
+                return SetParseError(pOutError, "prefab: parentAlias は0でない10進数の文字列である必要があります");
+            }
+
+            const JsonValue prefab = value.FindMember("prefab");
+            TAssetRef<Asset::AssetKind::Unknown> validatedPath;
+            if (!prefab.IsString() || prefab.AsString().empty() ||
+                !validatedPath.DeserializeFromString(prefab.AsString()))
+            {
+                return SetParseError(pOutError, "prefab: prefab の論理パスが不正です");
+            }
+            outRecord.PrefabPath = prefab.AsString();
+            const size_t suffixLength = std::strlen(SceneSerializer::PrefabFileSuffix);
+            if (outRecord.PrefabPath.size() < suffixLength ||
+                outRecord.PrefabPath.substr(outRecord.PrefabPath.size() - suffixLength) != SceneSerializer::PrefabFileSuffix)
+            {
+                return SetParseError(pOutError, "prefab: prefab のパスは .prefab.json で終わる必要があります");
+            }
+
+            if (value.HasMember("overrides"))
+            {
+                const JsonValue overrides = value.FindMember("overrides");
+                if (!overrides.IsArray())
+                {
+                    return SetParseError(pOutError, "prefab: overrides は配列である必要があります");
+                }
+                outRecord.Overrides.reserve(overrides.GetArraySize());
+                for (size_t index = 0; index < overrides.GetArraySize(); ++index)
+                {
+                    PrefabOverrideRecord overrideRecord;
+                    if (!ParsePrefabOverride(overrides.GetArrayElement(index), overrideRecord, pOutError))
+                    {
+                        return false;
+                    }
+                    outRecord.Overrides.push_back(std::move(overrideRecord));
+                }
+            }
+            return true;
+        }
+    } // namespace
+
     Container::String SceneSerializer::ToJson(const SceneDocument& document)
     {
         JsonWriter writer(true);
         writer.BeginObject();
-        writer.WriteUInt64("formatVersion", document.FormatVersion);
-        writer.WriteString("module", kModuleName);
-        writer.BeginArray("assets");
-        for (const SceneAssetDependency& asset : document.Assets)
-        {
-            writer.BeginObject();
-            writer.WriteString("path", asset.Path);
-            const size_t kindIndex = static_cast<size_t>(asset.Kind);
-            writer.WriteString("kind", kindIndex < 8 ? kSceneAssetKindNames[kindIndex] : "Unknown");
-            writer.WriteString("variant", asset.Variant);
-            writer.EndObject();
-        }
-        writer.EndArray();
-        writer.BeginArray("roots");
-        for (const SceneRootRecord& record : document.Roots)
-        {
-            writer.BeginObject();
-            writer.WriteUInt64("formatVersion", record.FormatVersion);
-            writer.WriteString("rootAlias", ToDecimalString(record.RootAlias));
-            writer.WriteString("rootPath", record.RootPath);
-            writer.BeginObject("root");
-            WriteEntityRecordMembers(writer, record.Root);
-            writer.EndObject();
-            writer.EndObject();
-        }
-        writer.EndArray();
+        WriteSceneDocumentMembers(writer, document, false);
         writer.EndObject();
 
         // 防御チェック: 書き出しロジックの退行でエラー/未完成のまま不正JSONを返さない
@@ -1813,118 +2136,281 @@ namespace NorvesLib::Core::Scene
             return false;
         }
 
+        return ParseSceneDocument(document.GetRoot(), outDocument, pOutError);
+    }
+
+    Container::String SceneSerializer::PrefabToJson(const PrefabDocument& document)
+    {
+        JsonWriter writer(true);
+        writer.BeginObject();
+        WriteSceneDocumentMembers(writer, document.Tree, true);
+        writer.WriteString("nextNestedInstanceId", ToDecimalString(document.NextNestedInstanceId));
+        writer.BeginArray("nested");
+        for (const PrefabNestedRecord& nested : document.Nested)
+        {
+            writer.BeginObject();
+            writer.WriteString("instanceId", ToDecimalString(nested.InstanceId));
+            writer.WriteString("parentAlias", ToDecimalString(nested.ParentAlias));
+            writer.WriteString("prefab", nested.PrefabPath);
+            writer.BeginArray("overrides");
+            for (const PrefabOverrideRecord& overrideRecord : nested.Overrides)
+            {
+                writer.BeginObject();
+                writer.BeginObject("target");
+                writer.BeginArray("nested");
+                for (uint64_t nestedId : overrideRecord.TargetNested)
+                {
+                    writer.WriteStringElement(ToDecimalString(nestedId));
+                }
+                writer.EndArray();
+                writer.WriteString("alias", ToDecimalString(overrideRecord.TargetAlias));
+                writer.EndObject();
+                writer.BeginObject("property");
+                writer.WriteString("name", overrideRecord.Property.Name);
+                writer.WriteString("propertyId", ToDecimalString(overrideRecord.Property.PropertyId));
+                writer.WriteString("type", overrideRecord.Property.TypeName);
+                writer.WriteString("typeId", ToDecimalString(overrideRecord.Property.TypeId));
+                writer.EndObject();
+                writer.WriteString("value", overrideRecord.Property.Value);
+                writer.EndObject();
+            }
+            writer.EndArray();
+            writer.EndObject();
+        }
+        writer.EndArray();
+        writer.EndObject();
+
+        if (!writer.IsComplete())
+        {
+            NORVES_LOG_ERROR("Scene", "PrefabToJson: JSON の書き出しが完了しませんでした");
+            return Container::String();
+        }
+        return writer.ToString();
+    }
+
+    bool SceneSerializer::TryParsePrefabJson(
+        const Container::String& jsonText,
+        PrefabDocument& outDocument,
+        Container::String* pOutError)
+    {
+        outDocument = PrefabDocument();
+
+        JsonDocument document;
+        if (!JsonDocument::TryParse(jsonText, document))
+        {
+            return SetParseError(pOutError, "prefab: JSON の解析に失敗しました");
+        }
+
         const JsonValue root = document.GetRoot();
         if (!root.IsObject())
         {
-            return SetParseError(pOutError, "scene: document root must be an object");
+            return SetParseError(pOutError, "prefab: 文書のルートはオブジェクトである必要があります");
         }
-
-        const JsonValue formatVersion = root.FindMember("formatVersion");
         uint32_t version = 0;
-        if (!TryReadExactFormatVersion(formatVersion, version))
+        if (!TryReadExactFormatVersion(root.FindMember("formatVersion"), version) ||
+            version != SceneFileFormatVersion)
         {
-            return SetParseError(pOutError, "scene: formatVersion is required");
+            return SetParseError(pOutError, "prefab: formatVersion は現在の形式である必要があります");
         }
-        if (version != SceneFileFormatVersion && version != 2 && version != kPreviousSceneFileFormatVersion)
+        if (root.HasMember("kind"))
         {
-            return SetParseError(pOutError, "scene: unsupported formatVersion");
-        }
-        outDocument.FormatVersion = version;
-
-        // "module"フィールドは診断専用。ロード時は読み取り・検証せずSceneDocumentにも保持しない。
-
-        if (version == SceneFileFormatVersion && root.HasMember("assets"))
-        {
-            const JsonValue assets = root.FindMember("assets");
-            if (!assets.IsArray())
+            const JsonValue kind = root.FindMember("kind");
+            if (!kind.IsString() || kind.AsString() != "prefab")
             {
-                return SetParseError(pOutError, "scene: assets は配列である必要があります");
-            }
-            for (size_t index = 0; index < assets.GetArraySize(); ++index)
-            {
-                const JsonValue entry = assets.GetArrayElement(index);
-                const JsonValue path = entry.FindMember("path");
-                const JsonValue kind = entry.FindMember("kind");
-                const JsonValue variant = entry.FindMember("variant");
-                if (!entry.IsObject() || !path.IsString() || !kind.IsString() || !variant.IsString())
-                {
-                    return SetParseError(pOutError, "scene: assets の各項目には文字列の path・kind・variant が必要です");
-                }
-                TAssetRef<Asset::AssetKind::Unknown> validatedPath;
-                if (path.AsString().empty() || !validatedPath.DeserializeFromString(path.AsString()))
-                {
-                    return SetParseError(pOutError, "scene: assets の論理パスが不正です");
-                }
-                bool bKnownKind = false;
-                for (size_t kindIndex = 0; kindIndex < 8; ++kindIndex)
-                {
-                    if (kind.AsString() == kSceneAssetKindNames[kindIndex])
-                    {
-                        outDocument.Assets.push_back(SceneAssetDependency{
-                            path.AsString(), kSceneAssetKinds[kindIndex], variant.AsString()});
-                        bKnownKind = true;
-                        break;
-                    }
-                }
-                if (!bKnownKind)
-                {
-                    return SetParseError(pOutError, "scene: assets の種別が不明です");
-                }
+                return SetParseError(pOutError, "prefab: kind は prefab である必要があります");
             }
         }
-
         const JsonValue roots = root.FindMember("roots");
-        if (!roots.IsArray())
+        if (!roots.IsArray() || roots.GetArraySize() != 1)
         {
-            return SetParseError(pOutError, "scene: roots must be an array");
+            return SetParseError(pOutError, "prefab: roots は要素が1つの配列である必要があります");
         }
-
-        outDocument.Roots.reserve(roots.GetArraySize());
-        for (size_t index = 0; index < roots.GetArraySize(); ++index)
+        if (pOutError)
         {
-            const JsonValue rootValue = roots.GetArrayElement(index);
-            if (!rootValue.IsObject())
-            {
-                return SetParseError(pOutError, "scene: root entry must be an object");
-            }
-
-            SceneRootRecord record;
-            const JsonValue rootFormatVersion = rootValue.FindMember("formatVersion");
-            if (!TryReadExactFormatVersion(rootFormatVersion, record.FormatVersion))
-            {
-                return SetParseError(pOutError, "scene: root formatVersion is required");
-            }
-            if (record.FormatVersion != version)
-            {
-                return SetParseError(pOutError, "scene: root formatVersion does not match document formatVersion");
-            }
-            if (!ReadUInt64Member(rootValue, "rootAlias", record.RootAlias))
-            {
-                return SetParseError(pOutError, "scene: rootAlias must be a decimal string");
-            }
-            record.RootPath = rootValue.FindMember("rootPath").AsString();
-            if (!ParseEntityRecord(rootValue.FindMember("root"), record.Root, pOutError))
-            {
-                return false;
-            }
-            outDocument.Roots.push_back(std::move(record));
+            pOutError->clear();
         }
-
-        if (version == kPreviousSceneFileFormatVersion && !MigrateV1Document(outDocument, pOutError))
+        if (!ParseSceneDocument(root, outDocument.Tree, pOutError))
         {
+            if (pOutError && pOutError->empty())
+            {
+                return SetParseError(pOutError, "prefab: assets または roots の内容や物理量が不正です");
+            }
             return false;
         }
 
-        if (outDocument.FormatVersion == 2)
+        uint64_t maxInstanceId = 0;
+        Container::UnorderedSet<uint64_t> instanceIds;
+        if (root.HasMember("nested"))
         {
-            MigrateV2Document(outDocument);
+            const JsonValue nested = root.FindMember("nested");
+            if (!nested.IsArray())
+            {
+                return SetParseError(pOutError, "prefab: nested は配列である必要があります");
+            }
+            outDocument.Nested.reserve(nested.GetArraySize());
+            for (size_t index = 0; index < nested.GetArraySize(); ++index)
+            {
+                PrefabNestedRecord record;
+                if (!ParsePrefabNested(nested.GetArrayElement(index), record, pOutError))
+                {
+                    return false;
+                }
+                if (!instanceIds.insert(record.InstanceId).second)
+                {
+                    return SetParseError(pOutError, "prefab: instanceId が重複しています");
+                }
+                maxInstanceId = std::max(maxInstanceId, record.InstanceId);
+                outDocument.Nested.push_back(std::move(record));
+            }
         }
 
-        Container::String physicalValidationError;
-        if (!ValidatePhysicalLightDocument(outDocument, &physicalValidationError))
+        if (root.HasMember("nextNestedInstanceId"))
         {
-            return SetParseError(pOutError, physicalValidationError.c_str());
+            if (!ReadNonzeroPrefabIdMember(root, "nextNestedInstanceId", outDocument.NextNestedInstanceId) ||
+                outDocument.NextNestedInstanceId <= maxInstanceId)
+            {
+                return SetParseError(pOutError, "prefab: nextNestedInstanceId はすべての instanceId より大きい10進数の文字列である必要があります");
+            }
         }
+        else
+        {
+            if (maxInstanceId == std::numeric_limits<uint64_t>::max())
+            {
+                return SetParseError(pOutError, "prefab: 次の入れ子 ID を採番できません");
+            }
+            outDocument.NextNestedInstanceId = maxInstanceId + 1;
+        }
+        return true;
+    }
+
+    bool SceneSerializer::BuildPrefabDocument(
+        const PrefabAsset& prefab, PrefabDocument& outDocument, Container::String* pOutError)
+    {
+        outDocument = PrefabDocument();
+        if (pOutError)
+        {
+            pOutError->clear();
+        }
+        if (!prefab.HasTree())
+        {
+            return SetParseError(pOutError, "prefab: 保存する木がありません");
+        }
+
+        PrefabDocument document;
+        document.Tree = BuildDocument({prefab.GetTree()});
+        document.NextNestedInstanceId = prefab.GetNextNestedInstanceId();
+        document.Nested.reserve(prefab.GetNestedPrefabs().size());
+        SchemaNameResolver resolver;
+        const size_t suffixLength = std::strlen(PrefabFileSuffix);
+        for (const PrefabNestedPrefabInstance& instance : prefab.GetNestedPrefabs())
+        {
+            const PrefabAsset* nestedPrefab = instance.Prefab.Get();
+            if (!nestedPrefab || !nestedPrefab->HasTree())
+            {
+                return SetParseError(pOutError, "prefab: 入れ子の Prefab またはその木がありません");
+            }
+
+            PrefabNestedRecord record;
+            record.InstanceId = instance.InstanceId;
+            record.ParentAlias = instance.ParentAlias;
+            record.PrefabPath = nestedPrefab->GetResourcePath();
+            TAssetRef<Asset::AssetKind::Unknown> validatedPath;
+            if (record.PrefabPath.empty() || !validatedPath.DeserializeFromString(record.PrefabPath))
+            {
+                return SetParseError(pOutError, "prefab: 入れ子の Prefab の論理パスが不正です");
+            }
+            if (record.PrefabPath.size() < suffixLength ||
+                record.PrefabPath.substr(record.PrefabPath.size() - suffixLength) != PrefabFileSuffix)
+            {
+                return SetParseError(pOutError, "prefab: 入れ子の Prefab のパスは .prefab.json で終わる必要があります");
+            }
+
+            // 木から同じパスを収集済みでも、Prefab の依存は Raw として一度だけ載せる。
+            auto& assets = document.Tree.Assets;
+            assets.erase(std::remove_if(assets.begin(), assets.end(),
+                [&record](const SceneAssetDependency& asset)
+                {
+                    return asset.Path == record.PrefabPath;
+                }), assets.end());
+            assets.push_back(SceneAssetDependency{record.PrefabPath, Asset::AssetKind::Raw, ""});
+
+            record.Overrides.reserve(instance.Overrides.Properties.size());
+            for (const PrefabPropertyOverride& overrideValue : instance.Overrides.Properties)
+            {
+                const ObjectSnapshot* target = ResolvePrefabOverrideTarget(*nestedPrefab, overrideValue.Target);
+                if (!target)
+                {
+                    return SetParseError(pOutError, "prefab: 上書き対象の Entity または Component が見つかりません");
+                }
+
+                PrefabOverrideRecord overrideRecord;
+                overrideRecord.TargetNested = overrideValue.Target.NestedInstances;
+                overrideRecord.TargetAlias = overrideValue.Target.Alias;
+                overrideRecord.Property.PropertyId = overrideValue.Value.Property;
+                overrideRecord.Property.TypeId = overrideValue.Value.Type;
+                overrideRecord.Property.Value = overrideValue.Value.SerializedValue;
+                overrideRecord.Property.Name = resolver.FindPropertyName(target->Class, overrideValue.Value.Property);
+                overrideRecord.Property.TypeName = resolver.FindTypeName(overrideValue.Value.Type);
+                if (overrideRecord.Property.Name.empty() || overrideRecord.Property.TypeName.empty())
+                {
+                    return SetParseError(pOutError, "prefab: 上書き対象のプロパティ名または型名が見つかりません");
+                }
+                record.Overrides.push_back(std::move(overrideRecord));
+            }
+            document.Nested.push_back(std::move(record));
+        }
+        std::sort(document.Tree.Assets.begin(), document.Tree.Assets.end(),
+            [](const SceneAssetDependency& lhs, const SceneAssetDependency& rhs)
+            {
+                return lhs.Path == rhs.Path ? lhs.Kind < rhs.Kind : lhs.Path < rhs.Path;
+            });
+        outDocument = std::move(document);
+        return true;
+    }
+
+    bool SceneSerializer::SavePrefabToFile(
+        const PrefabAsset& prefab, const Container::String& filePath,
+        Container::String* pOutError, const SceneSaveOptions& options)
+    {
+        PrefabDocument document;
+        if (!BuildPrefabDocument(prefab, document, pOutError))
+        {
+            return false;
+        }
+        const Container::String json = PrefabToJson(document);
+        if (json.empty())
+        {
+            NORVES_LOG_ERROR("Scene", "SavePrefabToFile: JSON の直列化に失敗しました");
+            return SetParseError(pOutError, "prefab: JSON の直列化に失敗しました");
+        }
+
+        const Container::String temporaryPath = filePath + ".tmp";
+        std::FILE* file = nullptr;
+        if (fopen_s(&file, temporaryPath.c_str(), "wb") != 0 || !file)
+        {
+            NORVES_LOG_ERROR("Scene", "SavePrefabToFile: 一時ファイル '%s' を開けません", temporaryPath.c_str());
+            return SetParseError(pOutError, "prefab: 一時ファイルを開けません");
+        }
+
+        // FileStream の Flush/Close は成否を返さないため、各段階の結果を直接確認する。
+        const size_t bytesToWrite = options.bInjectWriteFailureForTesting ? json.size() / 2 : json.size();
+        const size_t written = std::fwrite(json.c_str(), 1, bytesToWrite, file);
+        const bool bFlushed = std::fflush(file) == 0;
+        const bool bClosed = std::fclose(file) == 0;
+        if (options.bInjectWriteFailureForTesting || written != json.size() || !bFlushed || !bClosed)
+        {
+            std::remove(temporaryPath.c_str());
+            NORVES_LOG_ERROR("Scene", "SavePrefabToFile: 一時ファイル '%s' の書き込みに失敗しました", temporaryPath.c_str());
+            return SetParseError(pOutError, "prefab: 一時ファイルの書き込みに失敗しました");
+        }
+        if (!MoveFileExA(temporaryPath.c_str(), filePath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            std::remove(temporaryPath.c_str());
+            NORVES_LOG_ERROR("Scene", "SavePrefabToFile: '%s' の置換に失敗しました", filePath.c_str());
+            return SetParseError(pOutError, "prefab: 保存先のファイルの置換に失敗しました");
+        }
+
+        NORVES_LOG_INFO("Scene", "SavePrefabToFile: Prefab を '%s' に保存しました", filePath.c_str());
         return true;
     }
 
