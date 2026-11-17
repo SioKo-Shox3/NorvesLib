@@ -12215,3 +12215,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 保存済みの U1・U2 の差分を当て、PrefabAsset を Prefab ファイルへ保存する（BuildPrefabDocument・SavePrefabToFile）: 着地(直し 0 回)
 - U8 見本の領域のシーン Assets/Levels/Sample/Region_Main.scene.json を置く（地面は Plane）: 着地(直し 0 回)
 - U4 Prefab ファイルを AssetSystem から読み、論理パスで 1 つにキャッシュし、World へ加算で読む: 着地(直し 1 回)
+- U6 Game に --load-scene=<論理パス> を足し、Sandbox の自由飛行カメラでシーン・Prefab のファイルを加算で読む: 着地(直し 0 回)
