@@ -11933,3 +11933,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: G17-GR33-STATIC-IMPORT・G17-GR80-REPAIR・G17-GR80-SIMPLIFY の verify のビルド行が、TEST-REMOVE-1114 で消えた `CookedMeshTest`・`AssetCookMeshSimplifySmoke` を名指ししている。ランナーが試験のターゲットを外した形（`--target AssetCook AssetCookMeshSimplifySmoke`）でも `MSB1009: プロジェクト ファイルが存在しません。スイッチ: AssetCookMeshSimplifySmoke.vcxproj` で終了コード 1 になる（この項目の反復 2 の再確認と同じ落ち方）。
 - U1 粒に命中の法線を残す（SurfaceAligned の向き）: 着地(直し 0 回)
 - U2 描画の定数・結合番号・GLSL の共通部を決める: 着地(直し 0 回)
+- U3 ParticleDraw.vert（板・筋・面に沿う板）: 着地(直し 0 回)
