@@ -3,6 +3,7 @@
 #include "Core/Public/Animation/SkeletalAnimationSampler.h"
 #include "Core/Public/Animation/SkeletalAssetResource.h"
 #include "Core/Public/Animation/SkeletalPoseBounds.h"
+#include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Component/SkinnedMeshComponent.h"
@@ -18,8 +19,10 @@
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/SkyAtmosphere.h"
+#include "Core/Public/Rendering/Terrain/TerrainSystem.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
 #include "Core/Public/Resource/GLTFAnalyzer.h"
+#include "Core/Public/Scene/SceneSerializer.h"
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
@@ -518,11 +521,49 @@ namespace Game::GameModes
         }
 
         ApplyEnvironment(ctx);
-        if (!CreateGround(ctx))
+        if (data.m_LoadScenePaths.empty() && !CreateGround(ctx))
         {
             ResetEnvironment(ctx);
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
+        }
+        if (!data.m_LoadScenePaths.empty())
+        {
+            // モデル・テクスチャと同じ資産の設定を使う。未設定ならソースのばらファイルを読む。
+            auto assetSystem = ctx.EngineRef.GetTerrainSystem().GetAssetSystem();
+            if (!assetSystem)
+            {
+#if defined(NORVES_SOURCE_ASSET_DIR)
+                assetSystem = Container::MakeShared<Asset::AssetSystem>(Container::AnsiString(NORVES_SOURCE_ASSET_DIR));
+#else
+                assetSystem = Container::MakeShared<Asset::AssetSystem>(Container::AnsiString("Assets"));
+#endif
+            }
+            for (const auto &path : data.m_LoadScenePaths)
+            {
+                Scene::SceneLoadStats stats;
+                Container::VariableArray<Entity *> roots;
+                const bool bLoaded = Scene::SceneSerializer::LoadIntoWorldFromAsset(
+                    ctx.WorldRef, GEngine.GetResourceRegistry(), *assetSystem,
+                    Container::AnsiStringView(path.data(), path.size()), &stats, &roots);
+                // 部分的な読み込みでも生成されたルートを退出時の破棄対象にする。
+                for (Entity *root : roots)
+                {
+                    ctx.ScopeRef.TrackObject(root);
+                }
+                if (bLoaded)
+                {
+                    LOG_INFO("sandbox: 読み込み成功 パス=%s、ルート=%zu、破棄した実体=%zu・部品=%zu・プロパティ=%zu・入れ子のPrefab=%zu・上書き=%zu",
+                             path.c_str(), stats.LoadedRoots, stats.DroppedEntities, stats.DroppedComponents,
+                             stats.DroppedProperties, stats.DroppedNestedPrefabs, stats.DroppedOverrides);
+                }
+                else
+                {
+                    LOG_ERROR("sandbox: 読み込み失敗 パス=%s、ルート=%zu、破棄した実体=%zu・部品=%zu・プロパティ=%zu・入れ子のPrefab=%zu・上書き=%zu。次のパスへ進みます",
+                              path.c_str(), stats.LoadedRoots, stats.DroppedEntities, stats.DroppedComponents,
+                              stats.DroppedProperties, stats.DroppedNestedPrefabs, stats.DroppedOverrides);
+                }
+            }
         }
         data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime, data.m_bCameraPathPlay);
         if (!data.m_Rig.Enter(ctx, pose, data.m_CameraScriptPath.c_str()))

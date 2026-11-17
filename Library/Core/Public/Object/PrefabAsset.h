@@ -52,6 +52,19 @@ namespace NorvesLib::Core
         bool HasTree() const { return m_bHasTree; }
 
         const Container::VariableArray<PrefabNestedPrefabInstance>& GetNestedPrefabs() const;
+        /// 次に入れ子へ割り当てるインスタンス番号を返す。
+        PrefabNestedInstanceId GetNextNestedInstanceId() const { return m_NextNestedInstanceId; }
+
+        /// 既存の全インスタンス番号より大きい有効な値を、次の番号として復元する。
+        bool SetNextNestedInstanceId(PrefabNestedInstanceId nextInstanceId);
+
+        /// 保存されたインスタンス番号を維持して入れ子を復元し、次の番号を必要に応じて進める。
+        bool RestoreNestedPrefab(
+            PrefabNestedInstanceId instanceId,
+            SubtreeSnapshotAliasId parentAlias,
+            const ResourceRef<PrefabAsset>& prefab,
+            const PrefabOverrideSet& overrides = PrefabOverrideSet());
+
         PrefabNestedInstanceId AddNestedPrefab(
             SubtreeSnapshotAliasId parentAlias,
             const ResourceRef<PrefabAsset>& prefab,

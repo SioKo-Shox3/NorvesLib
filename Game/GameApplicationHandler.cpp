@@ -177,6 +177,10 @@ namespace Game
         // --scene=<id>: ランチャーを飛ばして直接入るシーン（Scenes/SceneCatalog.h の id。launcher でランチャー）。引数なしの起動はランチャー。
         // --scene-view=<name>: そのシーンの名前付き視点。どちらも未知の値はエラーをログに出して既定へ落ちる。
         constexpr const TCHAR *kSceneOption = TEXT("--scene=");
+        // --load-scene=<論理パス,...>: Sandbox に直接入り、シーン・Prefab を指定順に加算する。
+        // sandbox 以外の --scene と併用した場合は --scene を優先する。
+        constexpr const TCHAR *kLoadSceneOption = TEXT("--load-scene=");
+        Container::VariableArray<Container::String> s_LoadScenePaths;
         constexpr const TCHAR *kSceneViewOption = TEXT("--scene-view=");
         // --scene-report=<path>: シーンの解決結果（未知の id・視点、欠けた資産）をテキストで書き出す。
         // ログを書かない構成（Release）でも撮影スクリプトが資産の欠けを検査できるよう、ログとは別に出す。
@@ -1166,6 +1170,7 @@ namespace Game
         m_bShishaSunElevationSet = false;
 #endif
         m_StartupSceneId = {};
+        s_LoadScenePaths.clear();
         m_StartupSceneView = {};
         m_SceneReportPath = {};
         m_AssetPreviewArguments = {};
@@ -2066,6 +2071,34 @@ namespace Game
                 continue;
             }
             String sceneValue;
+            if (TryStripPrefix(args[i], kLoadSceneOption, sceneValue) || args[i] == TEXT("--load-scene"))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (!s_LoadScenePaths.empty())
+                {
+                    LOG_ERROR("--load-scene が重複しています。後の指定を無視します");
+                    continue;
+                }
+                size_t start = 0;
+                while (start < sceneValue.size())
+                {
+                    const size_t comma = sceneValue.find(',', start);
+                    const size_t end = comma == String::npos ? sceneValue.size() : comma;
+                    if (end > start)
+                    {
+                        s_LoadScenePaths.push_back(sceneValue.substr(start, end - start));
+                    }
+                    start = end + 1;
+                }
+                if (s_LoadScenePaths.empty())
+                {
+                    LOG_ERROR("--load-scene にはシーン・Prefab の論理パスを指定してください。空の指定を無視します");
+                }
+#else
+                LOG_ERROR("--load-scene は Sandbox のある開発ビルドだけで使えます。指定を無視します");
+#endif
+                continue;
+            }
             if (TryStripPrefix(args[i], kSceneOption, sceneValue))
             {
                 if (!m_StartupSceneId.empty())
@@ -3918,6 +3951,19 @@ namespace Game
                     LOG_ERROR("--geom-settle-trace には 1〜600 の秒数を指定する");
                     return false;
                 }
+            }
+        }
+        if (!s_LoadScenePaths.empty())
+        {
+            if (!m_StartupSceneId.empty() &&
+                !Scenes::SceneTextEquals(m_StartupSceneId.c_str(), Scenes::kSandboxSceneId))
+            {
+                LOG_ERROR("--load-scene は sandbox 以外の --scene と併用できません。--load-scene を無視します");
+                s_LoadScenePaths.clear();
+            }
+            else
+            {
+                m_StartupSceneId = String(Scenes::kSandboxSceneId);
             }
         }
         if (!mapCaptureSpecPath.empty())
@@ -6202,12 +6248,14 @@ namespace Game
              pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu, viewSwitch = &m_SceneViewSwitch,
              skinnedCrowdCount = m_SkinnedCrowdCount, parallelPose = m_ParallelPose,
-             parallelPoseMinCount = m_ParallelPoseMinCount, parallelPoseGrain = m_ParallelPoseGrain]
+             parallelPoseMinCount = m_ParallelPoseMinCount, parallelPoseGrain = m_ParallelPoseGrain,
+             loadScenePaths = s_LoadScenePaths]
             (const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<SandboxMode>();
                 mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_SkinnedCrowdCount = skinnedCrowdCount;
+                mode->GetData().m_LoadScenePaths = loadScenePaths;
                 mode->GetData().m_ParallelPose = parallelPose;
                 mode->GetData().m_ParallelPoseMinCount = parallelPoseMinCount;
                 mode->GetData().m_ParallelPoseGrain = parallelPoseGrain;

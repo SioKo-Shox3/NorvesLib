@@ -385,6 +385,69 @@ namespace NorvesLib::Core
         return m_NestedStorage->Instances;
     }
 
+    bool PrefabAsset::SetNextNestedInstanceId(PrefabNestedInstanceId nextInstanceId)
+    {
+        if (nextInstanceId == InvalidPrefabNestedInstanceId)
+        {
+            return false;
+        }
+
+        for (const PrefabNestedPrefabInstance& nested : m_NestedStorage->Instances)
+        {
+            if (nextInstanceId <= nested.InstanceId)
+            {
+                return false;
+            }
+        }
+
+        m_NextNestedInstanceId = nextInstanceId;
+        return true;
+    }
+
+    bool PrefabAsset::RestoreNestedPrefab(
+        PrefabNestedInstanceId instanceId,
+        SubtreeSnapshotAliasId parentAlias,
+        const ResourceRef<PrefabAsset>& prefab,
+        const PrefabOverrideSet& overrides)
+    {
+        const PrefabNestedInstanceId nextInstanceId = instanceId + 1;
+        if (instanceId == InvalidPrefabNestedInstanceId ||
+            nextInstanceId == InvalidPrefabNestedInstanceId ||
+            !m_bHasTree ||
+            parentAlias == InvalidSubtreeSnapshotAliasId ||
+            !prefab.IsValid() ||
+            !ContainsEntityAlias(m_Tree.Root, parentAlias))
+        {
+            return false;
+        }
+
+        const PrefabAsset* nestedPrefab = prefab.Get();
+        if (!nestedPrefab || WouldCreateNestedPrefabCycle(*this, *nestedPrefab))
+        {
+            return false;
+        }
+
+        for (const PrefabNestedPrefabInstance& nested : m_NestedStorage->Instances)
+        {
+            if (nested.InstanceId == instanceId)
+            {
+                return false;
+            }
+        }
+
+        PrefabNestedPrefabInstance instance;
+        instance.InstanceId = instanceId;
+        instance.ParentAlias = parentAlias;
+        instance.Prefab = prefab;
+        instance.Overrides = overrides;
+        m_NestedStorage->Instances.push_back(std::move(instance));
+        if (m_NextNestedInstanceId < nextInstanceId)
+        {
+            m_NextNestedInstanceId = nextInstanceId;
+        }
+        return true;
+    }
+
     PrefabNestedInstanceId PrefabAsset::AddNestedPrefab(
         SubtreeSnapshotAliasId parentAlias,
         const ResourceRef<PrefabAsset>& prefab,
