@@ -12244,3 +12244,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 段の起動役 pipeline.py: 着地(直し 0 回)
 - U3 リグの事前検査 validate_rig.py: 着地(直し 1 回)
 - U5 文書 BlenderRigPipeline.md と全体の確かめ: 着地(直し 0 回)
+- Notes: 2026-11-18（run 20261118-025854 の反復 3）: verify の 2 行目（`python -B Test/Tools/Blender/RigValidateTest.py ...`）は、試験を作らない決まり（絶対規則 11）に従って TASKS.md から外した。試験ファイルは作っていない。正例（1・2 クリップ）と 8 種の負例、実際の `AssetCook --rig-split` は、反復 1 で `.harness/` の下の使い捨ての合成 glTF で確かめ済み（`.harness/runs/20261118-025854/iter-1.out.txt`・`G6-GR103-RIG-SPEC-VALIDATE-final-verify.txt`）。この反復の `cmake --build build --config Debug --target AssetCook -- /m:1` は終了コード 0（`.harness/runs/20261118-025854/G6-GR103-RIG-SPEC-VALIDATE-iter3-build.txt`）。`Scripts/Blender/` と文書は変えていない。
