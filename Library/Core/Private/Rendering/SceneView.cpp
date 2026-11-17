@@ -26,6 +26,7 @@
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
+#include "Rendering/RainCurtainPass.h"
 #include "Rendering/CloudLayerPass.h"
 #include "Rendering/ForwardPass.h"
 #include "Rendering/BloomPass.h"
@@ -1396,6 +1397,8 @@ namespace NorvesLib::Core::Rendering
 
         // VolumetricsPass: SSR後のシーンの色を解析高さフォグで合成
         AddPass(MakeUnique<VolumetricsPass>());
+        // RainCurtainPass: 霧の後のシーンの色へ遠景の雨のカーテンを重ねる（雨量 0・環境が無効なフレームは何も記録しない）
+        AddPass(MakeUnique<RainCurtainPass>());
 
         // ForwardPass(TransparentOnly): フォグ後のシーンの色へ半透明をLoad合成
         auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);

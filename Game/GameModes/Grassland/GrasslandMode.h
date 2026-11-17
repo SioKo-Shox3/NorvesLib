@@ -82,6 +82,8 @@ namespace Game::GameModes
         Game::Scenes::FreeCameraRig m_Rig;
         /// 地形の配置完了を確かめる非所有の参照。実体はスコープで追跡した Entity が所有する
         NorvesLib::Core::Component::TerrainComponent* m_pTerrain = nullptr;
+        /// 空の遮蔽へ地形の高さを公開済みか
+        bool m_bSkyOcclusionGroundPublished = false;
         /// 地形の広さから決めた遠方面。未設定なら 0。後から作る主人公カメラにも使う
         float m_TerrainFarPlane = 0.0f;
         /// 散布と、地形の配置を待つ開発用の合成本数。

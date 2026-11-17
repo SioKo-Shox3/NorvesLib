@@ -80,6 +80,7 @@ namespace NorvesLib::Core::Rendering::Terrain
 
         TerrainSlot& slot = m_Slots[index];
         slot.Field = std::move(field);
+        slot.Puddle = {};
         slot.Previous = m_LastTerrain;
         slot.Next = TerrainHandle::InvalidIndex;
         if (m_LastTerrain == TerrainHandle::InvalidIndex)
@@ -100,6 +101,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         if (IsLiveHandle(handle))
         {
             ReleaseSlot(handle.Index);
+            PublishPuddleRenderData();
         }
     }
 
@@ -251,6 +253,36 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
     }
 
+    void TerrainSystem::SetPuddleRenderData(TerrainHandle handle, const TerrainPuddleRenderData& data)
+    {
+        if (IsLiveHandle(handle))
+        {
+            m_Slots[handle.Index].Puddle = data;
+            PublishPuddleRenderData();
+        }
+    }
+
+    void TerrainSystem::PublishPuddleRenderData() const
+    {
+        if (Engine::GEngine == nullptr || &Engine::GEngine->GetTerrainSystem() != this)
+        {
+            return;
+        }
+
+        TerrainPuddleRenderData data{};
+        // 複数あるときは、スプラットが有効な最初の地形を登録順に選ぶ。
+        for (uint32_t index = m_FirstTerrain; index != TerrainHandle::InvalidIndex; index = m_Slots[index].Next)
+        {
+            const TerrainPuddleRenderData& candidate = m_Slots[index].Puddle;
+            if (candidate.bValid && candidate.SplatArrayTexture.IsValid())
+            {
+                data = candidate;
+                break;
+            }
+        }
+        Engine::GEngine->GetRenderWorld().SetExtensionData(kTerrainPuddleRenderKey, data);
+    }
+
     float TerrainSystem::GetWetness() const
     {
         return m_Wetness;
@@ -263,6 +295,7 @@ namespace NorvesLib::Core::Rendering::Terrain
             ReleaseSlot(m_FirstTerrain);
         }
         m_TileResidency.reset();
+        PublishPuddleRenderData();
         SetWetness(0.0f);
     }
 
@@ -306,6 +339,7 @@ namespace NorvesLib::Core::Rendering::Terrain
         }
 
         slot.Field.reset();
+        slot.Puddle = {};
         slot.Previous = TerrainHandle::InvalidIndex;
         --m_TerrainCount;
         if (slot.Generation == std::numeric_limits<uint32_t>::max())

@@ -19,6 +19,28 @@ namespace NorvesLib::Core::Rendering
 namespace NorvesLib::Core::Component
 {
 
+    enum class ProceduralMeshKind : uint8_t
+    {
+        None = 0,
+        UVSphere = 1,
+        Plane = 2
+    };
+
+    /** @brief 保存する手続きメッシュの種類と寸法、分割数。寸法の単位は m。 */
+    struct ProceduralMeshSpec
+    {
+        ProceduralMeshKind Kind = ProceduralMeshKind::None;
+        Math::Vector3 Size;
+        uint32_t Segments[2] = {1, 1};
+
+        static constexpr TypeKind SchemaTypeKind = TypeKind::String;
+        static constexpr const char* SchemaTypeName = "ProceduralMeshSpec";
+
+        bool SerializeToString(Container::String& outValue) const;
+        bool DeserializeFromString(const Container::String& inValue);
+        bool operator==(const ProceduralMeshSpec& other) const;
+    };
+
     // ========================================
     // MeshComponent
     // ========================================
@@ -87,12 +109,17 @@ namespace NorvesLib::Core::Component
          * @brief メッシュハンドルを取得
          * @return メッシュデータハンドル
          */
-        Rendering::MeshDataHandle GetMeshHandle() const { return getMeshHandle().Get(); }
+        Rendering::MeshDataHandle GetMeshHandle() const { return LoadMeshHandle(); }
 
         /**
          * @brief メッシュが設定されているかどうか
          */
-        bool HasMesh() const { return getMeshHandle().Get().IsValid(); }
+        bool HasMesh() const { return LoadMeshHandle().IsValid(); }
+
+        /** @brief 保存する手続きメッシュの指定を変更する。 */
+        void SetProceduralMeshSpec(const ProceduralMeshSpec& spec);
+        /** @brief 保存する手続きメッシュの指定を取得する。 */
+        const ProceduralMeshSpec& GetProceduralMeshSpec() const { return ProceduralMesh.Get(); }
 
         // ========================================
         // マテリアル設定
@@ -145,6 +172,14 @@ namespace NorvesLib::Core::Component
             MarkRenderStateDirty();
         }
         bool GetCastShadow() const { return getbCastShadow().Get(); }
+
+        /** @brief 空の遮蔽のマップが遮蔽を受け持つ物かを設定する。 */
+        void SetSkyMapProxy(bool bSkyMapProxy)
+        {
+            this->bSkyMapProxy = bSkyMapProxy;
+            MarkRenderStateDirty();
+        }
+        bool IsSkyMapProxy() const { return bSkyMapProxy.Get(); }
 
         /**
          * @brief シャドウレシーブ設定
@@ -284,6 +319,10 @@ namespace NorvesLib::Core::Component
                             const Rendering::MeshResources* meshes = nullptr) const;
 
     protected:
+        void OnPropertyApplied(const ClassProperty& property) override;
+        void OnEcsRowAttached() override;
+        void OnEcsRowDetaching() override;
+
         // ========================================
         // 内部メソッド
         // ========================================
@@ -315,14 +354,18 @@ namespace NorvesLib::Core::Component
         // 描画の値（メッシュの handle・可視・影・レイヤー）は World の木にいる間 ECS の行（EcsMeshRender）の列にあり、
         // 無い間は予備の値にある
 
-        // メッシュリソース（CPU側データ - Resourceシステム経由）
-        ECS_PROPERTY(Ecs::EcsMeshRender, MeshHandle, Rendering::MeshDataHandle, MeshHandle)
+        /** @brief 保存する形の指定。None のときは SetMeshHandle で外から付けた形を使い、保存しない。 */
+        PROPERTY(ProceduralMeshSpec, ProceduralMesh)
 
         // 描画設定
         ECS_PROPERTY(Ecs::EcsMeshRender, bVisible, bool, bVisible)
         ECS_PROPERTY(Ecs::EcsMeshRender, bCastShadow, bool, bCastShadow)
         ECS_PROPERTY(Ecs::EcsMeshRender, bReceiveShadow, bool, bReceiveShadow)
         ECS_PROPERTY(Ecs::EcsMeshRender, Layer, Rendering::RenderLayer, RenderLayerProp)
+
+        // 空の遮蔽のマップ（樹冠だけの組）が光線の代わりに遮蔽を受け持つ物か（手置きの樹木など）。
+        // 立てると TLAS へ instance mask 0x04 で入り、DDGI・RTGI の光線に当たらない
+        PROPERTY(bool, bSkyMapProxy)
 
         // LOD
         PROPERTY(int32_t, ForcedLODLevel) // -1 = 自動
@@ -335,7 +378,7 @@ namespace NorvesLib::Core::Component
         // マテリアルオーバーライド
         Container::VariableArray<Rendering::MaterialHandle> m_Materials;
 
-        // LODの鎖としきい値は保存・読み込みの対象外。段0はメッシュプロパティに持つ。
+        // LODの鎖としきい値は保存・読み込みの対象外。段0はメッシュのハンドルに持つ。
         Container::FixedArray<Rendering::MeshDataHandle, Rendering::MAX_MESH_LOD_LEVELS - 1> m_LODChainMeshes;
         Container::FixedArray<float, Rendering::MAX_MESH_LOD_LEVELS> m_LODScreenSizeThresholds =
             Container::FixedArray<float, Rendering::MAX_MESH_LOD_LEVELS>(0.0f);
@@ -356,6 +399,16 @@ namespace NorvesLib::Core::Component
         // ダーティフラグ
         bool m_bTransformDirty = true;
         bool m_bBoundsDirty = true;
+
+    private:
+        Rendering::MeshDataHandle LoadMeshHandle() const;
+        void StoreMeshHandle(Rendering::MeshDataHandle handle);
+        void RefreshProceduralMesh();
+        void ReleaseProceduralMesh();
+
+        Rendering::MeshDataHandle m_MeshHandleFallback;
+        ProceduralMeshSpec m_AppliedProceduralMeshSpec;
+        bool m_bOwnsProceduralMesh = false;
     };
 
     // MeshComponentへのスマートポインタ

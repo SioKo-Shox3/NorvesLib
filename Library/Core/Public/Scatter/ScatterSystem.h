@@ -16,6 +16,7 @@
 #include "Object/EntityHandle.h"
 #include "Rendering/FoliageTypes.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Rendering/SkyOcclusion.h"
 
 namespace NorvesLib::Core
 {
@@ -207,6 +208,7 @@ namespace NorvesLib::Core::Scatter
             Rendering::FoliageBatch FoliageTemplate;
             bool bCastShadow = true;
             bool bRayTracingExcluded = false;
+            Rendering::SkyOccluderSpeciesDesc SkyOccluderDesc;
             Container::VariableArray<ChunkUnit> Chunks;
         };
 
@@ -214,6 +216,14 @@ namespace NorvesLib::Core::Scatter
         {
             bool bPinned = false;
             bool bDormant = false;
+        };
+
+        struct SkyOccluderChunk
+        {
+            uint32_t ChunkIndex = 0;
+            uint64_t Key = 0;
+            uint64_t Revision = 0;
+            Container::VariableArray<Rendering::SkyOccluderProxy> Occluders;
         };
 
         struct ScatterState
@@ -228,6 +238,8 @@ namespace NorvesLib::Core::Scatter
             /// 描画用の常駐配列とは独立した、チャンク内の番号の昇順集合。
             Container::VariableArray<Container::VariableArray<uint32_t>> HiddenInstances;
             Container::VariableArray<ScatterResidencyEvent> Log;
+            bool bSkyOccluderKeysValid = true;
+            Container::VariableArray<SkyOccluderChunk> SkyOccluderChunks;
         };
 
         ScatterState* Find(ScatterHandle handle);
@@ -247,12 +259,16 @@ namespace NorvesLib::Core::Scatter
         bool VisitInstancesInRadius(const Math::Vector3& center, float radius, const ScatterQueryFilter& filter,
                                     void* context, void (*visitor)(void*, const ScatterQueryHit&)) const;
         void RebuildFoliageScene();
+        void RebuildSkyOccluderChunk(ScatterState& scatter, uint32_t chunk);
+        void PublishSkyOccluders();
 
         Container::VariableArray<ScatterState> m_Scatters;
         ScatterBudget m_Budget;
         ScatterResidencyStats m_Stats;
         Rendering::FoliageScene m_FoliageScene;
         uint64_t m_FoliageVersion = 0;
+        uint64_t m_SkyOccluderRevision = 0;
+        bool m_bSkyOccludersDirty = false;
         /// foliage の描画先の借用参照。初期化済みの間だけ一覧を渡す。
         Rendering::RenderWorld* m_RenderWorld = nullptr;
         ScatterHandle m_NextHandle = 1;

@@ -366,6 +366,8 @@ namespace Game
         Game::Scenes::CameraPathCaptureState m_CameraPathCapture;
         NorvesLib::Core::Container::String m_CameraPathCapturePngPath;
         uint32_t m_CameraPathCaptureWaitedFrames = 0;
+        /// --gpu-particle-stress=<n> で指定された GPU の粒の数（0 は配置しない）。
+        uint32_t m_GpuParticleStressCount = 0;
 #endif
         /// --banana-count=<n> で指定された、バナナのシーンの本数（指定が無ければ既定。mega-stress は指定したときだけ置く）
         uint32_t m_BananaCount = 10000;

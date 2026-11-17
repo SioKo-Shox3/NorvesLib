@@ -69,6 +69,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_CurrentHeight = 0;
         RHI::Format m_CurrentFormat = RHI::Format::UNKNOWN;
         RHI::ITexture* m_FramebufferSceneColorTexture = nullptr;
+        // 開発ビルドで NORVES_VOLUMETRIC_FOG_REFERENCE_STEPS が 1 なら、歩の配置の検証用に
+        // 霧と空気遠近を等間隔・ずらし無し・上限無しの 256 歩で積む。
+        bool m_bReferenceSteps = false;
     };
 
 #if NORVES_ENABLE_STATS

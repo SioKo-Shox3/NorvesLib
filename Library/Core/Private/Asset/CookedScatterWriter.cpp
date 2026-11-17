@@ -123,6 +123,19 @@ namespace NorvesLib::Core::Asset
             {
                 return Status::InvalidSpecies;
             }
+            if (species.SkyOccluderShape > 2 ||
+                (species.SkyOccluderShape != 0 &&
+                 (!std::isfinite(species.SkyOccluderRadiusMeters) || species.SkyOccluderRadiusMeters <= 0.0f ||
+                  species.SkyOccluderRadiusMeters > 256.0f ||
+                  !std::isfinite(species.SkyOccluderHeightMeters) || species.SkyOccluderHeightMeters <= 0.0f ||
+                  species.SkyOccluderHeightMeters > 256.0f ||
+                  !std::isfinite(species.SkyOccluderBaseRatio) || species.SkyOccluderBaseRatio < 0.0f ||
+                  species.SkyOccluderBaseRatio > 0.95f ||
+                  !std::isfinite(species.SkyOccluderKappa) || species.SkyOccluderKappa < 0.0f ||
+                  species.SkyOccluderKappa > 1.0f)))
+            {
+                return Status::InvalidSpecies;
+            }
             for (uint32_t lod = 0; lod < MaxLodCount; ++lod)
             {
                 if ((lod < species.LodCount && !AddStringSize(species.LodPaths[lod], stringSize)) ||
@@ -199,11 +212,16 @@ namespace NorvesLib::Core::Asset
         const uint64_t rangeOffset = chunkOffset + chunkSize;
         const uint64_t rangeSize = rangeCount * RangeRecordSize;
         const uint64_t collisionOffset = rangeOffset + rangeSize;
-        if (desc.CollisionShapes.size() > (UINT64_MAX - collisionOffset) / CollisionRecordSize)
+        // 形が 1 つも無ければ節ごと書かず、規則の散布のファイルの並びを変えない。
+        const uint64_t collisionRangeSize =
+            desc.CollisionShapes.empty() ? 0 : speciesCount * CollisionSpeciesRangeRecordSize;
+        const uint64_t collisionShapeOffset = collisionOffset + collisionRangeSize;
+        if (desc.CollisionShapes.size() > (UINT64_MAX - collisionShapeOffset) / CollisionRecordSize)
         {
             return Status::TooLarge;
         }
-        const uint64_t collisionTableSize = static_cast<uint64_t>(desc.CollisionShapes.size()) * CollisionRecordSize;
+        const uint64_t collisionTableSize =
+            collisionRangeSize + static_cast<uint64_t>(desc.CollisionShapes.size()) * CollisionRecordSize;
         const uint64_t stringOffset = collisionOffset + collisionTableSize;
         if (stringOffset > UINT64_MAX - stringSize - (InstanceAlignment - 1))
         {
@@ -277,8 +295,22 @@ namespace NorvesLib::Core::Asset
             WriteFloat(data, record + SpeciesRecordOffset::WindStiffness, species.WindStiffness);
             WriteLe(data, record + SpeciesRecordOffset::WindPhaseSeed, species.WindPhaseSeed, 4);
             WriteLe(data, record + SpeciesRecordOffset::Flags, species.Flags, 4);
-            WriteLe(data, record + SpeciesRecordOffset::CollisionFirst, species.CollisionFirst, 4);
-            WriteLe(data, record + SpeciesRecordOffset::CollisionCount, species.CollisionCount, 4);
+            if (species.SkyOccluderShape != 0)
+            {
+                const uint32_t base = static_cast<uint32_t>(std::round(static_cast<double>(species.SkyOccluderBaseRatio) * 255.0));
+                const uint32_t kappa = static_cast<uint32_t>(std::round(static_cast<double>(species.SkyOccluderKappa) * 255.0));
+                const uint32_t bits = species.SkyOccluderShape | (species.bSkyOccluderCanopy ? 4u : 0u) |
+                                      (base << 8) | (kappa << 16);
+                WriteLe(data, record + SpeciesRecordOffset::SkyOccluderBits, bits, 4);
+                WriteFloat(data, record + SpeciesRecordOffset::SkyOccluderRadiusMeters, species.SkyOccluderRadiusMeters);
+                WriteFloat(data, record + SpeciesRecordOffset::SkyOccluderHeightMeters, species.SkyOccluderHeightMeters);
+            }
+            if (collisionTableSize != 0)
+            {
+                const size_t rangeRecord = static_cast<size_t>(collisionOffset + i * CollisionSpeciesRangeRecordSize);
+                WriteLe(data, rangeRecord + CollisionSpeciesRangeOffset::First, species.CollisionFirst, 4);
+                WriteLe(data, rangeRecord + CollisionSpeciesRangeOffset::Count, species.CollisionCount, 4);
+            }
         }
         for (size_t i = 0; i < desc.Chunks.size(); ++i)
         {
@@ -303,7 +335,7 @@ namespace NorvesLib::Core::Asset
         for (size_t i = 0; i < desc.CollisionShapes.size(); ++i)
         {
             const auto& shape = desc.CollisionShapes[i];
-            const size_t record = static_cast<size_t>(collisionOffset + i * CollisionRecordSize);
+            const size_t record = static_cast<size_t>(collisionShapeOffset + i * CollisionRecordSize);
             WriteLe(data, record + CollisionRecordOffset::Type, static_cast<uint32_t>(shape.Type), 4);
             for (size_t axis = 0; axis < 3; ++axis)
             {

@@ -61,11 +61,15 @@ namespace NorvesLib::Core::Rendering
         bool bGameThreadTimingsAvailable = false;
     };
 
-    /// 影を落とす不透明物体のinstance mask。影・DDGI・RTGIの光線はこのbitだけを調べる。
+    /// 影を落とす不透明物体のinstance mask。DDGI・RTGIの光線はこのbitを調べ、RTの影の光線は0x04も調べる。
     /// Assets/Shaders/Common/RayTracingInstanceMask.glslと一致させる。
     inline constexpr uint8_t RayTracingInstanceMaskShadowCaster = 0x01u;
     /// 影を落とさない不透明物体のinstance mask。全bitで調べるパストレーサーだけが当たる。
     inline constexpr uint8_t RayTracingInstanceMaskNonShadowCaster = 0x02u;
+    /// 空の遮蔽のマップが受け持つ樹冠（影を落とす物）。RTの影の光線（0x01|0x04）と全bitで調べるパストレーサーだけが当たり、
+    /// DDGI・RTGIの光線（0x01、拡散の0x03）には当たらない。0x02を立てないのは、
+    /// SetRTGINonShadowCasterOcclusionの拡散の光線（0x03）にも当てないため。
+    inline constexpr uint8_t RayTracingInstanceMaskSkyMapProxy = 0x04u;
 
     /**
      * @brief レイトレーシング用シーンのフレームスナップショット
@@ -181,15 +185,29 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
-         * @brief 影を落とす物体（影・DDGI・RTGIの光線が当たる物体）があるか
+         * @brief DDGI・RTGIのfallback用に、instance mask 0x01の物体があるか
          *
-         * 影を落とさない物体だけのシーンでは、影・DDGI・RTGIは従来の空のシーンと同じくfallbackする。
+         * 0x01の物体がないシーンでは、DDGI・RTGIは従来の空のシーンと同じくfallbackする。
          */
         bool HasShadowCasters() const
         {
             for (const RayTracingSceneInstanceSnapshot& instance : Instances)
             {
                 if ((instance.Instance.mask & RayTracingInstanceMaskShadowCaster) != 0u)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** @brief RTの影の光線が当たるinstance mask 0x01または0x04の物体があるか */
+        bool HasRayTracingShadowCasters() const
+        {
+            for (const RayTracingSceneInstanceSnapshot& instance : Instances)
+            {
+                if ((instance.Instance.mask & (RayTracingInstanceMaskShadowCaster |
+                                               RayTracingInstanceMaskSkyMapProxy)) != 0u)
                 {
                     return true;
                 }
@@ -395,6 +413,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 枯れ度の源（最大 WorldFieldDrynessMaxSources 件の値の配列）。SceneRevision に入れない（源の変化で RTGI の履歴を捨てないため）。 */
         Container::VariableArray<WorldFieldDrynessSource> WorldFieldDrynessSources;
 
+        /** @brief 手置きの水たまりの源（最大 WorldFieldPuddleMaxSources 件の値の配列）。SceneRevision に入れない。 */
+        Container::VariableArray<WorldFieldPuddleSource> WorldFieldPuddleSources;
+
         Container::VariableArray<GPUSceneInstanceData> InstanceData;
 
         /** @brief デバッグライン頂点スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
@@ -472,6 +493,7 @@ namespace NorvesLib::Core::Rendering
             GrassField.reset();
             WorldFieldInteractors.clear();
             WorldFieldDrynessSources.clear();
+            WorldFieldPuddleSources.clear();
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             DebugLineVertices.clear();
@@ -588,7 +610,7 @@ namespace NorvesLib::Core::Rendering
         for (const MeshProxy& proxy : meshProxies)
         {
             if (!proxy.IsValid() || proxy.MeshHandle.Id != draw.MeshHandle.Id ||
-                proxy.bCastShadow != draw.bCastShadow)
+                proxy.bCastShadow != draw.bCastShadow || proxy.bSkyMapProxy != draw.bSkyMapProxy)
             {
                 continue;
             }

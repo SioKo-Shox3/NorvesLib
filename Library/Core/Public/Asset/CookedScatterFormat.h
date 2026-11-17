@@ -22,6 +22,7 @@ namespace NorvesLib::Core::Asset
         inline constexpr size_t SpeciesRecordSize = 96;
         inline constexpr size_t ChunkRecordSize = 48;
         inline constexpr size_t RangeRecordSize = 16;
+        inline constexpr size_t CollisionSpeciesRangeRecordSize = 8;
         inline constexpr size_t CollisionRecordSize = 48;
         inline constexpr size_t InstanceRecordSize = 16;
         inline constexpr size_t VariationSeedRecordSize = 4;
@@ -80,9 +81,9 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t WindStiffness = 72;
             inline constexpr size_t WindPhaseSeed = 76;
             inline constexpr size_t Flags = 80;
-            inline constexpr size_t CollisionFirst = 84;
-            inline constexpr size_t CollisionCount = 88;
-            inline constexpr size_t Reserved1 = 92;
+            inline constexpr size_t SkyOccluderBits = 84;
+            inline constexpr size_t SkyOccluderRadiusMeters = 88;
+            inline constexpr size_t SkyOccluderHeightMeters = 92;
         }
 
         namespace ChunkRecordOffset
@@ -102,6 +103,14 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t Count = 8;
         }
 
+        // 衝突の表の節は、種ごとの範囲 {first, count} を種の数だけ並べ、その後に形の記録を並べる。
+        // 形が 1 つも無いファイルでは節ごと無い(ヘッダ 176 の大きさが 0)。
+        namespace CollisionSpeciesRangeOffset
+        {
+            inline constexpr size_t First = 0;
+            inline constexpr size_t Count = 4;
+        }
+
         namespace CollisionRecordOffset
         {
             inline constexpr size_t Type = 0;
@@ -114,7 +123,8 @@ namespace NorvesLib::Core::Asset
         }
 
         static_assert(HeaderOffset::VariationSeedSize + 8 == HeaderSize);
-        static_assert(SpeciesRecordOffset::Reserved1 + 4 == SpeciesRecordSize);
+        static_assert(SpeciesRecordOffset::SkyOccluderHeightMeters + 4 == SpeciesRecordSize);
+        static_assert(CollisionSpeciesRangeOffset::Count + 4 == CollisionSpeciesRangeRecordSize);
         static_assert(CollisionRecordOffset::Reserved2 + 8 == CollisionRecordSize);
         static_assert(ChunkRecordOffset::Reserved + 8 == ChunkRecordSize);
         static_assert(RangeRecordOffset::Count + 8 == RangeRecordSize);
@@ -176,6 +186,13 @@ namespace NorvesLib::Core::Asset
         float WindStiffness = 0.0f;
         uint32_t WindPhaseSeed = 0;
         uint32_t Flags = 0;
+        uint32_t SkyOccluderShape = 0; // 0 = 遮蔽物なし、1 = 楕円体、2 = 箱
+        bool bSkyOccluderCanopy = false;
+        float SkyOccluderRadiusMeters = 0.0f;
+        float SkyOccluderHeightMeters = 0.0f;
+        float SkyOccluderBaseRatio = 0.0f;
+        float SkyOccluderKappa = 0.0f;
+        // 種の記録ではなく、衝突の表の節の頭の種ごとの範囲に入る。
         uint32_t CollisionFirst = 0;
         uint32_t CollisionCount = 0;
     };
@@ -228,6 +245,7 @@ namespace NorvesLib::Core::Asset
         ChunkOutOfRange,
         InvalidChunkBounds,
         InstanceRangeOutOfRange,
+        InvalidSkyOccluder,
         CollisionOutOfRange,
     };
 

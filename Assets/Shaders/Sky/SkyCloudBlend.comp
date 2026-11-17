@@ -1,0 +1,77 @@
+﻿// 晴天のキー a・b の経度を合わせ、単位曇天の放射輝度と指定の重みで混ぜる。
+// 晴天 a の複写では値をそのまま保ち、混合時は半精度で保存できる範囲へ収める。
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// 重み・経度のずらしと、出力先の寸法・入力ミップ・複写フラグを受け取る。
+layout(std140, set = 0, binding = 0) uniform SkyCloudBlendConstants
+{
+    vec4 u_ClearWeights;   // xy = a・b の重み、zw = a・b の u のずらし
+    vec4 u_OvercastWeight; // rgb = 単位曇天の重み × 曇天の色味（w は未使用）
+    uvec4 u_Target;        // xy = 出力の幅と高さ、z = 入力ミップ、w = 晴天 a の複写フラグ
+};
+layout(set = 0, binding = 1) uniform sampler2D u_ClearInputA;       // 晴天 a の全ミップ
+layout(set = 0, binding = 2) uniform sampler2D u_ClearInputB;       // 晴天 b の全ミップ
+layout(set = 0, binding = 3) uniform sampler2D u_UnitOvercastInput; // 単位曇天の全ミップ
+layout(rgba16f, set = 0, binding = 4) uniform writeonly image2D u_Output; // 出力先の 1 ミップ
+
+// 行は変えず、経度だけを回り込ませて隣接する列を線形補間する。
+vec4 FetchShiftedClear(sampler2D inputTexture, ivec2 p, float shift)
+{
+    if (shift == 0.0)
+    {
+        return texelFetch(inputTexture, p, int(u_Target.z));
+    }
+
+    float width = float(u_Target.x);
+    float srcX = float(p.x) - shift * width;
+    float x0 = floor(srcX);
+    float f = srcX - x0;
+    // 負の列にも対応するよう、剰余演算を使わず 0 以上 width 未満へ戻す。
+    int column0 = int(x0 - width * floor(x0 / width));
+    float x1 = x0 + 1.0;
+    int column1 = int(x1 - width * floor(x1 / width));
+    return mix(texelFetch(inputTexture, ivec2(column0, p.y), int(u_Target.z)),
+               texelFetch(inputTexture, ivec2(column1, p.y), int(u_Target.z)), f);
+}
+
+void main()
+{
+    // ワークグループの端で出力範囲を超える呼び出しを除外する。
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(p, u_Target.xy)))
+    {
+        return;
+    }
+
+    // 晴天 a の複写時は重み付けや補正をせず、そのまま保存する。
+    if (u_Target.w != 0u)
+    {
+        imageStore(u_Output, ivec2(p), texelFetch(u_ClearInputA, ivec2(p), int(u_Target.z)));
+        return;
+    }
+
+    vec4 a = FetchShiftedClear(u_ClearInputA, ivec2(p), u_ClearWeights.z);
+    vec4 b = vec4(0.0);
+    if (u_ClearWeights.y != 0.0)
+    {
+        b = FetchShiftedClear(u_ClearInputB, ivec2(p), u_ClearWeights.w);
+    }
+    // 単位曇天は経度をずらさず、放射輝度だけを混ぜる。
+    vec3 unit = texelFetch(u_UnitOvercastInput, ivec2(p), int(u_Target.z)).rgb;
+    vec3 blended = a.rgb * u_ClearWeights.x + b.rgb * u_ClearWeights.y + unit * u_OvercastWeight.rgb;
+
+    // 非有限の成分を 0 にし、半精度の最大値に余裕を持たせて制限する。
+    for (int channel = 0; channel < 3; ++channel)
+    {
+        if (isnan(blended[channel]) || isinf(blended[channel]))
+        {
+            blended[channel] = 0.0;
+        }
+    }
+    blended = clamp(blended, vec3(0.0), vec3(65504.0 * 0.9));
+    // 太陽の円盤を示すアルファは、重みの大きい晴天のキーから受け取る。
+    float alpha = u_ClearWeights.x >= u_ClearWeights.y ? a.a : b.a;
+    imageStore(u_Output, ivec2(p), vec4(blended, alpha));
+}

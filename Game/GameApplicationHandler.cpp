@@ -28,6 +28,7 @@
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "GameModes/CombatSlice/CombatSliceMode.h"
 #if NORVES_BUILD_DEVELOPMENT
+#include "Core/Public/Rendering/GpuParticle/GpuParticleFrame.h"
 #include "GameModes/AssetPreview/AssetPreviewMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseScenes.h"
@@ -238,6 +239,10 @@ namespace Game
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
         // mega-stress では、指定したときだけ同じ配置のバナナ n 本を個別の Entity と同時に置く（混在の負荷）。
         constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
+#if NORVES_BUILD_DEVELOPMENT
+        // --gpu-particle-stress=<n>: Rendering3DTest のカメラ前に置く GPU の粒の数（1〜262144）。
+        constexpr const TCHAR *kGpuParticleStressOption = TEXT("--gpu-particle-stress=");
+#endif
         // --stress-entities=<n>: mega-stress の Entity の数（1〜kMaxStressEntityCount。既定 kDefaultStressEntityCount）。
         constexpr const TCHAR *kStressEntitiesOption = TEXT("--stress-entities=");
         // --stress-moving-percent=<p>: mega-stress で毎フレーム動かす Entity の割合[%]（0〜100。既定 0）。
@@ -426,6 +431,233 @@ namespace Game
         constexpr const TCHAR *kStartupCameraOption = TEXT("--startup-camera=");
         bool s_bRendering3DTestHasStartupCamera = false;
         float s_Rendering3DTestStartupCamera[3] = {0.0f, 0.0f, 0.0f};
+        // --rain=<0〜1>: 雨の強さ。--wetness=<0〜1>: 地表の濡れ。
+        // --cloud-cover=<0〜1>: 均一な曇天の度合い。--wind=<方位>,<速さ>,<突風>: 風（0〜360 度、0〜100 m/s、0〜1）。
+        // --cloud-cover-sweep=<frames>: 開発ビルドで雲量を指定フレーム数で 0 から 1 へ動かす。
+        // --sun-sweep=<開始の度>,<終わりの度>,<秒>: 開発ビルドで太陽の高度を連続して動かす。
+        // --environment-preset=<name>: 気象のプリセット。明示の値をプリセットに重ねる。
+        // どれかがあればシーンの準備の後に気象を有効にして当てる。無ければ気象は無効のまま。
+        // --clock: 太陽をゲーム時刻から、天候を種の予定表から決める（既定は無効）。
+        // 次の 3 つは --clock と一緒に使う。
+        // --time-of-day=<0〜24>: 時計の開始時刻（時。既定 12）。24 は 0 に巻く。
+        // --weather-seed=<0〜4294967295>: 天候の予定表の種（既定 0）。
+        // --time-scale=<0〜3600>: 時計の倍率（既定 1）。
+        constexpr const TCHAR* kClockOption = TEXT("--clock");
+        constexpr const TCHAR* kTimeOfDayOption = TEXT("--time-of-day=");
+        constexpr const TCHAR* kWeatherSeedOption = TEXT("--weather-seed=");
+        constexpr const TCHAR* kTimeScaleOption = TEXT("--time-scale=");
+        constexpr Environment::EnvironmentOverrideScope kGameArgumentsOverrideScope = 0x47414D45u;
+        bool s_bClock = false;
+        bool s_bHasTimeOfDay = false;
+        float s_TimeOfDayHours = 12.0f;
+        bool s_bHasWeatherSeed = false;
+        uint32_t s_WeatherSeed = 0;
+        bool s_bHasTimeScale = false;
+        float s_TimeScale = 1.0f;
+        constexpr const TCHAR* kRainOption = TEXT("--rain=");
+        constexpr const TCHAR* kWetnessOption = TEXT("--wetness=");
+        constexpr const TCHAR* kCloudCoverOption = TEXT("--cloud-cover=");
+        constexpr const TCHAR* kWindOption = TEXT("--wind=");
+        constexpr const TCHAR* kEnvironmentPresetOption = TEXT("--environment-preset=");
+        bool s_bHasRain = false;
+        bool s_bHasWetness = false;
+        bool s_bHasCloudCover = false;
+        bool s_bHasWind = false;
+        bool s_bHasEnvironmentPreset = false;
+        float s_Rain = 0.0f;
+        float s_Wetness = 0.0f;
+        float s_CloudCover = 0.0f;
+        float s_Wind[3] = {};
+        Environment::EnvironmentTarget s_EnvironmentPresetTarget;
+        bool s_bEnvironmentApplyPending = false;
+        bool s_bRendering3DTestHasSunElevation = false;
+        bool s_bRendering3DTestHasSunAzimuth = false;
+#if NORVES_BUILD_DEVELOPMENT
+        constexpr const TCHAR* kCloudCoverSweepOption = TEXT("--cloud-cover-sweep=");
+        bool s_bHasCloudCoverSweep = false;
+        uint32_t s_CloudCoverSweepFrames = 0;
+        bool s_bCloudCoverSweepActive = false;
+        uint32_t s_CloudCoverSweepElapsedFrames = 0;
+        bool s_bCloudCoverSweepConflictWarned = false;
+        constexpr const TCHAR* kSunSweepOption = TEXT("--sun-sweep=");
+        bool s_bHasSunSweep = false;
+        float s_SunSweep[3] = {};
+        bool s_bSunSweepActive = false;
+        float s_SunSweepElapsedSeconds = 0.0f;
+#endif
+
+        String ResolveEnvironmentPresetRoot()
+        {
+            // 作業ディレクトリは実行ファイルのディレクトリなので、資産が無ければリポジトリの根を使う。
+            std::error_code existsError;
+            if (std::filesystem::is_directory("Assets/Data/Environment", existsError) && !existsError)
+            {
+                return {};
+            }
+#if defined(NORVES_SOURCE_ASSET_DIR)
+            return String(std::filesystem::path(NORVES_SOURCE_ASSET_DIR).parent_path().string().c_str());
+#else
+            return {};
+#endif
+        }
+
+        bool HasEnvironmentArguments()
+        {
+#if NORVES_BUILD_DEVELOPMENT
+            if (s_bHasCloudCoverSweep || s_bHasSunSweep)
+            {
+                return true;
+            }
+#endif
+            return s_bClock || s_bHasRain || s_bHasWetness || s_bHasCloudCover || s_bHasWind || s_bHasEnvironmentPreset;
+        }
+
+        void PrepareEnvironmentForGameMode(GameModeId id)
+        {
+            if (!HasEnvironmentArguments())
+            {
+                return;
+            }
+            // 遷移は Leave → 生成 → Enter で同じフレームの PublishTo より前に行われる。
+            // 生成時に無効にし、新しいシーンが Enter で書く空・霧などを前の気象で潰さない。
+            // プッシュで重ねるモードでも無効にして準備後に当て直すため、下のモードの気象は保持しない。
+            if (NorvesLib::Core::Engine::GEngine != nullptr)
+            {
+                NorvesLib::Core::Engine::GEngine->GetEnvironment().Disable();
+            }
+#if NORVES_BUILD_DEVELOPMENT
+            s_bCloudCoverSweepActive = false;
+            s_bSunSweepActive = false;
+#endif
+            s_bEnvironmentApplyPending = (id != Game::GameModes::Launcher);
+        }
+
+        void ApplyPendingEnvironment()
+        {
+            if (!s_bEnvironmentApplyPending || NorvesLib::Core::Engine::GEngine == nullptr)
+            {
+                return;
+            }
+            auto& engine = *NorvesLib::Core::Engine::GEngine;
+            if (!engine.GetDeterministicCapture().IsSceneReady())
+            {
+                return;
+            }
+            s_bEnvironmentApplyPending = false;
+            auto& coordinator = engine.GetRenderWorld().GetRenderingCoordinator();
+            const auto& sky = coordinator.GetSkyAtmosphere();
+            const auto& fog = coordinator.GetVolumetricFogParameters();
+            const auto& cloudLayer = coordinator.GetCloudLayer();
+            const auto& wind = coordinator.GetWindParameters();
+            auto& environment = engine.GetEnvironment();
+#if NORVES_BUILD_DEVELOPMENT
+            // 太陽の掃引の間は、空のパスに SKY_SWEEP の行を出させる。
+            auto sceneSky = sky;
+            sceneSky.bDebugLogSunSweep = s_bHasSunSweep;
+#else
+            const auto& sceneSky = sky;
+#endif
+            auto initial = Environment::MakeEnvironmentStateFromScene(sceneSky, fog, cloudLayer, wind);
+            if (s_bClock)
+            {
+                initial.SunMode = Environment::EEnvironmentSunMode::Clock;
+                initial.Seed = s_WeatherSeed;
+                initial.GameTimeSeconds = s_TimeOfDayHours * 3600.0;
+                initial.ClockTimeScale = s_TimeScale;
+            }
+            environment.Enable(initial, Environment::MakeEnvironmentSceneBase(sceneSky, fog, cloudLayer, wind));
+
+            Environment::EnvironmentTarget target;
+            if (s_bHasEnvironmentPreset)
+            {
+                target = s_EnvironmentPresetTarget;
+            }
+            else
+            {
+                target.Mask = 0;
+                target.Values = environment.GetBaseState();
+            }
+            if (s_bHasRain)
+            {
+                target.Values.RainIntensity = s_Rain;
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::RainIntensity);
+            }
+            if (s_bHasWetness)
+            {
+                target.Values.Wetness = s_Wetness;
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::Wetness);
+            }
+            if (s_bHasCloudCover)
+            {
+                target.Values.CloudCover = s_CloudCover;
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::CloudCover);
+            }
+            if (s_bHasWind)
+            {
+                target.Values.WindDirectionYawDegrees = s_Wind[0];
+                target.Values.WindBaseSpeed = s_Wind[1];
+                target.Values.WindGustStrength = s_Wind[2];
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindDirectionYaw) |
+                               Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindBaseSpeed) |
+                               Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindGustStrength);
+            }
+#if NORVES_BUILD_DEVELOPMENT
+            if (s_bHasCloudCoverSweep)
+            {
+                if (s_bClock)
+                {
+                    // 時計は雲量を毎フレーム予定表の値で書くので、スイープの目標と競合する。時計を優先する。
+                    if (!s_bCloudCoverSweepConflictWarned)
+                    {
+                        LOG_WARNING("--cloud-cover-sweep は --clock と併用できないため無視します");
+                        s_bCloudCoverSweepConflictWarned = true;
+                    }
+                }
+                else
+                {
+                    if (s_bHasCloudCover && !s_bCloudCoverSweepConflictWarned)
+                    {
+                        LOG_WARNING("--cloud-cover-sweep と --cloud-cover の両方が指定されたため、スイープを優先します");
+                        s_bCloudCoverSweepConflictWarned = true;
+                    }
+                    target.Values.CloudCover = 0.0f;
+                    target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::CloudCover);
+                    s_CloudCoverSweepElapsedFrames = 0;
+                    s_bCloudCoverSweepActive = true;
+                    LOG_INFO("CLOUD_COVER_SWEEP start frames=%u", s_CloudCoverSweepFrames);
+                }
+            }
+            if (s_bHasSunSweep)
+            {
+                target.Values.SunAltitudeDegrees = s_SunSweep[0];
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::SunAltitude);
+                s_SunSweepElapsedSeconds = 0.0f;
+                s_bSunSweepActive = true;
+                LOG_INFO("SUN_SWEEP start from=%.3f to=%.3f seconds=%.3f", s_SunSweep[0], s_SunSweep[1], s_SunSweep[2]);
+            }
+#endif
+            if (s_bClock)
+            {
+                if (target.Mask != 0)
+                {
+                    environment.PushOverride(kGameArgumentsOverrideScope, target);
+                }
+                if (s_bRendering3DTestHasSunElevation || s_bRendering3DTestHasSunAzimuth)
+                {
+                    environment.SetManualSunOverride(sky.SunAltitudeDegrees, sky.SunAzimuthDegrees);
+                }
+            }
+            else
+            {
+                environment.SetImmediate(target);
+            }
+            const auto resolved = environment.Resolve();
+            LOG_INFO("ENVIRONMENT_RESOLVED rain=%.3f wetness=%.3f cloud=%.3f wind=%.1f,%.2f,%.2f fog=%.5f discontinuity=%u",
+                     resolved.Environment.RainIntensity, resolved.Environment.Wetness, resolved.Environment.CloudCover,
+                     resolved.Wind.DirectionYawDegrees, resolved.Wind.BaseSpeed, resolved.Wind.GustStrength,
+                     resolved.Fog.DensityAtBaseHeight, resolved.Environment.DiscontinuityId);
+        }
+
         // --sun-elevation=<deg> / --sun-azimuth=<deg>: 起動時の空の太陽の仰角（0〜90）と方位（-180〜180）。
         // --exposure-ev100=<ev>: 起動時の手動露出（EV100、-6〜24）。
         constexpr const TCHAR *kSunElevationOption = TEXT("--sun-elevation=");
@@ -510,8 +742,6 @@ namespace Game
         float s_Rendering3DTestHeightFogDensity = 0.0f;
         bool s_bRendering3DTestHasHeightFogFalloff = false;
         float s_Rendering3DTestHeightFogFalloff = 0.0f;
-        bool s_bRendering3DTestHasSunElevation = false;
-        bool s_bRendering3DTestHasSunAzimuth = false;
         bool s_bRendering3DTestHasExposureEV100 = false;
         float s_Rendering3DTestSunElevation = 0.0f;
         float s_Rendering3DTestSunAzimuth = 0.0f;
@@ -963,6 +1193,7 @@ namespace Game
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
         m_CameraPathCaptureWaitedFrames = 0;
+        m_GpuParticleStressCount = 0;
 #endif
         m_BananaCount = Game::GameModes::kDefaultBananaCount;
         m_bBananaCountSet = false;
@@ -1018,6 +1249,39 @@ namespace Game
 #endif
         s_bSkyOccluderDemo = false;
         s_bRendering3DTestHasStartupCamera = false;
+        s_bClock = false;
+        s_bHasTimeOfDay = false;
+        s_TimeOfDayHours = 12.0f;
+        s_bHasWeatherSeed = false;
+        s_WeatherSeed = 0;
+        s_bHasTimeScale = false;
+        s_TimeScale = 1.0f;
+        s_bHasRain = false;
+        s_bHasWetness = false;
+        s_bHasCloudCover = false;
+        s_bHasWind = false;
+        s_bHasEnvironmentPreset = false;
+        s_Rain = 0.0f;
+        s_Wetness = 0.0f;
+        s_CloudCover = 0.0f;
+        s_Wind[0] = 0.0f;
+        s_Wind[1] = 0.0f;
+        s_Wind[2] = 0.0f;
+        s_EnvironmentPresetTarget = {};
+        s_bEnvironmentApplyPending = false;
+#if NORVES_BUILD_DEVELOPMENT
+        s_bHasCloudCoverSweep = false;
+        s_CloudCoverSweepFrames = 0;
+        s_bCloudCoverSweepActive = false;
+        s_CloudCoverSweepElapsedFrames = 0;
+        s_bCloudCoverSweepConflictWarned = false;
+        s_bHasSunSweep = false;
+        s_SunSweep[0] = 0.0f;
+        s_SunSweep[1] = 0.0f;
+        s_SunSweep[2] = 0.0f;
+        s_bSunSweepActive = false;
+        s_SunSweepElapsedSeconds = 0.0f;
+#endif
         s_bRendering3DTestHasSunElevation = false;
         s_bRendering3DTestHasSunAzimuth = false;
         s_bRendering3DTestHasExposureEV100 = false;
@@ -1139,6 +1403,138 @@ namespace Game
                          static_cast<double>(s_Rendering3DTestStartupCamera[0]),
                          static_cast<double>(s_Rendering3DTestStartupCamera[1]),
                          static_cast<double>(s_Rendering3DTestStartupCamera[2]));
+                continue;
+            }
+
+            if (args[i] == kClockOption)
+            {
+                s_bClock = true;
+                continue;
+            }
+            String environmentValue;
+            if (TryStripPrefix(args[i], kTimeOfDayOption, environmentValue))
+            {
+                if (!TryParseBoundedFloat(environmentValue, 0.0f, 24.0f, s_TimeOfDayHours))
+                {
+                    LOG_ERROR("--time-of-day は 0〜24 の数（時）で指定してください");
+                    return false;
+                }
+                if (s_TimeOfDayHours == 24.0f)
+                {
+                    s_TimeOfDayHours = 0.0f;
+                }
+                s_bHasTimeOfDay = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWeatherSeedOption, environmentValue))
+            {
+                if (!TryParseUInt32(environmentValue, s_WeatherSeed))
+                {
+                    LOG_ERROR("--weather-seed は 0〜4294967295 の整数で指定してください");
+                    return false;
+                }
+                s_bHasWeatherSeed = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kTimeScaleOption, environmentValue))
+            {
+                if (!TryParseBoundedFloat(environmentValue, 0.0f, 3600.0f, s_TimeScale))
+                {
+                    LOG_ERROR("--time-scale は 0〜3600 の数で指定してください");
+                    return false;
+                }
+                s_bHasTimeScale = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kRainOption, environmentValue))
+            {
+                if (!TryParseBoundedFloat(environmentValue, 0.0f, 1.0f, s_Rain))
+                {
+                    LOG_ERROR("--rain は 0〜1 の数で指定してください");
+                    return false;
+                }
+                s_bHasRain = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kWetnessOption, environmentValue))
+            {
+                if (!TryParseBoundedFloat(environmentValue, 0.0f, 1.0f, s_Wetness))
+                {
+                    LOG_ERROR("--wetness は 0〜1 の数で指定してください");
+                    return false;
+                }
+                s_bHasWetness = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kCloudCoverOption, environmentValue))
+            {
+                if (!TryParseBoundedFloat(environmentValue, 0.0f, 1.0f, s_CloudCover))
+                {
+                    LOG_ERROR("--cloud-cover は 0〜1 の数で指定してください");
+                    return false;
+                }
+                s_bHasCloudCover = true;
+                continue;
+            }
+#if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], kCloudCoverSweepOption, environmentValue))
+            {
+                uint32_t frames = 0;
+                if (!TryParseUInt32(environmentValue, frames) || frames == 0 || frames > 100000u)
+                {
+                    LOG_ERROR("--cloud-cover-sweep は 1〜100000 の整数で指定してください");
+                    continue;
+                }
+                s_bHasCloudCoverSweep = true;
+                s_CloudCoverSweepFrames = frames;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kSunSweepOption, environmentValue))
+            {
+                const auto firstComma = environmentValue.find(TEXT(','));
+                const auto secondComma = firstComma == String::npos ? String::npos :
+                    environmentValue.find(TEXT(','), firstComma + 1);
+                if (firstComma == String::npos || secondComma == String::npos ||
+                    environmentValue.find(TEXT(','), secondComma + 1) != String::npos ||
+                    !TryParseBoundedFloat(environmentValue.substr(0, firstComma), -90.0f, 90.0f, s_SunSweep[0]) ||
+                    !TryParseBoundedFloat(environmentValue.substr(firstComma + 1, secondComma - firstComma - 1), -90.0f, 90.0f, s_SunSweep[1]) ||
+                    !TryParseBoundedFloat(environmentValue.substr(secondComma + 1), 0.0f, 3600.0f, s_SunSweep[2]) ||
+                    s_SunSweep[2] <= 0.0f)
+                {
+                    LOG_ERROR("--sun-sweep は <開始の度>,<終わりの度>,<秒>（-90〜90 度、-90〜90 度、0 より大きく 3600 秒以下）の 3 つの数で指定してください");
+                    return false;
+                }
+                s_bHasSunSweep = true;
+                continue;
+            }
+#endif
+            if (TryStripPrefix(args[i], kWindOption, environmentValue))
+            {
+                const auto firstComma = environmentValue.find(TEXT(','));
+                const auto secondComma = firstComma == String::npos ? String::npos :
+                    environmentValue.find(TEXT(','), firstComma + 1);
+                if (firstComma == String::npos || secondComma == String::npos ||
+                    environmentValue.find(TEXT(','), secondComma + 1) != String::npos ||
+                    !TryParseBoundedFloat(environmentValue.substr(0, firstComma), 0.0f, 360.0f, s_Wind[0]) ||
+                    !TryParseBoundedFloat(environmentValue.substr(firstComma + 1, secondComma - firstComma - 1), 0.0f, 100.0f, s_Wind[1]) ||
+                    !TryParseBoundedFloat(environmentValue.substr(secondComma + 1), 0.0f, 1.0f, s_Wind[2]))
+                {
+                    LOG_ERROR("--wind は <方位>,<速さ>,<突風>（0〜360 度、0〜100 m/s、0〜1）の 3 つの数で指定してください");
+                    return false;
+                }
+                s_bHasWind = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kEnvironmentPresetOption, environmentValue))
+            {
+                String error;
+                if (!Environment::LoadEnvironmentPreset(ResolveEnvironmentPresetRoot(), environmentValue,
+                                                        s_EnvironmentPresetTarget, &error))
+                {
+                    LOG_ERROR("--environment-preset の読み込みに失敗しました: %s", error.c_str());
+                    return false;
+                }
+                s_bHasEnvironmentPreset = true;
                 continue;
             }
 
@@ -1831,6 +2227,26 @@ namespace Game
 #endif
                 continue;
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], kGpuParticleStressOption, sceneValue))
+            {
+                uint32_t particleCount = 0;
+                if (m_GpuParticleStressCount != 0)
+                {
+                    LOG_ERROR_F("%s が重複しています", "--gpu-particle-stress");
+                    return false;
+                }
+                if (!TryParseUInt32(sceneValue, particleCount) || particleCount == 0 ||
+                    particleCount > NorvesLib::Core::Rendering::kGpuParticlePoolCapacity)
+                {
+                    LOG_ERROR_F("--gpu-particle-stress は 1〜%u の整数で指定してください",
+                                NorvesLib::Core::Rendering::kGpuParticlePoolCapacity);
+                    return false;
+                }
+                m_GpuParticleStressCount = particleCount;
+                continue;
+            }
+#endif
             if (TryStripPrefix(args[i], kBananaCountOption, sceneValue))
             {
                 uint32_t bananaCount = 0;
@@ -3881,6 +4297,10 @@ namespace Game
                       "--capture-sequence-rendered-frames は併せて指定する");
             return false;
         }
+        if (!s_bClock && (s_bHasTimeOfDay || s_bHasWeatherSeed || s_bHasTimeScale))
+        {
+            LOG_WARNING("--time-of-day・--weather-seed・--time-scale は --clock がないため無視します");
+        }
         m_SequenceFrameCapture.Configure(captureSequencePrefix, captureSequenceRenderedFrames);
         if (m_SequenceFrameCapture.IsEnabled())
         {
@@ -3907,6 +4327,7 @@ namespace Game
 
         if (auto* engine = NorvesLib::Core::Engine::GEngine)
         {
+            engine->GetEnvironment().SetPresetRoot(ResolveEnvironmentPresetRoot());
             // RenderWorld の設定はシーン切り替えを通して保持される。
             if (s_bSkyOcclusion)
             {
@@ -4769,6 +5190,56 @@ namespace Game
         }
         m_M6ScriptSmokeController.Update();
         UpdatePauseMenu();
+        ApplyPendingEnvironment();
+#if NORVES_BUILD_DEVELOPMENT
+        if (s_bCloudCoverSweepActive)
+        {
+            auto* engine = NorvesLib::Core::Engine::GEngine;
+            if (engine == nullptr || !engine->GetEnvironment().IsEnabled())
+            {
+                s_bCloudCoverSweepActive = false;
+            }
+            else
+            {
+                ++s_CloudCoverSweepElapsedFrames;
+                Environment::EnvironmentTarget target;
+                target.Mask = Environment::EnvironmentFieldBit(Environment::EEnvironmentField::CloudCover);
+                target.Values.CloudCover = s_CloudCoverSweepElapsedFrames >= s_CloudCoverSweepFrames
+                    ? 1.0f : static_cast<float>(s_CloudCoverSweepElapsedFrames) / static_cast<float>(s_CloudCoverSweepFrames);
+                engine->GetEnvironment().SetTarget(target);
+                if (s_CloudCoverSweepElapsedFrames >= s_CloudCoverSweepFrames)
+                {
+                    s_bCloudCoverSweepActive = false;
+                    LOG_INFO("CLOUD_COVER_SWEEP done frames=%u", s_CloudCoverSweepFrames);
+                }
+            }
+        }
+        if (s_bSunSweepActive)
+        {
+            auto* engine = NorvesLib::Core::Engine::GEngine;
+            if (engine == nullptr || !engine->GetEnvironment().IsEnabled())
+            {
+                s_bSunSweepActive = false;
+            }
+            else
+            {
+                if (std::isfinite(deltaTime) && deltaTime >= 0.0f)
+                {
+                    s_SunSweepElapsedSeconds += deltaTime;
+                }
+                const float fraction = std::fmin(1.0f, s_SunSweepElapsedSeconds / s_SunSweep[2]);
+                Environment::EnvironmentTarget target;
+                target.Mask = Environment::EnvironmentFieldBit(Environment::EEnvironmentField::SunAltitude);
+                target.Values.SunAltitudeDegrees = s_SunSweep[0] + (s_SunSweep[1] - s_SunSweep[0]) * fraction;
+                engine->GetEnvironment().SetTarget(target);
+                if (fraction >= 1.0f)
+                {
+                    s_bSunSweepActive = false;
+                    LOG_INFO("SUN_SWEEP done seconds=%.3f", s_SunSweep[2]);
+                }
+            }
+        }
+#endif
 
 #if NORVES_BUILD_DEVELOPMENT
         if (NorvesLib::Core::Engine::GEngine != nullptr)
@@ -5433,6 +5904,14 @@ namespace Game
         auto stateMachine = MakeUnique<GameModeStateMachine>();
         const auto registerMode = [&stateMachine](GameModeId id, GameModeRegistry::Creator creator)
         {
+            if (HasEnvironmentArguments())
+            {
+                creator = [id, inner = std::move(creator)](const GameModeParams& params)
+                {
+                    PrepareEnvironmentForGameMode(id);
+                    return inner(params);
+                };
+            }
 #if defined(NORVES_GAME_AUDIO)
             creator = NorvesLib::Modules::Audio::WrapGameModeCreatorWithAudioOwner(id, std::move(creator));
 #endif
@@ -5499,6 +5978,9 @@ namespace Game
                 mode->GetData().m_LateCameraSlot = lateCameraSlot;
                 // カメラの台本（--camera-script。開発ビルドだけ）は軌道カメラへ流す
                 mode->GetData().m_CameraScriptPath = m_CameraScriptPath;
+#if NORVES_BUILD_DEVELOPMENT
+                mode->GetData().m_GpuParticleStressCount = m_GpuParticleStressCount;
+#endif
                 mode->GetData().m_pScriptCapture = &m_CameraScriptCapture;
                 mode->GetData().m_ModelPath = params.ModelPath;
                 mode->GetData().m_bUseCookedModel = bUseCookedModel;

@@ -3,6 +3,7 @@
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Container/PointerTypes.h"
+#include "Container/VariableArray.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "RHI/RHITypes.h"
 #include <cstdint>
@@ -15,6 +16,9 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class FrameResourceLane;
+    class SkyAtmosphereSourceCache;
+    class SkyCloudBlendRecorder;
+    class GpuRetireQueue;
 
     /**
      * @brief 空の透過率 LUT の texel（RGBA の半精度。SkyAtmospherePass が GPU へ上げる値そのもの）を作る
@@ -55,6 +59,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t RadianceHeight = 128;
         RHI::Format LutFormat = RHI::Format::R16G16B16A16_FLOAT;
         float SunDiskSafetyFraction = 0.9f;
+        // 晴天のキーフレームの太陽高度の表（度、狭義の昇順）。空なら地平線付近を細かくした既定表を使う。
+        Container::VariableArray<float> KeyframeAltitudesDegrees;
+        // 1 フレームでこの角度を超えて太陽高度が動いたら、今の高度でキーフレームを作り直す。
+        float KeyframeJumpThresholdDegrees = 10.0f;
     };
 
     /**
@@ -91,6 +99,8 @@ namespace NorvesLib::Core::Rendering
             return m_LastSunDiskPreExposedLuminance;
         }
         bool WasLastSunDiskSaturated() const { return m_bLastSunDiskSaturated; }
+        /** @brief 保持体・ワーカー・同期の錨が空のモデルを構築した通算回数の合計を返す。 */
+        uint64_t GetSkyModelBuildCount() const;
 
         RGResourceHandle GetTransmittanceHandle() const
         {
@@ -114,8 +124,16 @@ namespace NorvesLib::Core::Rendering
         bool GenerateLutResources(const SkyAtmosphereParameters& parameters,
                                   float preExposure,
                                   FrameResourceLane* frameResources);
+        void GenerateUnitOvercastIbl(const SkyAtmosphereParameters& parameters);
+        bool EnsureCloudBlendOutput(RHI::TexturePtr& output,
+                                    const RHI::TexturePtr& clear,
+                                    const char* name);
+        bool PrepareCloudBlend(const SkyAtmosphereParameters& parameters, FrameResourceLane& lane);
+        void LogSunSweep();
+        void DiscardCloudBlend();
+        /** @brief 完了したフレームまでの古い IBL を破棄し、このフレームの保持期限を設定する。 */
+        void AdvanceRetireQueue(const ViewRenderContext& context);
         bool GenerateTransmittanceLut(const SkyAtmosphereModel& model);
-        bool GenerateRadianceLut(const SkyAtmosphereModel& model);
         bool GenerateSunDiskTexture(const SkyAtmosphereParameters& parameters,
                                     float preExposure,
                                     FrameResourceLane* frameResources);
@@ -131,20 +149,49 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_FragmentShader;
         RHI::SamplerPtr m_Sampler;
         RHI::TexturePtr m_TransmittanceTexture;
+        // 今の選択で重みの大きい晴天キーの放射輝度 LUT への共有参照。
         RHI::TexturePtr m_RadianceTexture;
         RHI::TexturePtr m_SunDiskTexture;
         RGTextureHandle m_TransmittanceHandle;
         RGTextureHandle m_RadianceHandle;
         RGTextureHandle m_SunDiskHandle;
         SkyAtmosphereParameters m_LastParameters;
-        // 透過率LUT・放射輝度LUTを最後に作ったときのパラメータ。変わったときだけ作り直す。
-        SkyAtmosphereParameters m_LutParameters;
         Math::Vector3 m_LutSunGroundTransmittance = Math::Vector3::Zero;
-        // LUT と同じ model から作った空気遠近の高度ごとの表（VolumetricsPass へ context で渡す）
+        // 晴天キーの表を混ぜ、直達光へ雲の係数を掛けた公開用の空気遠近の表。
         SkyAerialProfile m_AerialProfile;
+        // 透過率 LUT が今の大気に対応する場合に真。
         bool m_bLutValid = false;
-        // 最後に LUT を作った空の model。太陽だけが動いたときは、太陽に依らない表（透過率・多重散乱）をここから写す。
-        Container::TUniquePtr<SkyAtmosphereModel> m_LutModel;
+        struct KeyframeState;
+        // キーフレーム窓とワーカーの結果を RenderThread で管理する。
+        Container::TUniquePtr<KeyframeState> m_Keyframes;
+        // 単位曇天の放射輝度の源を保持する。
+        Container::TUniquePtr<SkyAtmosphereSourceCache> m_SourceCache;
+        // 差し替えたテクスチャを、読んだフレームが GPU で終わるまで預ける。
+        Container::TUniquePtr<GpuRetireQueue> m_RetireQueue;
+        // 今の選択で重みの大きい晴天キーの環境・拡散照度・鏡面への共有参照。
+        RHI::TexturePtr m_IblEnvironmentTexture;
+        RHI::TexturePtr m_IblDiffuseIrradianceTexture;
+        RHI::TexturePtr m_IblPrefilteredSpecularTexture;
+        // 強度を掛ける前の拡散照度の全球の平均照度。
+        float m_IblAverageIrradiance[3] = {};
+        // IBL の 3 枚がすべて作れた場合に真。
+        bool m_bIblValid = false;
+        // 単位曇天の環境・拡散・鏡面。環境は放射輝度 LUT の混ぜにも使う。
+        RHI::TexturePtr m_UnitOvercastTextures[3];
+        float m_UnitOvercastAverageIrradiance[3] = {};
+        uint64_t m_UnitOvercastIblBuildCount = 0u;
+        bool m_bUnitOvercastIblAttempted = false;
+        bool m_bUnitOvercastWarningLogged = false;
+        bool m_bMissingOvercastWarningLogged = false;
+        // 永続出力は放射輝度 LUT・環境・拡散・鏡面の順。雲量だけでは差し替えない。
+        RHI::TexturePtr m_CloudBlendOutputs[4];
+        RGResourceHandle m_CloudBlendHandles[4];
+        float m_CloudBlendAverageIrradiance[3] = {};
+        Container::TUniquePtr<SkyCloudBlendRecorder> m_CloudBlend;
+        // Declare から Execute までの準備を捨てるときだけ使う借用口。
+        FrameResourceLane* m_CloudBlendLane = nullptr;
+        bool m_bCloudBlendDirty = true;
+        bool m_bUseCloudBlend = false;
         float m_LastSunDiskPreExposedLuminance = 0.0f;
         bool m_bLastSunDiskSaturated = false;
         // 太陽の円盤は事前露出でフレームごとに変わるので、フレームの持ち主から借りた領域に書き、

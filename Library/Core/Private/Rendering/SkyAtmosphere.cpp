@@ -346,6 +346,7 @@ namespace NorvesLib::Core::Rendering
         result.OvercastTint.x = ClampFinite(parameters.OvercastTint.x, 0.0f, 4.0f, result.OvercastTint.x);
         result.OvercastTint.y = ClampFinite(parameters.OvercastTint.y, 0.0f, 4.0f, result.OvercastTint.y);
         result.OvercastTint.z = ClampFinite(parameters.OvercastTint.z, 0.0f, 4.0f, result.OvercastTint.z);
+        result.bDebugLogSunSweep = parameters.bDebugLogSunSweep;
         return result;
     }
 
@@ -361,6 +362,21 @@ namespace NorvesLib::Core::Rendering
     bool AreSkyAtmosphereParametersEqual(const SkyAtmosphereParameters& lhs,
                                          const SkyAtmosphereParameters& rhs)
     {
+        return AreSkyAtmosphereClearKeysEqual(lhs, rhs) &&
+               lhs.CloudCover == rhs.CloudCover &&
+               lhs.OvercastIlluminanceFraction == rhs.OvercastIlluminanceFraction &&
+               lhs.OvercastZenithToHorizonRatio == rhs.OvercastZenithToHorizonRatio &&
+               lhs.DirectLightExponent == rhs.DirectLightExponent &&
+               lhs.SunDiskVisibleBelowCover == rhs.SunDiskVisibleBelowCover &&
+               lhs.SunDiskHiddenAboveCover == rhs.SunDiskHiddenAboveCover &&
+               lhs.OvercastTint.x == rhs.OvercastTint.x &&
+               lhs.OvercastTint.y == rhs.OvercastTint.y &&
+               lhs.OvercastTint.z == rhs.OvercastTint.z;
+    }
+
+    bool AreSkyAtmosphereClearKeysEqual(const SkyAtmosphereParameters& lhs,
+                                       const SkyAtmosphereParameters& rhs)
+    {
         return lhs.bEnabled == rhs.bEnabled &&
                lhs.SunAltitudeDegrees == rhs.SunAltitudeDegrees &&
                lhs.SunAzimuthDegrees == rhs.SunAzimuthDegrees &&
@@ -374,16 +390,36 @@ namespace NorvesLib::Core::Rendering
                lhs.GroundAlbedo.x == rhs.GroundAlbedo.x &&
                lhs.GroundAlbedo.y == rhs.GroundAlbedo.y &&
                lhs.GroundAlbedo.z == rhs.GroundAlbedo.z &&
-               lhs.GroundAltitudeMeters == rhs.GroundAltitudeMeters &&
-               lhs.CloudCover == rhs.CloudCover &&
-               lhs.OvercastIlluminanceFraction == rhs.OvercastIlluminanceFraction &&
-               lhs.OvercastZenithToHorizonRatio == rhs.OvercastZenithToHorizonRatio &&
-               lhs.DirectLightExponent == rhs.DirectLightExponent &&
-               lhs.SunDiskVisibleBelowCover == rhs.SunDiskVisibleBelowCover &&
-               lhs.SunDiskHiddenAboveCover == rhs.SunDiskHiddenAboveCover &&
-               lhs.OvercastTint.x == rhs.OvercastTint.x &&
-               lhs.OvercastTint.y == rhs.OvercastTint.y &&
-               lhs.OvercastTint.z == rhs.OvercastTint.z;
+               lhs.GroundAltitudeMeters == rhs.GroundAltitudeMeters;
+    }
+
+    SkyAtmosphereParameters MakeSkyAtmosphereClearKey(const SkyAtmosphereParameters& parameters)
+    {
+        SkyAtmosphereParameters result = SanitizeSkyAtmosphereParameters(parameters);
+        const SkyAtmosphereParameters defaults{};
+        result.CloudCover = defaults.CloudCover;
+        result.OvercastIlluminanceFraction = defaults.OvercastIlluminanceFraction;
+        result.OvercastZenithToHorizonRatio = defaults.OvercastZenithToHorizonRatio;
+        result.DirectLightExponent = defaults.DirectLightExponent;
+        result.SunDiskVisibleBelowCover = defaults.SunDiskVisibleBelowCover;
+        result.SunDiskHiddenAboveCover = defaults.SunDiskHiddenAboveCover;
+        result.OvercastTint = defaults.OvercastTint;
+        return result;
+    }
+
+    SkyAtmosphereParameters MakeSkyKeyframeSetKey(const SkyAtmosphereParameters& parameters)
+    {
+        SkyAtmosphereParameters result = MakeSkyAtmosphereClearKey(parameters);
+        result.SunAltitudeDegrees = 0.0f;
+        result.SunAzimuthDegrees = 0.0f;
+        result.bDebugLogSunSweep = false;
+        return result;
+    }
+
+    bool AreSkyKeyframeSetKeysEqual(const SkyAtmosphereParameters& lhs,
+                                   const SkyAtmosphereParameters& rhs)
+    {
+        return AreSkyAtmosphereClearKeysEqual(MakeSkyKeyframeSetKey(lhs), MakeSkyKeyframeSetKey(rhs));
     }
 
     SkyAtmosphereModel::SkyAtmosphereModel(const SkyAtmosphereParameters& parameters)
@@ -442,6 +478,11 @@ namespace NorvesLib::Core::Rendering
 
         // 曇天の基準は、雲の直達の係数を掛ける前の晴天の水平面の全天照度から求める。
         const double directCosine = std::max(m_SunDirection[1], 0.0);
+        const double clearScale = static_cast<double>(m_SunDiskIrradiance);
+        m_ClearHorizontalIlluminance = Math::Vector3(
+            static_cast<float>(clearScale * (m_SunGroundTransmittance.x * directCosine + m_GroundSkyIrradiance.r)),
+            static_cast<float>(clearScale * (m_SunGroundTransmittance.y * directCosine + m_GroundSkyIrradiance.g)),
+            static_cast<float>(clearScale * (m_SunGroundTransmittance.z * directCosine + m_GroundSkyIrradiance.b)));
         const double overcastScale = static_cast<double>(m_SunDiskIrradiance) *
                                      m_Parameters.OvercastIlluminanceFraction;
         m_OvercastIlluminance = Math::Vector3(
@@ -450,6 +491,45 @@ namespace NorvesLib::Core::Rendering
             static_cast<float>(overcastScale * (m_SunGroundTransmittance.z * directCosine + m_GroundSkyIrradiance.b)));
         m_OvercastZenithRadiance = ComputeOvercastZenithRadiance(
             m_OvercastIlluminance, m_Parameters.OvercastZenithToHorizonRatio);
+    }
+
+    SkyCloudBlendWeights ComputeSkyCloudBlendWeights(const SkyAtmosphereModel& clearModel,
+                                                    const SkyAtmosphereParameters& parameters)
+    {
+        if (!clearModel.GetParameters().bEnabled)
+        {
+            return {};
+        }
+        return ComputeSkyCloudBlendWeightsFromIlluminance(clearModel.GetClearHorizontalIlluminance(), parameters);
+    }
+
+    SkyCloudBlendWeights ComputeSkyCloudBlendWeightsFromIlluminance(
+        const Math::Vector3& clearHorizontalIlluminance, const SkyAtmosphereParameters& parameters)
+    {
+        const SkyAtmosphereParameters sanitized = SanitizeSkyAtmosphereParameters(parameters);
+        SkyCloudBlendWeights result;
+        if (!sanitized.bEnabled || sanitized.CloudCover <= 0.0f)
+        {
+            return result;
+        }
+
+        const Math::Vector3 illuminance = clearHorizontalIlluminance *
+                                          sanitized.OvercastIlluminanceFraction;
+        const Math::Vector3 zenith = ComputeOvercastZenithRadiance(
+            illuminance, sanitized.OvercastZenithToHorizonRatio);
+        result.ClearWeight = 1.0f - sanitized.CloudCover;
+        result.OvercastWeight = Math::Vector3(
+            sanitized.CloudCover * zenith.x * sanitized.OvercastTint.x,
+            sanitized.CloudCover * zenith.y * sanitized.OvercastTint.y,
+            sanitized.CloudCover * zenith.z * sanitized.OvercastTint.z);
+        if (!std::isfinite(result.ClearWeight))
+        {
+            result.ClearWeight = 0.0f;
+        }
+        result.OvercastWeight.x = std::isfinite(result.OvercastWeight.x) ? result.OvercastWeight.x : 0.0f;
+        result.OvercastWeight.y = std::isfinite(result.OvercastWeight.y) ? result.OvercastWeight.y : 0.0f;
+        result.OvercastWeight.z = std::isfinite(result.OvercastWeight.z) ? result.OvercastWeight.z : 0.0f;
+        return result;
     }
 
     void SkyAtmosphereModel::BuildTransmittanceTable()
@@ -1026,6 +1106,23 @@ namespace NorvesLib::Core::Rendering
                         : m_HorizonElevation - (halfPi + m_HorizonElevation) * u * u;
     }
 
+    SkyAtmosphereModel::SkyViewRowGeometry SkyAtmosphereModel::ComputeSkyViewRowGeometry(uint32_t row) const
+    {
+        const double elevation = SkyViewRowToElevation(row);
+        // 表の行と同じ float の方向を正規化する。代表方位を固定し、太陽方向への依存を避ける。
+        const Math::Vector3 direction = NormalizeDirection(Math::Vector3(
+            static_cast<float>(std::cos(elevation)), static_cast<float>(std::sin(elevation)), 0.0f));
+        const double originY = static_cast<double>(m_Parameters.PlanetRadiusMeters) +
+                               GetObserverAltitudeMeters();
+        const double originRadius = std::sqrt(originY * originY);
+        // March と同じ観測点・視線余弦・地面の球を DistanceToGround に渡す。
+        const double viewCosine = originY * direction.y / originRadius;
+        SkyViewRowGeometry result;
+        result.SinElevation = direction.y;
+        result.bHitGround = DistanceToGround(originRadius, viewCosine, m_Parameters.PlanetRadiusMeters) >= 0.0;
+        return result;
+    }
+
     void SkyAtmosphereModel::BuildSkyViewTable()
     {
         if (!m_Parameters.bEnabled)
@@ -1034,8 +1131,10 @@ namespace NorvesLib::Core::Rendering
         }
         m_SkyViewTable.resize(static_cast<size_t>(kSkyViewElevationCount) *
                               kSkyViewAzimuthCount * 3u);
+        m_SkyViewRowGeometry.resize(kSkyViewElevationCount);
         for (uint32_t row = 0u; row < kSkyViewElevationCount; ++row)
         {
+            m_SkyViewRowGeometry[row] = ComputeSkyViewRowGeometry(row);
             const double elevation = SkyViewRowToElevation(row);
             const double horizontal = std::cos(elevation);
             const double vertical = std::sin(elevation);
@@ -1107,6 +1206,51 @@ namespace NorvesLib::Core::Rendering
                                        m_SunGroundTransmittance.y +
                                        m_SunGroundTransmittance.z) / 3.0f;
         result.bValid = IsFiniteVector(result.Radiance);
+        return result;
+    }
+
+    SkyRadianceSample SkyAtmosphereModel::SampleUnitOvercastSkyView(
+        const Math::Vector3& viewDirection, float zenithToHorizonRatio) const
+    {
+        SkyRadianceSample result;
+        if (!m_Parameters.bEnabled)
+        {
+            return result;
+        }
+        const Math::Vector3 view = NormalizeDirection(viewDirection);
+        if (view == Math::Vector3::Zero)
+        {
+            return result;
+        }
+
+        const double halfPi = 0.5 * kPi;
+        const double elevation = std::asin(std::clamp(static_cast<double>(view.y), -1.0, 1.0));
+        const double u = elevation >= m_HorizonElevation
+            ? std::sqrt((elevation - m_HorizonElevation) / (halfPi - m_HorizonElevation))
+            : -std::sqrt((m_HorizonElevation - elevation) / (halfPi + m_HorizonElevation));
+        const double rowPosition = std::clamp(u * 0.5 + 0.5, 0.0, 1.0) *
+                                   (kSkyViewElevationCount - 1u);
+        const uint32_t row = std::min(static_cast<uint32_t>(rowPosition),
+                                      kSkyViewElevationCount - 2u);
+        const float rowWeight = static_cast<float>(rowPosition - row);
+        const double ratio = std::isfinite(zenithToHorizonRatio) && zenithToHorizonRatio >= 1.0f
+                                 ? zenithToHorizonRatio : 1.0;
+        const float groundScale = static_cast<float>((2.0 * ratio + 1.0) / (3.0 * ratio));
+        const Math::Vector3 one(1.0f, 1.0f, 1.0f);
+        const auto sampleRow = [&](uint32_t index)
+        {
+            const SkyViewRowGeometry geometry = m_SkyViewRowGeometry.empty()
+                ? ComputeSkyViewRowGeometry(index) : m_SkyViewRowGeometry[index];
+            return geometry.bHitGround
+                ? m_Parameters.GroundAlbedo * groundScale
+                : ComputeOvercastRadiance(one, zenithToHorizonRatio, one, geometry.SinElevation);
+        };
+        result.Radiance = sampleRow(row) * (1.0f - rowWeight) + sampleRow(row + 1u) * rowWeight;
+        result.MeanSunTransmittance = (m_SunGroundTransmittance.x +
+                                       m_SunGroundTransmittance.y +
+                                       m_SunGroundTransmittance.z) / 3.0f;
+        result.bValid = IsFiniteVector(result.Radiance) &&
+                        (!m_SkyViewTable.empty() || std::isfinite(result.MeanSunTransmittance));
         return result;
     }
 

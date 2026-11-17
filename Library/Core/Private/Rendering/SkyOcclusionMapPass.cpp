@@ -4,8 +4,10 @@
 #include "Logging/LogMacros.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/RenderExtension/RenderExtensionData.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/WorldFieldTypes.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/ITexture.h"
@@ -52,6 +54,8 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<uint8_t> Splat;
             Container::VariableArray<uint8_t> Integrate;
             Container::VariableArray<Rect> SplatRects;
+            // 動く遮蔽物と踏み倒しは段 0 だけで積分範囲を求める。
+            Container::VariableArray<Rect> FineSplatRects;
         };
 
         struct BinnedOccluder
@@ -59,6 +63,20 @@ namespace NorvesLib::Core::Rendering
             WorldBounds Bounds;
             uint32_t PackedIndex = 0u;
             float Opacity = 0.0f;
+        };
+
+        struct TileIndexEntry
+        {
+            int32_t TileX = 0;
+            int32_t TileZ = 0;
+            size_t WorkIndex = 0u;
+        };
+
+        struct LevelTileIndex
+        {
+            Container::VariableArray<TileIndexEntry> Entries;
+            // 索引に存在するタイル座標の最小値と最大値（両端を含む）。
+            Rect Bounds;
         };
 
         int64_t FloorDivTile(int64_t value)
@@ -131,12 +149,12 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        void AddSplatRect(TileGrid& grid, const Rect& bounds)
+        void AddSplatRect(TileGrid& grid, const Rect& bounds, bool bFineOnly = false)
         {
             const Rect clipped = Intersect(grid.Window, bounds);
             if (!IsEmpty(clipped))
             {
-                grid.SplatRects.push_back(clipped);
+                (bFineOnly ? grid.FineSplatRects : grid.SplatRects).push_back(clipped);
                 MarkTiles(grid, clipped, grid.Splat);
             }
         }
@@ -152,27 +170,60 @@ namespace NorvesLib::Core::Rendering
 
         WorldBounds GetBounds(const SkyOccluderProxy& proxy)
         {
-            const double cosine = std::abs(std::cos(static_cast<double>(proxy.Yaw)));
-            const double sine = std::abs(std::sin(static_cast<double>(proxy.Yaw)));
-            // GPU 側の三角関数の丸め差を含め、ビンから交差物を落とさない。
-            const double extentX = (cosine * proxy.HalfExtentX + sine * proxy.HalfExtentZ) * 1.000001;
-            const double extentZ = (sine * proxy.HalfExtentX + cosine * proxy.HalfExtentZ) * 1.000001;
-            return {proxy.CenterX - extentX, proxy.CenterZ - extentZ,
-                    proxy.CenterX + extentX, proxy.CenterZ + extentZ};
+            WorldBounds bounds;
+            GetSkyOccluderHorizontalBounds(proxy, bounds.MinX, bounds.MinZ, bounds.MaxX, bounds.MaxZ);
+            return bounds;
         }
 
-        void AddOccluderRect(TileGrid& grid, const SkyOccluderProxy& proxy, float texelMeters)
+        void AddOccluderBoundsRect(TileGrid& grid, const WorldBounds& bounds, float texelMeters,
+                                   bool bFineOnly = false)
+        {
+            const double scale = static_cast<double>(texelMeters);
+            AddSplatRect(grid, {FloorCoordinate(bounds.MinX / scale) - 1,
+                                FloorCoordinate(bounds.MinZ / scale) - 1,
+                                FloorCoordinate(bounds.MaxX / scale) + 2,
+                                FloorCoordinate(bounds.MaxZ / scale) + 2}, bFineOnly);
+        }
+
+        void AddOccluderRect(TileGrid& grid, const SkyOccluderProxy& proxy, float texelMeters,
+                             bool bFineOnly = false)
         {
             if (!IsValidSkyOccluderProxy(proxy))
             {
                 return;
             }
-            const WorldBounds bounds = GetBounds(proxy);
-            const double scale = static_cast<double>(texelMeters);
-            AddSplatRect(grid, {FloorCoordinate(bounds.MinX / scale) - 1,
-                                FloorCoordinate(bounds.MinZ / scale) - 1,
-                                FloorCoordinate(bounds.MaxX / scale) + 2,
-                                FloorCoordinate(bounds.MaxZ / scale) + 2});
+            AddOccluderBoundsRect(grid, GetBounds(proxy), texelMeters, bFineOnly);
+        }
+
+        void AddFlattenInteractorRects(TileGrid& grid, float texelMeters,
+                                       const Container::VariableArray<WorldFieldInteractor>* snapshot)
+        {
+            if (!snapshot || snapshot->empty())
+            {
+                return;
+            }
+            Container::VariableArray<WorldFieldInteractor> interactors;
+            SanitizeWorldFieldInteractors(
+                Container::Span<const WorldFieldInteractor>(snapshot->data(), snapshot->size()), interactors);
+            for (const WorldFieldInteractor& interactor : interactors)
+            {
+                if ((interactor.ChannelMask & WorldFieldChannelFlatten) == 0u)
+                {
+                    continue;
+                }
+                const double radius = std::max(interactor.Radius, interactor.PrevRadius);
+                const double minX = std::min(std::min(interactor.P0[0], interactor.P1[0]),
+                                             std::min(interactor.PrevP0[0], interactor.PrevP1[0]));
+                const double minZ = std::min(std::min(interactor.P0[2], interactor.P1[2]),
+                                             std::min(interactor.PrevP0[2], interactor.PrevP1[2]));
+                const double maxX = std::max(std::max(interactor.P0[0], interactor.P1[0]),
+                                             std::max(interactor.PrevP0[0], interactor.PrevP1[0]));
+                const double maxZ = std::max(std::max(interactor.P0[2], interactor.P1[2]),
+                                             std::max(interactor.PrevP0[2], interactor.PrevP1[2]));
+                AddOccluderBoundsRect(grid, {minX - radius, minZ - radius, maxX + radius, maxZ + radius},
+                                      texelMeters, true);
+            }
+            // 交差体の外で戻る踏み跡は、別の理由で写し直されるまで古い値が残る。
         }
 
         void AddChangedOccluders(TileGrid& grid, float texelMeters,
@@ -196,6 +247,42 @@ namespace NorvesLib::Core::Rendering
                 if (bHasCurrent)
                 {
                     AddOccluderRect(grid, current[index], texelMeters);
+                }
+            }
+        }
+
+        void AddChangedChunkRanges(TileGrid& grid, float texelMeters,
+                                   const Container::VariableArray<SkyOccluderChunkRange>& previous,
+                                   Container::Span<const SkyOccluderChunkRange> current)
+        {
+            const auto addRange = [&](const SkyOccluderChunkRange& range)
+            {
+                AddOccluderBoundsRect(grid, {range.MinX, range.MinZ, range.MaxX, range.MaxZ}, texelMeters);
+            };
+            size_t previousIndex = 0u;
+            size_t currentIndex = 0u;
+            while (previousIndex < previous.size() || currentIndex < current.size())
+            {
+                if (currentIndex == current.size() ||
+                    (previousIndex < previous.size() &&
+                     previous[previousIndex].ChunkKey < current[currentIndex].ChunkKey))
+                {
+                    addRange(previous[previousIndex++]);
+                }
+                else if (previousIndex == previous.size() ||
+                         current[currentIndex].ChunkKey < previous[previousIndex].ChunkKey)
+                {
+                    addRange(current[currentIndex++]);
+                }
+                else
+                {
+                    if (previous[previousIndex].Revision != current[currentIndex].Revision)
+                    {
+                        addRange(previous[previousIndex]);
+                        addRange(current[currentIndex]);
+                    }
+                    ++previousIndex;
+                    ++currentIndex;
                 }
             }
         }
@@ -225,6 +312,15 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        Rect GetWrittenSplatRect(const TileGrid& grid, const Rect& rect)
+        {
+            const Rect written = {FloorDivTile(rect.MinX) * kTileSize,
+                                  FloorDivTile(rect.MinZ) * kTileSize,
+                                  (FloorDivTile(rect.MaxX - 1) + 1) * kTileSize,
+                                  (FloorDivTile(rect.MaxZ - 1) + 1) * kTileSize};
+            return Intersect(written, grid.Window);
+        }
+
         void AddIntegrationFromSplat(TileGrid* grids, const float* texelMeters,
                                      uint32_t levelCount, float maxHorizonMeters)
         {
@@ -233,11 +329,7 @@ namespace NorvesLib::Core::Rendering
                 for (const Rect& rect : grids[source].SplatRects)
                 {
                     // タイル境界まで広げた実際の書き込みを、標本し得る他の段にも反映する。
-                    const Rect written = {FloorDivTile(rect.MinX) * kTileSize,
-                                          FloorDivTile(rect.MinZ) * kTileSize,
-                                          (FloorDivTile(rect.MaxX - 1) + 1) * kTileSize,
-                                          (FloorDivTile(rect.MaxZ - 1) + 1) * kTileSize};
-                    const Rect clipped = Intersect(written, grids[source].Window);
+                    const Rect clipped = GetWrittenSplatRect(grids[source], rect);
                     for (uint32_t target = 0u; target < levelCount; ++target)
                     {
                         const double ratio = static_cast<double>(texelMeters[source]) / texelMeters[target];
@@ -250,6 +342,15 @@ namespace NorvesLib::Core::Rendering
                         MarkTiles(grids[target], Expand(projected, margin), grids[target].Integrate);
                     }
                 }
+            }
+        }
+
+        void AddFineIntegrationFromSplat(TileGrid& grid, float texelMeters, float reachMeters)
+        {
+            const int64_t margin = CeilCoordinate(static_cast<double>(reachMeters) / texelMeters) + 1;
+            for (const Rect& rect : grid.FineSplatRects)
+            {
+                MarkTiles(grid, Expand(GetWrittenSplatRect(grid, rect), margin), grid.Integrate);
             }
         }
 
@@ -295,32 +396,90 @@ namespace NorvesLib::Core::Rendering
             {
                 return lhs.Opacity != rhs.Opacity ? lhs.Opacity < rhs.Opacity : lhs.PackedIndex < rhs.PackedIndex;
             });
-            for (SkyOcclusionWorkTile& tile : tiles)
+            const uint64_t maxIndexWords = maxStorageBytes / sizeof(uint32_t);
+            if (indices.size() > maxIndexWords || tiles.size() > maxIndexWords - indices.size())
             {
-                if (indices.size() >= maxStorageBytes / sizeof(uint32_t))
+                return false;
+            }
+            uint64_t indexWordCount = indices.size() + tiles.size();
+            LevelTileIndex levels[SkyOcclusionMaxLevelCount];
+            Container::VariableArray<Container::VariableArray<uint32_t>> tileIndices(tiles.size());
+            const auto tileLess = [](const TileIndexEntry& lhs, const TileIndexEntry& rhs)
+            {
+                return lhs.TileZ != rhs.TileZ ? lhs.TileZ < rhs.TileZ : lhs.TileX < rhs.TileX;
+            };
+            for (size_t workIndex = 0u; workIndex < tiles.size(); ++workIndex)
+            {
+                const SkyOcclusionWorkTile& tile = tiles[workIndex];
+                LevelTileIndex& level = levels[tile.Level];
+                if (level.Entries.empty())
                 {
-                    return false;
+                    level.Bounds = {tile.TileX, tile.TileZ, tile.TileX, tile.TileZ};
                 }
-                tile.ListOffset = static_cast<uint32_t>(indices.size());
-                indices.push_back(0u);
-                const double scale = texelMeters[tile.Level];
-                const double minX = static_cast<double>(tile.TileX) * kTileSize * scale;
-                const double minZ = static_cast<double>(tile.TileZ) * kTileSize * scale;
-                const double maxX = (static_cast<double>(tile.TileX) * kTileSize + kTileSize) * scale;
-                const double maxZ = (static_cast<double>(tile.TileZ) * kTileSize + kTileSize) * scale;
-                for (const BinnedOccluder& item : sorted)
+                level.Bounds.MinX = std::min<int64_t>(level.Bounds.MinX, tile.TileX);
+                level.Bounds.MinZ = std::min<int64_t>(level.Bounds.MinZ, tile.TileZ);
+                level.Bounds.MaxX = std::max<int64_t>(level.Bounds.MaxX, tile.TileX);
+                level.Bounds.MaxZ = std::max<int64_t>(level.Bounds.MaxZ, tile.TileZ);
+                level.Entries.push_back({tile.TileX, tile.TileZ, workIndex});
+            }
+            for (LevelTileIndex& level : levels)
+            {
+                std::sort(level.Entries.begin(), level.Entries.end(), tileLess);
+            }
+            // 遮蔽物を従来と同じ順に配ることで、各タイルの添字列の順序も保つ。
+            for (const BinnedOccluder& item : sorted)
+            {
+                const uint32_t levelCount = IsSkyOccluderDynamic(packed[item.PackedIndex])
+                    ? 1u : SkyOcclusionMaxLevelCount;
+                for (uint32_t levelIndex = 0u; levelIndex < levelCount; ++levelIndex)
                 {
-                    if (item.Bounds.MaxX >= minX && item.Bounds.MinX <= maxX &&
-                        item.Bounds.MaxZ >= minZ && item.Bounds.MinZ <= maxZ)
+                    const LevelTileIndex& level = levels[levelIndex];
+                    if (level.Entries.empty())
                     {
-                        if (indices.size() >= maxStorageBytes / sizeof(uint32_t))
+                        continue;
+                    }
+                    const double scale = texelMeters[levelIndex];
+                    const double tileMeters = kTileSize * scale;
+                    // 境界で接するタイルと除算の丸めを含め、候補を一周広く取る。
+                    const int64_t x0 = std::max(level.Bounds.MinX, FloorCoordinate(item.Bounds.MinX / tileMeters) - 1);
+                    const int64_t z0 = std::max(level.Bounds.MinZ, FloorCoordinate(item.Bounds.MinZ / tileMeters) - 1);
+                    const int64_t x1 = std::min(level.Bounds.MaxX, FloorCoordinate(item.Bounds.MaxX / tileMeters) + 1);
+                    const int64_t z1 = std::min(level.Bounds.MaxZ, FloorCoordinate(item.Bounds.MaxZ / tileMeters) + 1);
+                    if (x0 > x1 || z0 > z1)
+                    {
+                        continue;
+                    }
+                    for (int64_t z = z0; z <= z1; ++z)
+                    {
+                        const TileIndexEntry key{static_cast<int32_t>(x0), static_cast<int32_t>(z), 0u};
+                        auto entry = std::lower_bound(level.Entries.begin(), level.Entries.end(), key, tileLess);
+                        for (; entry != level.Entries.end() && entry->TileZ == z && entry->TileX <= x1; ++entry)
                         {
-                            return false;
+                            const double minX = static_cast<double>(entry->TileX) * kTileSize * scale;
+                            const double minZ = static_cast<double>(entry->TileZ) * kTileSize * scale;
+                            const double maxX = (static_cast<double>(entry->TileX) * kTileSize + kTileSize) * scale;
+                            const double maxZ = (static_cast<double>(entry->TileZ) * kTileSize + kTileSize) * scale;
+                            if (item.Bounds.MaxX >= minX && item.Bounds.MinX <= maxX &&
+                                item.Bounds.MaxZ >= minZ && item.Bounds.MinZ <= maxZ)
+                            {
+                                if (indexWordCount >= maxIndexWords)
+                                {
+                                    return false;
+                                }
+                                tileIndices[entry->WorkIndex].push_back(item.PackedIndex);
+                                ++indexWordCount;
+                            }
                         }
-                        indices.push_back(item.PackedIndex);
-                        ++indices[tile.ListOffset];
                     }
                 }
+            }
+            indices.reserve(static_cast<size_t>(indexWordCount));
+            for (size_t workIndex = 0u; workIndex < tiles.size(); ++workIndex)
+            {
+                tiles[workIndex].ListOffset = static_cast<uint32_t>(indices.size());
+                const Container::VariableArray<uint32_t>& bin = tileIndices[workIndex];
+                indices.push_back(static_cast<uint32_t>(bin.size()));
+                indices.insert(indices.end(), bin.begin(), bin.end());
             }
             return true;
         }
@@ -333,6 +492,14 @@ namespace NorvesLib::Core::Rendering
                    previous.BaseTexelMeters != current.BaseTexelMeters ||
                    previous.Resolution != current.Resolution ||
                    previous.MaxHorizonMeters != current.MaxHorizonMeters;
+        }
+
+        bool AreGroundLayoutsEqual(const SkyOcclusionFieldLayout& lhs, const SkyOcclusionFieldLayout& rhs)
+        {
+            return lhs.OriginX == rhs.OriginX && lhs.OriginZ == rhs.OriginZ &&
+                   lhs.TexelMeters == rhs.TexelMeters && lhs.Width == rhs.Width && lhs.Height == rhs.Height &&
+                   lhs.Reserved[0] == rhs.Reserved[0] && lhs.Reserved[1] == rhs.Reserved[1] &&
+                   lhs.Reserved[2] == rhs.Reserved[2];
         }
 
         bool IsAnchorRepresentable(const SkyOcclusionParameters& parameters, float x, float z)
@@ -367,6 +534,15 @@ namespace NorvesLib::Core::Rendering
                 entry.type = binding == 0u ? RHI::ResourceBindType::ConstantBuffer :
                              (bSplat ? binding < 4u : binding == 1u)
                                  ? RHI::ResourceBindType::StructuredBuffer : RHI::ResourceBindType::RWTexture;
+                desc.bindings.push_back(entry);
+            }
+            for (uint32_t binding = 5u; binding < (bSplat ? 9u : 6u); ++binding)
+            {
+                RHI::DescriptorBinding entry;
+                entry.binding = binding;
+                entry.type = bSplat && binding < 8u
+                    ? RHI::ResourceBindType::CombinedImageSampler : RHI::ResourceBindType::RWTexture;
+                entry.stages = RHI::ShaderStage::Compute;
                 desc.bindings.push_back(entry);
             }
             return desc;
@@ -480,8 +656,11 @@ namespace NorvesLib::Core::Rendering
                 samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
                 samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
                 m_Sampler = m_Device->CreateSampler(samplerDesc);
+                samplerDesc.filterMin = RHI::FilterMode::Linear;
+                samplerDesc.filterMag = RHI::FilterMode::Linear;
+                m_GroundSampler = m_Device->CreateSampler(samplerDesc);
             }
-            m_bInitialized = m_SplatPipeline && m_IntegratePipeline && m_Sampler;
+            m_bInitialized = m_SplatPipeline && m_IntegratePipeline && m_Sampler && m_GroundSampler;
         }
         catch (const std::exception&)
         {
@@ -502,16 +681,36 @@ namespace NorvesLib::Core::Rendering
         m_IntegrateDispatches.clear();
         m_LastOccluders.clear();
         m_PreparedOccluders.clear();
+        m_LastDynamicOccluders.clear();
+        m_PreparedDynamicOccluders.clear();
+        m_LastChunkRanges.clear();
+        m_PreparedChunkRanges.clear();
+        m_PreparedGroundUpload = {};
+        m_PreparedUndergrowthUpload = {};
+        m_PreparedEmptyUndergrowthUpload = {};
+        m_UndergrowthInputTexture.reset();
+        m_EmptyUndergrowthTexture.reset();
+        m_PreparedUndergrowthTexture.reset();
+        m_UndergrowthTexture.reset();
+        m_GroundTexture.reset();
+        m_EmptyGroundTexture.reset();
+        m_PreparedGroundTexture.reset();
         m_OccludersTexture.reset();
         m_VisibilityTexture.reset();
         m_AuxTexture.reset();
         m_Sampler.reset();
+        m_GroundSampler.reset();
         m_SplatPipeline.reset();
         m_IntegratePipeline.reset();
         m_SplatShader.reset();
         m_IntegrateShader.reset();
         m_SplatDescriptorSetLayout.reset();
         m_IntegrateDescriptorSetLayout.reset();
+        m_GroundHandle = {};
+        m_UndergrowthInputHandle = {};
+        m_EmptyUndergrowthHandle = {};
+        m_UndergrowthHandle = {};
+        m_WorldFieldHandle = {};
         m_OccludersHandle = {};
         m_VisibilityHandle = {};
         m_AuxHandle = {};
@@ -519,18 +718,42 @@ namespace NorvesLib::Core::Rendering
         m_LastParameters = {};
         m_LastUpdateSubmission = {};
         m_LastSkyOcclusionRevision = 0u;
+        m_PreparedGroundLayout = {};
+        m_LastGroundLayout = {};
+        m_PreparedGroundLayoutRevision = 0u;
+        m_PreparedGroundHeightsRevision = 0u;
+        m_LastGroundLayoutRevision = 0u;
+        m_LastGroundHeightsRevision = 0u;
+        m_PreparedSkyWeight[0] = m_PreparedSkyWeight[1] = 0.0f;
+        m_bPreparedFullSkyIntegration = false;
+        m_LastSkyWeight[0] = m_LastSkyWeight[1] = 0.0f;
+        m_bPreparedHasGround = false;
+        m_bLastHasGround = false;
+        m_bEmptyGroundInitialized = false;
+        m_PreparedUndergrowthLayout = {};
+        m_LastUndergrowthLayout = {};
+        m_PreparedUndergrowthLayoutRevision = 0u;
+        m_PreparedUndergrowthRevision = 0u;
+        m_LastUndergrowthLayoutRevision = 0u;
+        m_LastUndergrowthRevision = 0u;
+        m_bPreparedHasUndergrowth = false;
+        m_bLastHasUndergrowth = false;
+        m_bEmptyUndergrowthInitialized = false;
         m_bHasAnchor = false;
         m_bHasValidData = false;
         m_bPrepared = false;
+        m_bWarnedInvalidChunkRanges = false;
         m_bInitialized = false;
     }
 
     bool SkyOcclusionMapPass::EnsureTextures(const SkyOcclusionParameters& parameters)
     {
         const uint32_t arraySize = std::max(parameters.LevelCount, 2u);
-        if (m_OccludersTexture && m_VisibilityTexture && m_AuxTexture &&
+        const uint32_t visibilityArraySize = std::max(2u * parameters.LevelCount, 2u);
+        if (m_OccludersTexture && m_UndergrowthTexture && m_VisibilityTexture && m_AuxTexture &&
             m_OccludersTexture->GetWidth() == parameters.Resolution &&
-            m_OccludersTexture->GetArraySize() == arraySize)
+            m_OccludersTexture->GetArraySize() == arraySize &&
+            m_VisibilityTexture->GetArraySize() == visibilityArraySize)
         {
             return true;
         }
@@ -544,16 +767,22 @@ namespace NorvesLib::Core::Rendering
         desc.TextureFormat = RHI::Format::R32G32B32A32_FLOAT;
         desc.DebugName = "SkyOcclusion.Occluders";
         RHI::TexturePtr occluders = m_Device->CreateTexture(desc);
+        desc.DebugName = "SkyOcclusion.Undergrowth";
+        RHI::TexturePtr undergrowth = m_Device->CreateTexture(desc);
         desc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+        // 可視率は前半に全種別、後半に樹冠だけの段を並べる。
+        desc.ArraySize = visibilityArraySize;
         desc.DebugName = "SkyOcclusion.Visibility";
         RHI::TexturePtr visibility = m_Device->CreateTexture(desc);
+        desc.ArraySize = arraySize;
         desc.DebugName = "SkyOcclusion.Aux";
         RHI::TexturePtr aux = m_Device->CreateTexture(desc);
-        if (!occluders || !visibility || !aux)
+        if (!occluders || !undergrowth || !visibility || !aux)
         {
             return false;
         }
         m_OccludersTexture = occluders;
+        m_UndergrowthTexture = undergrowth;
         m_VisibilityTexture = visibility;
         m_AuxTexture = aux;
         m_bHasValidData = false;
@@ -592,19 +821,217 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        const RenderExtensionDataSet& extensions = scene.Extensions;
+        Container::Span<const SkyOccluderChunkRange> chunkRanges =
+            FindRenderExtensionArray(extensions, kSkyOcclusionChunkRangesKey);
+        Container::Span<const SkyOccluderProxy> chunkOccluders =
+            FindRenderExtensionArray(extensions, kSkyOcclusionChunkOccludersKey);
+        if (!IsValidSkyOccluderChunkRanges(chunkRanges, chunkOccluders.size()))
+        {
+            if (!m_bWarnedInvalidChunkRanges)
+            {
+                NORVES_LOG_WARNING("SkyOcclusionMapPass", "チャンクの遮蔽物の範囲が不正なため、空として扱います");
+                m_bWarnedInvalidChunkRanges = true;
+            }
+            chunkRanges = {};
+            chunkOccluders = {};
+        }
+        const SkyOcclusionFieldLayout* groundLayout =
+            FindRenderExtensionValue(extensions, kSkyOcclusionGroundLayoutKey);
+        const Container::Span<const float> groundHeights =
+            FindRenderExtensionArray(extensions, kSkyOcclusionGroundHeightsKey);
+        const RenderExtensionBlob* layoutBlob = FindRenderExtensionBlob(
+            extensions, kSkyOcclusionGroundLayoutKey.Name, ComputeRenderExtensionLayoutHash<SkyOcclusionFieldLayout>());
+        const RenderExtensionBlob* heightsBlob = FindRenderExtensionBlob(
+            extensions, kSkyOcclusionGroundHeightsKey.Name, ComputeRenderExtensionLayoutHash<float>());
+        m_PreparedGroundLayoutRevision = layoutBlob ? layoutBlob->Revision : 0u;
+        m_PreparedGroundHeightsRevision = heightsBlob ? heightsBlob->Revision : 0u;
+        m_bPreparedHasGround = groundLayout && IsValidSkyOcclusionFieldLayout(*groundLayout) &&
+            groundHeights.size() == static_cast<size_t>(groundLayout->Width) * groundLayout->Height;
+        m_PreparedGroundLayout = m_bPreparedHasGround ? *groundLayout : SkyOcclusionFieldLayout{};
+        const bool bGroundChanged = m_bPreparedHasGround != m_bLastHasGround ||
+            m_PreparedGroundLayoutRevision != m_LastGroundLayoutRevision ||
+            m_PreparedGroundHeightsRevision != m_LastGroundHeightsRevision ||
+            !AreGroundLayoutsEqual(m_PreparedGroundLayout, m_LastGroundLayout);
+
+        if (m_bPreparedHasGround && (bGroundChanged || !m_GroundTexture))
+        {
+            RHI::TextureDesc desc;
+            desc.Width = groundLayout->Width;
+            desc.Height = groundLayout->Height;
+            desc.TextureFormat = RHI::Format::R32_FLOAT;
+            desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            desc.DebugName = "SkyOcclusion.GroundHeight";
+            m_PreparedGroundTexture = m_Device->CreateTexture(desc);
+            if (!m_PreparedGroundTexture || !context.FrameResources)
+            {
+                return false;
+            }
+            // コピーだけに使う切れ端は、ストレージ記述子の大きさの上限を受けない。
+            m_PreparedGroundUpload = context.FrameResources->AllocateUploadData(
+                groundHeights.data(), static_cast<uint64_t>(groundHeights.size()) * sizeof(float),
+                FrameUploadUsage::Vertex);
+            if (!m_PreparedGroundUpload.IsValid())
+            {
+                return false;
+            }
+        }
+        else if (m_bPreparedHasGround)
+        {
+            m_PreparedGroundTexture = m_GroundTexture;
+        }
+        else
+        {
+            if (!m_EmptyGroundTexture)
+            {
+                RHI::TextureDesc desc;
+                desc.TextureFormat = RHI::Format::R32_FLOAT;
+                desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+                desc.DebugName = "SkyOcclusion.EmptyGroundHeight";
+                m_EmptyGroundTexture = m_Device->CreateTexture(desc);
+            }
+            if (!m_EmptyGroundTexture)
+            {
+                return false;
+            }
+            m_PreparedGroundTexture = m_EmptyGroundTexture;
+            if (!m_bEmptyGroundInitialized)
+            {
+                if (!context.FrameResources)
+                {
+                    return false;
+                }
+                const float emptyHeight = 0.0f;
+                m_PreparedGroundUpload = context.FrameResources->AllocateUploadData(
+                    &emptyHeight, sizeof(emptyHeight), FrameUploadUsage::Vertex);
+                if (!m_PreparedGroundUpload.IsValid())
+                {
+                    return false;
+                }
+            }
+        }
+
+        const SkyOcclusionFieldLayout* undergrowthLayout =
+            FindRenderExtensionValue(extensions, kSkyOcclusionUndergrowthLayoutKey);
+        const Container::Span<const SkyOcclusionUndergrowthTexel> undergrowth =
+            FindRenderExtensionArray(extensions, kSkyOcclusionUndergrowthKey);
+        const RenderExtensionBlob* undergrowthLayoutBlob = FindRenderExtensionBlob(extensions,
+            kSkyOcclusionUndergrowthLayoutKey.Name, ComputeRenderExtensionLayoutHash<SkyOcclusionFieldLayout>());
+        const RenderExtensionBlob* undergrowthBlob = FindRenderExtensionBlob(extensions,
+            kSkyOcclusionUndergrowthKey.Name, ComputeRenderExtensionLayoutHash<SkyOcclusionUndergrowthTexel>());
+        m_PreparedUndergrowthLayoutRevision = undergrowthLayoutBlob ? undergrowthLayoutBlob->Revision : 0u;
+        m_PreparedUndergrowthRevision = undergrowthBlob ? undergrowthBlob->Revision : 0u;
+        m_bPreparedHasUndergrowth = undergrowthLayout && IsValidSkyOcclusionFieldLayout(*undergrowthLayout) &&
+            undergrowth.size() == static_cast<size_t>(undergrowthLayout->Width) * undergrowthLayout->Height;
+        m_PreparedUndergrowthLayout = m_bPreparedHasUndergrowth ? *undergrowthLayout : SkyOcclusionFieldLayout{};
+        const bool bUndergrowthChanged = m_bPreparedHasUndergrowth != m_bLastHasUndergrowth ||
+            m_PreparedUndergrowthLayoutRevision != m_LastUndergrowthLayoutRevision ||
+            m_PreparedUndergrowthRevision != m_LastUndergrowthRevision ||
+            !AreGroundLayoutsEqual(m_PreparedUndergrowthLayout, m_LastUndergrowthLayout);
+
+        // 下草と世界の場の未接続時に共用する。RG32 の B 成分は常に 0 になる。
+        if (!m_EmptyUndergrowthTexture)
+        {
+            RHI::TextureDesc desc;
+            desc.TextureFormat = RHI::Format::R32G32_FLOAT;
+            desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            desc.DebugName = "SkyOcclusion.EmptyUndergrowth";
+            m_EmptyUndergrowthTexture = m_Device->CreateTexture(desc);
+        }
+        if (!m_EmptyUndergrowthTexture)
+        {
+            return false;
+        }
+        if (!m_bEmptyUndergrowthInitialized)
+        {
+            if (!context.FrameResources)
+            {
+                return false;
+            }
+            const SkyOcclusionUndergrowthTexel empty{};
+            m_PreparedEmptyUndergrowthUpload = context.FrameResources->AllocateUploadData(
+                &empty, sizeof(empty), FrameUploadUsage::Vertex);
+            if (!m_PreparedEmptyUndergrowthUpload.IsValid())
+            {
+                return false;
+            }
+        }
+        if (m_bPreparedHasUndergrowth && (bUndergrowthChanged || !m_UndergrowthInputTexture))
+        {
+            RHI::TextureDesc desc;
+            desc.Width = undergrowthLayout->Width;
+            desc.Height = undergrowthLayout->Height;
+            desc.TextureFormat = RHI::Format::R32G32_FLOAT;
+            desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            desc.DebugName = "SkyOcclusion.UndergrowthInput";
+            m_PreparedUndergrowthTexture = m_Device->CreateTexture(desc);
+            if (!m_PreparedUndergrowthTexture || !context.FrameResources)
+            {
+                return false;
+            }
+            m_PreparedUndergrowthUpload = context.FrameResources->AllocateUploadData(
+                undergrowth.data(), static_cast<uint64_t>(undergrowth.size()) * sizeof(SkyOcclusionUndergrowthTexel),
+                FrameUploadUsage::Vertex);
+            if (!m_PreparedUndergrowthUpload.IsValid())
+            {
+                return false;
+            }
+        }
+        else
+        {
+            m_PreparedUndergrowthTexture = m_bPreparedHasUndergrowth
+                ? m_UndergrowthInputTexture : m_EmptyUndergrowthTexture;
+        }
+
         m_PreparedParameters = parameters;
         m_PreparedAnchorX = anchorX;
         m_PreparedAnchorZ = anchorZ;
         m_PreparedRevision = scene.SkyOcclusionRevision;
-        m_PreparedOccluders = scene.SkyOccluders;
+        m_PreparedOccluders.clear();
+        m_PreparedDynamicOccluders.clear();
+        for (const SkyOccluderProxy& proxy : scene.SkyOccluders)
+        {
+            (IsSkyOccluderDynamic(proxy) ? m_PreparedDynamicOccluders : m_PreparedOccluders).push_back(proxy);
+        }
+        m_PreparedChunkRanges.clear();
+        if (!chunkRanges.empty())
+        {
+            m_PreparedChunkRanges.assign(chunkRanges.begin(), chunkRanges.end());
+        }
         SkyOcclusionMapGpuParams constants;
         constants.counts[0] = parameters.LevelCount;
         constants.counts[1] = parameters.Resolution;
         constants.heights[0] = parameters.GroundHeightMeters;
         constants.heights[1] = parameters.ReceiverHeightMeters;
         constants.heights[2] = parameters.MaxHorizonMeters;
+        if (m_bPreparedHasGround)
+        {
+            ComputeSkyOcclusionFieldWorldToUv(m_PreparedGroundLayout, constants.groundUv);
+            constants.inputs[0] = 1.0f;
+        }
+        if (m_bPreparedHasUndergrowth)
+        {
+            ComputeSkyOcclusionFieldWorldToUv(m_PreparedUndergrowthLayout, constants.undergrowthUv);
+            constants.inputs[1] = 1.0f;
+        }
+        if (m_WorldFieldHandle.IsValid())
+        {
+            const WorldFieldState& field = context.PhysicalLighting.WorldField.Current;
+            constants.worldField[0] = static_cast<float>(field.OriginXZ[0]);
+            constants.worldField[1] = static_cast<float>(field.OriginXZ[1]);
+            constants.worldField[2] = 1.0f / field.ExtentMeters;
+            constants.inputs[2] = 1.0f;
+        }
+        ComputeSkyOcclusionSkyWeightCoefficients(scene.SkyAtmosphere.CloudCover,
+            scene.SkyAtmosphere.OvercastZenithToHorizonRatio, m_PreparedSkyWeight[0], m_PreparedSkyWeight[1]);
+        constants.skyWeight[0] = m_PreparedSkyWeight[0];
+        constants.skyWeight[1] = m_PreparedSkyWeight[1];
+        const bool bSkyWeightChanged = std::abs(m_PreparedSkyWeight[0] - m_LastSkyWeight[0]) > 0.01f ||
+                                       std::abs(m_PreparedSkyWeight[1] - m_LastSkyWeight[1]) > 0.01f;
         TileGrid grids[SkyOcclusionMaxLevelCount];
-        const bool bFull = !m_bHasValidData || NeedsFullRebuild(m_LastParameters, parameters);
+        const bool bFull = !m_bHasValidData || NeedsFullRebuild(m_LastParameters, parameters) ||
+            bGroundChanged || bUndergrowthChanged;
+        m_bPreparedFullSkyIntegration = bFull || bSkyWeightChanged;
         for (uint32_t level = 0u; level < SkyOcclusionMaxLevelCount; ++level)
         {
             m_PreparedWindowOrigin[level][0] = 0;
@@ -629,20 +1056,44 @@ namespace NorvesLib::Core::Rendering
                 MarkTiles(grids[level], grids[level].Window, grids[level].Integrate);
                 continue;
             }
+            if (bSkyWeightChanged)
+            {
+                MarkTiles(grids[level], grids[level].Window, grids[level].Integrate);
+            }
             const Rect previous = {m_WindowOrigin[level][0], m_WindowOrigin[level][1],
                                    static_cast<int64_t>(m_WindowOrigin[level][0]) + parameters.Resolution,
                                    static_cast<int64_t>(m_WindowOrigin[level][1]) + parameters.Resolution};
             AddExposedWindow(grids[level], previous);
             if (m_LastSkyOcclusionRevision != scene.SkyOcclusionRevision)
             {
-                AddChangedOccluders(grids[level], scale, m_LastOccluders, scene.SkyOccluders);
+                AddChangedOccluders(grids[level], scale, m_LastOccluders, m_PreparedOccluders);
             }
+            AddChangedChunkRanges(grids[level], scale, m_LastChunkRanges, chunkRanges);
             AddWindowBands(grids[level], previous, scale, GetSkyOcclusionOwnLevelReach(parameters, level),
                            level + 1u == parameters.LevelCount, parameters.MaxHorizonMeters);
         }
         if (!bFull)
         {
+            for (const SkyOccluderProxy& proxy : m_LastDynamicOccluders)
+            {
+                AddOccluderRect(grids[0], proxy, m_PreparedTexelMeters[0], true);
+            }
+            for (const SkyOccluderProxy& proxy : m_PreparedDynamicOccluders)
+            {
+                AddOccluderRect(grids[0], proxy, m_PreparedTexelMeters[0], true);
+            }
+            if (constants.inputs[2] > 0.5f)
+            {
+                AddFlattenInteractorRects(grids[0], m_PreparedTexelMeters[0], context.SnapshotWorldFieldInteractors);
+            }
             AddIntegrationFromSplat(grids, m_PreparedTexelMeters, parameters.LevelCount, parameters.MaxHorizonMeters);
+            if (!grids[0].FineSplatRects.empty())
+            {
+                // 段が一つなら最も粗い段として到達距離の先も水平線の上限まで標本される。
+                const float reachMeters = parameters.LevelCount <= 1u ? parameters.MaxHorizonMeters :
+                    std::min(GetSkyOcclusionOwnLevelReach(parameters, 0u), parameters.MaxHorizonMeters);
+                AddFineIntegrationFromSplat(grids[0], m_PreparedTexelMeters[0], reachMeters);
+            }
         }
 
         Container::VariableArray<SkyOcclusionWorkTile> splatTiles;
@@ -666,11 +1117,17 @@ namespace NorvesLib::Core::Rendering
         FrameUploadAllocation indicesAllocation;
         if (!splatTiles.empty())
         {
+            Container::VariableArray<SkyOccluderProxy> input = scene.SkyOccluders;
+            for (const SkyOccluderChunkRange& range : chunkRanges)
+            {
+                const Container::Span<const SkyOccluderProxy> chunk = chunkOccluders.subspan(range.Offset, range.Count);
+                input.insert(input.end(), chunk.begin(), chunk.end());
+            }
             Container::VariableArray<SkyOccluderProxy> packed;
             Container::VariableArray<uint32_t> indices;
             const uint64_t deviceLimit = m_Device->GetCapabilities().MaxStorageBufferRange;
             const uint64_t storageLimit = deviceLimit == 0u ? UINT32_MAX : std::min<uint64_t>(deviceLimit, UINT32_MAX);
-            if (!BuildBins(splatTiles, scene.SkyOccluders, m_PreparedTexelMeters, packed, indices, storageLimit))
+            if (!BuildBins(splatTiles, input, m_PreparedTexelMeters, packed, indices, storageLimit))
             {
                 NORVES_LOG_WARNING("SkyOcclusionMapPass", "遮蔽物の一覧がストレージバッファの上限を超えました");
                 return false;
@@ -712,6 +1169,14 @@ namespace NorvesLib::Core::Rendering
                     BindStorage(set, 2u, work);
                     BindStorage(set, 3u, indicesAllocation);
                     set->BindStorageTexture(4u, m_OccludersTexture);
+                    set->BindTexture(5u, m_PreparedGroundTexture);
+                    set->BindSampler(5u, m_GroundSampler);
+                    set->BindTexture(6u, m_PreparedUndergrowthTexture);
+                    set->BindSampler(6u, m_GroundSampler);
+                    // 実際の世界の場はグラフの資源が揃う Execute で結び直す。
+                    set->BindTexture(7u, m_EmptyUndergrowthTexture);
+                    set->BindSampler(7u, m_GroundSampler);
+                    set->BindStorageTexture(8u, m_UndergrowthTexture);
                 }
                 else
                 {
@@ -719,6 +1184,7 @@ namespace NorvesLib::Core::Rendering
                     set->BindStorageTexture(2u, m_OccludersTexture);
                     set->BindStorageTexture(3u, m_VisibilityTexture);
                     set->BindStorageTexture(4u, m_AuxTexture);
+                    set->BindStorageTexture(5u, m_UndergrowthTexture);
                 }
                 set->Update();
                 dispatches.push_back({set, count});
@@ -743,6 +1209,16 @@ namespace NorvesLib::Core::Rendering
         m_bPrepared = false;
         m_SplatDispatches.clear();
         m_IntegrateDispatches.clear();
+        m_PreparedGroundUpload = {};
+        m_PreparedUndergrowthUpload = {};
+        m_PreparedEmptyUndergrowthUpload = {};
+        m_PreparedGroundTexture.reset();
+        m_PreparedUndergrowthTexture.reset();
+        m_GroundHandle = {};
+        m_UndergrowthInputHandle = {};
+        m_EmptyUndergrowthHandle = {};
+        m_UndergrowthHandle = {};
+        m_WorldFieldHandle = {};
         m_OccludersHandle = {};
         m_VisibilityHandle = {};
         m_AuxHandle = {};
@@ -762,8 +1238,15 @@ namespace NorvesLib::Core::Rendering
             {
                 // 提出されなかった記録は layout も実行されていないため、画像ごと作り直す。
                 m_OccludersTexture.reset();
+                m_UndergrowthTexture.reset();
+                m_UndergrowthInputTexture.reset();
+                m_EmptyUndergrowthTexture.reset();
+                m_bEmptyUndergrowthInitialized = false;
                 m_VisibilityTexture.reset();
                 m_AuxTexture.reset();
+                m_GroundTexture.reset();
+                m_EmptyGroundTexture.reset();
+                m_bEmptyGroundInitialized = false;
                 m_bHasValidData = false;
                 m_bHasAnchor = false;
             }
@@ -771,6 +1254,14 @@ namespace NorvesLib::Core::Rendering
             {
                 m_LastUpdateSubmission = {};
             }
+        }
+        const WorldFieldState& field = context->PhysicalLighting.WorldField.Current;
+        if (field.bValid && std::isfinite(field.OriginXZ[0]) && std::isfinite(field.OriginXZ[1]) &&
+            std::isfinite(field.ExtentMeters) && field.ExtentMeters > 0.0f &&
+            std::isfinite(static_cast<float>(field.OriginXZ[0])) &&
+            std::isfinite(static_cast<float>(field.OriginXZ[1])) && std::isfinite(1.0f / field.ExtentMeters))
+        {
+            builder.TryGetTexture(RenderGraphResourceNames::WorldFieldCurrent, m_WorldFieldHandle);
         }
         try
         {
@@ -785,13 +1276,25 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_WARNING("SkyOcclusionMapPass", "空の遮蔽マップの更新を準備できませんでした");
             return;
         }
+        m_GroundHandle = builder.ImportTexture(m_PreparedGroundTexture,
+            GetTextureState(*context, m_PreparedGroundTexture), "SkyOcclusion.GroundHeight");
+        m_EmptyUndergrowthHandle = builder.ImportTexture(m_EmptyUndergrowthTexture,
+            GetTextureState(*context, m_EmptyUndergrowthTexture), "SkyOcclusion.EmptyUndergrowth");
+        m_UndergrowthInputHandle = m_bPreparedHasUndergrowth
+            ? builder.ImportTexture(m_PreparedUndergrowthTexture,
+                GetTextureState(*context, m_PreparedUndergrowthTexture), "SkyOcclusion.UndergrowthInput")
+            : m_EmptyUndergrowthHandle;
+        m_UndergrowthHandle = builder.ImportTexture(m_UndergrowthTexture,
+            GetTextureState(*context, m_UndergrowthTexture), "SkyOcclusion.Undergrowth");
         const RGResourceHandle occluders = builder.ImportTexture(m_OccludersTexture,
             GetTextureState(*context, m_OccludersTexture), "SkyOcclusion.Occluders");
         const RGResourceHandle visibility = builder.ImportTexture(m_VisibilityTexture,
             GetTextureState(*context, m_VisibilityTexture), "SkyOcclusion.Visibility");
         const RGResourceHandle aux = builder.ImportTexture(m_AuxTexture,
             GetTextureState(*context, m_AuxTexture), "SkyOcclusion.Aux");
-        if (!occluders.IsValid() || !visibility.IsValid() || !aux.IsValid() ||
+        if (!m_GroundHandle.IsValid() || !m_EmptyUndergrowthHandle.IsValid() ||
+            !m_UndergrowthInputHandle.IsValid() || !m_UndergrowthHandle.IsValid() ||
+            !occluders.IsValid() || !visibility.IsValid() || !aux.IsValid() ||
             !builder.PublishTexture(RenderGraphResourceNames::SkyOcclusionOccluders, occluders) ||
             !builder.PublishTexture(RenderGraphResourceNames::SkyOcclusionVisibility, visibility) ||
             !builder.PublishTexture(RenderGraphResourceNames::SkyOcclusionAux, aux) ||
@@ -802,15 +1305,48 @@ namespace NorvesLib::Core::Rendering
             m_bPrepared = false;
             return;
         }
+        if (m_WorldFieldHandle.IsValid())
+        {
+            builder.Read(m_WorldFieldHandle.ToResourceHandle(), RHI::ResourceState::ShaderResource);
+        }
+        if (m_PreparedEmptyUndergrowthUpload.IsValid())
+        {
+            builder.Write(m_EmptyUndergrowthHandle, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+        }
+        else
+        {
+            builder.Read(m_EmptyUndergrowthHandle, RHI::ResourceState::ShaderResource);
+        }
+        if (m_bPreparedHasUndergrowth)
+        {
+            if (m_PreparedUndergrowthUpload.IsValid())
+            {
+                builder.Write(m_UndergrowthInputHandle, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+            }
+            else
+            {
+                builder.Read(m_UndergrowthInputHandle, RHI::ResourceState::ShaderResource);
+            }
+        }
+        if (m_PreparedGroundUpload.IsValid())
+        {
+            builder.Write(m_GroundHandle, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+        }
+        else
+        {
+            builder.Read(m_GroundHandle, RHI::ResourceState::ShaderResource);
+        }
         if (!m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
         {
             builder.Write(occluders, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
+            builder.Write(m_UndergrowthHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
             builder.Write(visibility, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
             builder.Write(aux, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::ShaderResource);
         }
         else
         {
             builder.Read(occluders, RHI::ResourceState::ShaderResource);
+            builder.Read(m_UndergrowthHandle, RHI::ResourceState::ShaderResource);
             builder.Read(visibility, RHI::ResourceState::ShaderResource);
             builder.Read(aux, RHI::ResourceState::ShaderResource);
         }
@@ -832,24 +1368,61 @@ namespace NorvesLib::Core::Rendering
 
     void SkyOcclusionMapPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
-        if (!m_bPrepared || !context.CommandList || !resources.GetTexture(m_OccludersHandle) ||
-            !resources.GetTexture(m_VisibilityHandle) || !resources.GetTexture(m_AuxHandle) ||
-            ((!m_SplatDispatches.empty() || !m_IntegrateDispatches.empty()) && !context.FrameResources))
+        if (!m_bPrepared || !context.CommandList || !resources.GetTexture(m_GroundHandle) ||
+            !resources.GetTexture(m_OccludersHandle) || !resources.GetTexture(m_VisibilityHandle) ||
+            !resources.GetTexture(m_AuxHandle) || !resources.GetTexture(m_UndergrowthHandle) ||
+            !resources.GetTexture(m_UndergrowthInputHandle) || !resources.GetTexture(m_EmptyUndergrowthHandle) ||
+            ((m_PreparedGroundUpload.IsValid() || m_PreparedUndergrowthUpload.IsValid() ||
+              m_PreparedEmptyUndergrowthUpload.IsValid() || !m_SplatDispatches.empty() || !m_IntegrateDispatches.empty()) &&
+             !context.FrameResources))
         {
             return;
         }
         RHI::ICommandList& commands = *context.CommandList;
+        const bool bGroundUpload = m_PreparedGroundUpload.IsValid();
+        const bool bUndergrowthUpload = m_PreparedUndergrowthUpload.IsValid();
+        const bool bEmptyUndergrowthUpload = m_PreparedEmptyUndergrowthUpload.IsValid();
+        const auto uploadUndergrowth = [&](const FrameUploadAllocation& upload, const RHI::TexturePtr& texture)
+        {
+            if (upload.IsValid())
+            {
+                commands.CopyBufferToTexture(upload.Buffer, texture, texture->GetWidth(), texture->GetHeight(), upload.Offset);
+                commands.TextureBarrier(texture, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+            }
+        };
+        uploadUndergrowth(m_PreparedEmptyUndergrowthUpload, m_EmptyUndergrowthTexture);
+        uploadUndergrowth(m_PreparedUndergrowthUpload, m_PreparedUndergrowthTexture);
+        if (bGroundUpload)
+        {
+            // グラフが CopyDest へ移した後、写し込みより先に高さを転送して読み取り状態へ戻す。
+            commands.CopyBufferToTexture(m_PreparedGroundUpload.Buffer, m_PreparedGroundTexture,
+                m_PreparedGroundTexture->GetWidth(), m_PreparedGroundTexture->GetHeight(),
+                m_PreparedGroundUpload.Offset);
+            commands.TextureBarrier(m_PreparedGroundTexture, RHI::ResourceState::CopyDest,
+                                    RHI::ResourceState::ShaderResource);
+        }
         if (!m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
         {
+            const RHI::TexturePtr worldField = m_WorldFieldHandle.IsValid()
+                ? resources.GetTexture(m_WorldFieldHandle) : m_EmptyUndergrowthTexture;
+            if (!worldField)
+            {
+                return;
+            }
             commands.SetPipeline(m_SplatPipeline);
             for (const PreparedDispatch& dispatch : m_SplatDispatches)
             {
+                // このフレームの専用記述子だけを変更し、他パスの並列記録と共有しない。
+                dispatch.DescriptorSet->BindTexture(7u, worldField);
+                dispatch.DescriptorSet->Update();
                 commands.SetDescriptorSet(dispatch.DescriptorSet, 0u);
                 commands.Dispatch(dispatch.TileCount, 1u, 1u);
             }
             if (!m_SplatDispatches.empty())
             {
                 commands.TextureBarrier(m_OccludersTexture, RHI::ResourceState::UnorderedAccess,
+                                        RHI::ResourceState::UnorderedAccess);
+                commands.TextureBarrier(m_UndergrowthTexture, RHI::ResourceState::UnorderedAccess,
                                         RHI::ResourceState::UnorderedAccess);
             }
             commands.SetPipeline(m_IntegratePipeline);
@@ -860,13 +1433,39 @@ namespace NorvesLib::Core::Rendering
             }
             commands.TextureBarrier(m_OccludersTexture, RHI::ResourceState::UnorderedAccess,
                                     RHI::ResourceState::ShaderResource);
+            commands.TextureBarrier(m_UndergrowthTexture, RHI::ResourceState::UnorderedAccess,
+                                    RHI::ResourceState::ShaderResource);
             commands.TextureBarrier(m_VisibilityTexture, RHI::ResourceState::UnorderedAccess,
                                     RHI::ResourceState::ShaderResource);
             commands.TextureBarrier(m_AuxTexture, RHI::ResourceState::UnorderedAccess,
                                     RHI::ResourceState::ShaderResource);
+        }
+        if (bGroundUpload || bUndergrowthUpload || bEmptyUndergrowthUpload ||
+            !m_SplatDispatches.empty() || !m_IntegrateDispatches.empty())
+        {
             // 借りる口が提出の成否を保持し、中止された更新の再利用を防ぐ。
             m_LastUpdateSubmission = context.FrameResources->GetGeneration();
         }
+        if (m_bPreparedHasGround)
+        {
+            m_GroundTexture = m_PreparedGroundTexture;
+        }
+        else
+        {
+            m_GroundTexture.reset();
+            if (bGroundUpload)
+            {
+                m_bEmptyGroundInitialized = true;
+            }
+        }
+        m_UndergrowthInputTexture = m_bPreparedHasUndergrowth ? m_PreparedUndergrowthTexture : RHI::TexturePtr{};
+        if (bEmptyUndergrowthUpload)
+        {
+            m_bEmptyUndergrowthInitialized = true;
+        }
+        m_PreparedGroundUpload = {};
+        m_PreparedUndergrowthUpload = {};
+        m_PreparedEmptyUndergrowthUpload = {};
         m_AnchorX = m_PreparedAnchorX;
         m_AnchorZ = m_PreparedAnchorZ;
         for (uint32_t level = 0u; level < SkyOcclusionMaxLevelCount; ++level)
@@ -876,7 +1475,23 @@ namespace NorvesLib::Core::Rendering
         }
         m_LastParameters = m_PreparedParameters;
         m_LastSkyOcclusionRevision = m_PreparedRevision;
+        m_LastGroundLayout = m_PreparedGroundLayout;
+        m_LastGroundLayoutRevision = m_PreparedGroundLayoutRevision;
+        m_LastGroundHeightsRevision = m_PreparedGroundHeightsRevision;
+        m_LastUndergrowthLayout = m_PreparedUndergrowthLayout;
+        m_LastUndergrowthLayoutRevision = m_PreparedUndergrowthLayoutRevision;
+        m_LastUndergrowthRevision = m_PreparedUndergrowthRevision;
+        m_bLastHasUndergrowth = m_bPreparedHasUndergrowth;
+        if (m_bPreparedFullSkyIntegration)
+        {
+            // 全段の積分時だけ更新し、小さな係数変化を次の全段更新まで蓄える。
+            m_LastSkyWeight[0] = m_PreparedSkyWeight[0];
+            m_LastSkyWeight[1] = m_PreparedSkyWeight[1];
+        }
+        m_bLastHasGround = m_bPreparedHasGround;
         m_LastOccluders = std::move(m_PreparedOccluders);
+        m_LastDynamicOccluders = std::move(m_PreparedDynamicOccluders);
+        m_LastChunkRanges = std::move(m_PreparedChunkRanges);
         m_bHasAnchor = true;
         m_bHasValidData = true;
         PublishContextResources(resources, context);

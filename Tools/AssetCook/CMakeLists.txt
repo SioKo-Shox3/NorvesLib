@@ -189,6 +189,8 @@ add_library(AssetCookLib STATIC
     NativeCookArguments.h
     RigSplitCook.cpp
     RigSplitCook.h
+    SkinnedLodBuilder.cpp
+    SkinnedLodBuilder.h
     VfxEffectCookCli.cpp
     VfxEffectCookCli.h
 )

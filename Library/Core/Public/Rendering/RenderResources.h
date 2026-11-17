@@ -378,6 +378,8 @@ namespace NorvesLib::Core::Rendering
         bool CancelPendingModelLoadsAndWait();
         uint32_t GetPendingAsyncModelLoadCount() const;
         MegaGeometry::MegaMeshHandle GetModelMegaMeshHandle(ModelHandle handle) const;
+        /** @brief RegisterModel に渡した元のパス（資産から読んだモデルは論理パス）。無ければ空文字列。 */
+        Container::String GetModelSourcePath(ModelHandle handle) const;
         void ReleaseModel(ModelHandle handle);
         // 登録中の Model の数（観測用）
         size_t GetModelCount() const;

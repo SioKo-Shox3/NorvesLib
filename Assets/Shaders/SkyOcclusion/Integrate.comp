@@ -1,6 +1,6 @@
 ﻿#version 460
 
-// 地平線方向の列を標本し、上半球の遮蔽率を L1 係数へ積分する。
+// 地平線方向の列を標本し、全種別と樹冠だけの上半球の遮蔽率を 2 組の L1 係数へ積分する。
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 #include "SkyOcclusion/SkyOcclusionMapCommon.glsl"
@@ -13,6 +13,7 @@ layout(std430, set = 0, binding = 1) readonly buffer SkyOcclusionIntegrateTiles
 layout(rgba32f, set = 0, binding = 2) uniform readonly image2DArray occluderMap;
 layout(rgba16f, set = 0, binding = 3) uniform writeonly image2DArray visibilityMap;
 layout(rgba16f, set = 0, binding = 4) uniform writeonly image2DArray auxMap;
+layout(rgba32f, set = 0, binding = 5) uniform readonly image2DArray undergrowthMap;
 
 void main()
 {
@@ -36,6 +37,7 @@ void main()
     vec2 worldPosition = SkyOcclusionWorldCenter(worldTexel, tile.level);
     float y0 = receiverColumn.x + map.heights.y;
     vec4 sum = vec4(0.0);
+    vec4 canopySum = vec4(0.0);
     for (uint azimuth = 0u; azimuth < SKY_OCCLUSION_AZIMUTH_COUNT; ++azimuth)
     {
         float phi = (float(azimuth) + 0.5) * (2.0 * kSkyOcclusionPi / float(SKY_OCCLUSION_AZIMUTH_COUNT));
@@ -49,17 +51,21 @@ void main()
             float start = 0.0;
             float nextEnd = SKY_OCCLUSION_HORIZON_FIRST_STEP_METERS;
             float opticalDepth = 0.0;
+            float canopyDepth = 0.0;
             bool bOpaque = false;
+            bool bCanopyOpaque = false;
             for (uint step = 0u;
                 step < SKY_OCCLUSION_HORIZON_MAX_STEP_COUNT && start < map.heights.z; ++step)
             {
                 float end = min(nextEnd, map.heights.z);
                 float midpoint = (start + end) * 0.5;
                 vec2 samplePosition = worldPosition + midpoint * direction;
-                vec4 column = imageLoad(occluderMap,
-                    SkyOcclusionSampleCoordinate(tile.level, midpoint, samplePosition));
+                ivec3 sampleCoordinate = SkyOcclusionSampleCoordinate(tile.level, midpoint, samplePosition);
+                vec4 column = imageLoad(occluderMap, sampleCoordinate);
+                vec2 undergrowth = imageLoad(undergrowthMap, sampleCoordinate).rg;
                 if (y0 + midpoint * tangent < column.x)
                 {
+                    // 地面の先は辿らず、樹冠だけの遮蔽はここまでの厚さで決める。
                     bOpaque = true;
                     break;
                 }
@@ -71,22 +77,35 @@ void main()
                     {
                         if (column.w >= 0.9999)
                         {
+                            bCanopyOpaque = true;
                             bOpaque = true;
                             break;
                         }
                         float sigma = -log(1.0 - column.w) / max(column.z - column.y, 0.5);
                         opticalDepth += sigma * (overlap / tangent) / cosine;
+                        canopyDepth += sigma * (overlap / tangent) / cosine;
                     }
+                }
+                if (undergrowth.y > 0.0 && undergrowth.x > column.x)
+                {
+                    float overlap = max(0.0, min(y0 + end * tangent, undergrowth.x) -
+                        max(y0 + start * tangent, column.x));
+                    opticalDepth += undergrowth.y * (overlap / tangent) / cosine;
                 }
                 start = end;
                 nextEnd *= SKY_OCCLUSION_HORIZON_STEP_RATIO;
             }
             float b = bOpaque ? 1.0 : 1.0 - exp(-opticalDepth);
-            sum += b * vec4(1.0, cosine * direction.x, sine, cosine * direction.y);
+            float w = map.skyWeight.x + map.skyWeight.y * sine;
+            sum += b * w * vec4(1.0, cosine * direction.x, sine, cosine * direction.y);
+            float bc = bCanopyOpaque ? 1.0 : 1.0 - exp(-canopyDepth);
+            canopySum += bc * w * vec4(1.0, cosine * direction.x, sine, cosine * direction.y);
         }
     }
     float weight = 1.0 / (2.0 * float(SKY_OCCLUSION_AZIMUTH_COUNT) * float(SKY_OCCLUSION_ELEVATION_COUNT));
     imageStore(visibilityMap, coordinate, weight * sum * vec4(1.0, 3.0, 3.0, 3.0));
+    imageStore(visibilityMap, ivec3(coordinate.xy, coordinate.z + int(map.counts.x)),
+        weight * canopySum * vec4(1.0, 3.0, 3.0, 3.0));
     imageStore(auxMap, coordinate, vec4(receiverColumn.x - map.heights.x,
         receiverColumn.y - receiverColumn.x, receiverColumn.z - receiverColumn.x, receiverColumn.w));
 }

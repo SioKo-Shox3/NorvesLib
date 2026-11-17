@@ -1,5 +1,7 @@
 ﻿#include "Component/SkinnedMeshComponent.h"
 
+#include "Engine/Engine.h"
+#include "Logging/LogMacros.h"
 #include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
 #include "Object/Entity.h"
@@ -26,6 +28,9 @@ namespace NorvesLib::Core::Component
 
     SkinnedMeshComponent::SkinnedMeshComponent()
     {
+        bPlaying = true;
+        bLooping = true;
+        PlaybackRate = 1.0f;
         getbVisible().Set(true);
         getbCastShadow().Set(true);
         SetTickGroup(ETickGroup::Animation);
@@ -35,6 +40,9 @@ namespace NorvesLib::Core::Component
     SkinnedMeshComponent::SkinnedMeshComponent(const FieldInitializer* initializer)
         : Component(initializer)
     {
+        bPlaying = true;
+        bLooping = true;
+        PlaybackRate = 1.0f;
         getbVisible().Set(true);
         getbCastShadow().Set(true);
         SetTickGroup(ETickGroup::Animation);
@@ -44,6 +52,9 @@ namespace NorvesLib::Core::Component
     SkinnedMeshComponent::SkinnedMeshComponent(const IUnknown* sourceObject)
         : Component(sourceObject)
     {
+        bPlaying = true;
+        bLooping = true;
+        PlaybackRate = 1.0f;
         getbVisible().Set(true);
         getbCastShadow().Set(true);
         SetTickGroup(ETickGroup::Animation);
@@ -61,12 +72,29 @@ namespace NorvesLib::Core::Component
 
     void SkinnedMeshComponent::Finalize()
     {
+        ReleaseOwnedMaterial();
+        m_SkeletalBinding.Reset();
+        m_MaterialTextureBinding.Reset();
         m_Pose.Clear();
         m_PoseContext = {};
         m_PoseScratch = {};
         m_SkeletalAsset.reset();
         m_SelectedClip.reset();
         Component::Finalize();
+    }
+
+    void SkinnedMeshComponent::BeginPlay()
+    {
+        Component::BeginPlay();
+        if (!SkeletalAssetPath->IsEmpty() && !m_SkeletalAsset)
+        {
+            m_SkeletalBinding.RequestSkeletal(SkeletalAssetPath.Get());
+        }
+        if (!MaterialTexture->IsEmpty() && !m_OwnedMaterial.IsValid())
+        {
+            m_MaterialTextureBinding.RequestTexture(MaterialTexture.Get());
+        }
+        PollAssetBindings();
     }
 
     void SkinnedMeshComponent::TickPoseFinalizeGroup()
@@ -79,7 +107,8 @@ namespace NorvesLib::Core::Component
 
     void SkinnedMeshComponent::AdvanceAnimationTime(float deltaTime)
     {
-        if (m_bExternalAnimationDriven || !m_bPlaying || !std::isfinite(deltaTime) || !std::isfinite(m_PlaybackRate) || !m_SkeletalAsset ||
+        PollAssetBindings();
+        if (m_bExternalAnimationDriven || !bPlaying || !std::isfinite(deltaTime) || !std::isfinite(PlaybackRate.Get()) || !m_SkeletalAsset ||
             !GetAnimationClip())
         {
             return;
@@ -90,24 +119,44 @@ namespace NorvesLib::Core::Component
         {
             return;
         }
-        m_AnimationTimeSeconds += deltaTime * m_PlaybackRate;
-        if (m_bLooping)
+        AnimationTimeSeconds.Get() += deltaTime * PlaybackRate.Get();
+        if (bLooping)
         {
-            m_AnimationTimeSeconds = std::fmod(m_AnimationTimeSeconds, duration);
-            if (m_AnimationTimeSeconds < 0.0f)
+            AnimationTimeSeconds = std::fmod(AnimationTimeSeconds.Get(), duration);
+            if (AnimationTimeSeconds.Get() < 0.0f)
             {
-                m_AnimationTimeSeconds += duration;
+                AnimationTimeSeconds.Get() += duration;
             }
         }
         else
         {
-            m_AnimationTimeSeconds = std::fmax(0.0f, std::fmin(m_AnimationTimeSeconds, duration));
+            AnimationTimeSeconds = std::fmax(0.0f, std::fmin(AnimationTimeSeconds.Get(), duration));
         }
         m_bPoseDirty = true;
         MarkRenderStateDirty();
     }
 
     void SkinnedMeshComponent::SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset)
+    {
+        m_SkeletalBinding.Reset();
+        SkeletalAssetPath = SkeletalAssetRef{};
+        AnimationClipName = Container::String{};
+        ApplySkeletalAsset(asset);
+    }
+
+    void SkinnedMeshComponent::SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset,
+                                                Container::StringView sourcePath)
+    {
+        if (!SkeletalAssetPath->TrySet(sourcePath))
+        {
+            SkeletalAssetPath = SkeletalAssetRef{};
+        }
+        m_SkeletalBinding.MarkExternal(Asset::AssetKind::Skeleton, SkeletalAssetPath->GetLogicalPath());
+        AnimationClipName = Container::String{};
+        ApplySkeletalAsset(asset);
+    }
+
+    void SkinnedMeshComponent::ApplySkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset)
     {
         if (m_SkeletalAsset != asset)
         {
@@ -131,9 +180,147 @@ namespace NorvesLib::Core::Component
         return m_SkeletalAsset;
     }
 
+    void SkinnedMeshComponent::SetSkeletalAssetPath(const SkeletalAssetRef& reference)
+    {
+        SkeletalAssetPath = reference;
+        OnPropertyApplied(*s_PropertyPtr_SkeletalAssetPath);
+    }
+
+    void SkinnedMeshComponent::SetMaterialTexture(const TextureAssetRef& reference)
+    {
+        MaterialTexture = reference;
+        OnPropertyApplied(*s_PropertyPtr_MaterialTexture);
+    }
+
+    void SkinnedMeshComponent::OnPropertyApplied(const ClassProperty& property)
+    {
+        Component::OnPropertyApplied(property);
+        if (&property == s_PropertyPtr_SkeletalAssetPath)
+        {
+            if (SkeletalAssetPath->GetLogicalPath() == m_SkeletalBinding.GetLogicalPath())
+            {
+                return;
+            }
+            ApplySkeletalAsset({});
+            m_SkeletalBinding.Reset();
+            if (!SkeletalAssetPath->IsEmpty() && bBegunPlay)
+            {
+                m_SkeletalBinding.RequestSkeletal(SkeletalAssetPath.Get());
+                PollAssetBindings();
+            }
+        }
+        else if (&property == s_PropertyPtr_MaterialTexture)
+        {
+            if (MaterialTexture->GetLogicalPath() == m_MaterialTextureBinding.GetLogicalPath())
+            {
+                return;
+            }
+            StoreMaterial(Rendering::MaterialHandle::Invalid());
+            ReleaseOwnedMaterial();
+            MarkRenderStateDirty();
+            m_MaterialTextureBinding.Reset();
+            if (!MaterialTexture->IsEmpty() && bBegunPlay)
+            {
+                m_MaterialTextureBinding.RequestTexture(MaterialTexture.Get());
+                PollAssetBindings();
+            }
+        }
+        else if (&property == s_PropertyPtr_AnimationClipName)
+        {
+            ApplyAnimationClipName();
+        }
+        else if (&property == s_PropertyPtr_AnimationTimeSeconds)
+        {
+            m_bPoseDirty = true;
+            MarkRenderStateDirty();
+        }
+    }
+
+    void SkinnedMeshComponent::ApplyAnimationClipName()
+    {
+        if (!m_SkeletalAsset)
+        {
+            return;
+        }
+        if (!AnimationClipName->empty())
+        {
+            const auto clip = m_SkeletalAsset->GetClip(Container::StringView(AnimationClipName.Get()));
+            if (clip && SetAnimationClip(clip))
+            {
+                return;
+            }
+            LOG_WARNING("SKINNED_CLIP_NOT_FOUND name=%s 指定したクリップを選べないため既定を使います", AnimationClipName->c_str());
+        }
+        m_PoseContext = {};
+        m_SelectedClip.reset();
+        m_Pose.Clear();
+        m_bPoseDirty = true;
+        MarkRenderStateDirty();
+    }
+
+    void SkinnedMeshComponent::PollAssetBindings()
+    {
+        Container::TSharedPtr<SkeletalAssetResource> asset;
+        if (m_SkeletalBinding.TakeReadySkeletal(asset))
+        {
+            ApplySkeletalAsset(asset);
+            if (!AnimationClipName->empty())
+            {
+                ApplyAnimationClipName();
+            }
+        }
+
+        if (Engine::GEngine)
+        {
+            Rendering::TextureHandle texture;
+            if (m_MaterialTextureBinding.TakeReadyTexture(texture))
+            {
+                Rendering::MaterialCreateData material;
+                material.AlbedoTexture = texture;
+                m_OwnedMaterial = Engine::GEngine->GetRenderResources().Materials().Create(material);
+                if (m_OwnedMaterial.IsValid())
+                {
+                    StoreMaterial(m_OwnedMaterial);
+                    MarkRenderStateDirty();
+                }
+                else
+                {
+                    LOG_WARNING("SKINNED_MATERIAL_CREATE_FAILED 基本色テクスチャの材質を作れません");
+                }
+            }
+        }
+    }
+
+    void SkinnedMeshComponent::ReleaseOwnedMaterial()
+    {
+        if (!m_OwnedMaterial.IsValid())
+        {
+            return;
+        }
+        if (LoadMaterial() == m_OwnedMaterial)
+        {
+            StoreMaterial(Rendering::MaterialHandle::Invalid());
+        }
+        if (Engine::GEngine)
+        {
+            Engine::GEngine->GetRenderResources().Materials().Release(m_OwnedMaterial);
+        }
+        m_OwnedMaterial = Rendering::MaterialHandle::Invalid();
+    }
+
     bool SkinnedMeshComponent::SetAnimationClip(const Container::TSharedPtr<AnimationClipResource>& clip)
     {
-        if (!m_SkeletalAsset || !m_SkeletalAsset->IsLoaded() || !m_SkeletalAsset->IsValid() || !clip ||
+        if (!clip)
+        {
+            AnimationClipName = Container::String{};
+            m_PoseContext = {};
+            m_SelectedClip.reset();
+            m_Pose.Clear();
+            m_bPoseDirty = true;
+            MarkRenderStateDirty();
+            return true;
+        }
+        if (!m_SkeletalAsset || !m_SkeletalAsset->IsLoaded() || !m_SkeletalAsset->IsValid() ||
             !clip->IsLoaded() || !clip->IsValid())
         {
             return false;
@@ -153,6 +340,7 @@ namespace NorvesLib::Core::Component
         }
         m_PoseContext = {};
         m_SelectedClip = clip;
+        AnimationClipName = clip->GetClip().Name;
         m_Pose.Clear();
         m_bPoseDirty = true;
         MarkRenderStateDirty();
@@ -198,44 +386,66 @@ namespace NorvesLib::Core::Component
 
     void SkinnedMeshComponent::SetAnimationTimeSeconds(float timeSeconds)
     {
-        m_AnimationTimeSeconds = timeSeconds;
+        AnimationTimeSeconds = timeSeconds;
         m_bPoseDirty = true;
         MarkRenderStateDirty();
     }
 
     float SkinnedMeshComponent::GetAnimationTimeSeconds() const
     {
-        return m_AnimationTimeSeconds;
+        return AnimationTimeSeconds;
     }
 
     void SkinnedMeshComponent::SetPlaying(bool bPlaying)
     {
-        m_bPlaying = bPlaying;
+        this->bPlaying = bPlaying;
     }
 
     bool SkinnedMeshComponent::IsPlaying() const
     {
-        return m_bPlaying;
+        return bPlaying;
     }
 
     void SkinnedMeshComponent::SetLooping(bool bLooping)
     {
-        m_bLooping = bLooping;
+        this->bLooping = bLooping;
     }
 
     bool SkinnedMeshComponent::IsLooping() const
     {
-        return m_bLooping;
+        return bLooping;
     }
 
     void SkinnedMeshComponent::SetPlaybackRate(float playbackRate)
     {
-        m_PlaybackRate = playbackRate;
+        PlaybackRate = playbackRate;
     }
 
     float SkinnedMeshComponent::GetPlaybackRate() const
     {
-        return m_PlaybackRate;
+        return PlaybackRate;
+    }
+
+    Rendering::SkinnedMeshHandle SkinnedMeshComponent::LoadMeshHandle() const
+    {
+        Rendering::SkinnedMeshHandle handle = m_MeshHandle;
+        (void)Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsSkinnedRender>().Type,
+                                     static_cast<uint32_t>(offsetof(Ecs::EcsSkinnedRender, MeshHandle)),
+                                     static_cast<uint32_t>(sizeof(handle)), &handle);
+        return handle;
+    }
+
+    void SkinnedMeshComponent::StoreMeshHandle(Rendering::SkinnedMeshHandle handle)
+    {
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsSkinnedRender>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            Ecs::EcsWriteColumnPart(row, type, static_cast<uint32_t>(offsetof(Ecs::EcsSkinnedRender, MeshHandle)),
+                                    static_cast<uint32_t>(sizeof(handle)), &handle);
+            return;
+        }
+        m_MeshHandle = handle;
     }
 
     Rendering::MaterialHandle SkinnedMeshComponent::LoadMaterial() const
@@ -268,9 +478,9 @@ namespace NorvesLib::Core::Component
         {
             handle = m_SkeletalAsset->GetMesh()->GetRenderMeshHandle();
         }
-        if (getMeshHandle().Get() != handle)
+        if (LoadMeshHandle() != handle)
         {
-            getMeshHandle().Set(handle);
+            StoreMeshHandle(handle);
         }
     }
 
@@ -287,7 +497,7 @@ namespace NorvesLib::Core::Component
     void SkinnedMeshComponent::CollectRenderResourceRefs(
         Container::VariableArray<Rendering::RenderResourceRef>& out) const
     {
-        const Rendering::SkinnedMeshHandle meshHandle = getMeshHandle().Get();
+        const Rendering::SkinnedMeshHandle meshHandle = LoadMeshHandle();
         if (meshHandle.IsValid())
         {
             out.push_back(Rendering::RenderResourceRef{Rendering::RenderResourceKind::SkinnedMesh, meshHandle.Id});
@@ -305,13 +515,15 @@ namespace NorvesLib::Core::Component
 
     void SkinnedMeshComponent::OnEcsRowAttached()
     {
-        // 可視・影・メッシュの handle は ECS_PROPERTY の移動で列へ移っている。残りは材質の handle とポーズの版
+        // 可視・影は ECS_PROPERTY が移す。保存しない handle とポーズの版はここで列へ写す。
+        StoreMeshHandle(m_MeshHandle);
         StoreMaterial(m_Material);
         StorePoseVersion();
     }
 
     void SkinnedMeshComponent::OnEcsRowDetaching()
     {
+        m_MeshHandle = LoadMeshHandle();
         m_Material = LoadMaterial();
     }
 
@@ -329,6 +541,12 @@ namespace NorvesLib::Core::Component
     void SkinnedMeshComponent::SetMaterial(Rendering::MaterialHandle material)
     {
         StoreMaterial(material);
+        if (material != m_OwnedMaterial)
+        {
+            ReleaseOwnedMaterial();
+        }
+        m_MaterialTextureBinding.Reset();
+        MaterialTexture = TextureAssetRef{};
         MarkRenderStateDirty();
     }
 
@@ -523,7 +741,9 @@ namespace NorvesLib::Core::Component
 
     bool SkinnedMeshComponent::BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy, const Rendering::MaterialResources* materials)
     {
-        if (!IsVisible() || !EvaluatePose())
+        if ((!SkeletalAssetPath->IsEmpty() && !m_SkeletalAsset) ||
+            (!MaterialTexture->IsEmpty() && !m_OwnedMaterial.IsValid()) ||
+            !IsVisible() || !EvaluatePose())
         {
             return false;
         }
@@ -537,7 +757,7 @@ namespace NorvesLib::Core::Component
         outProxy.ComponentId = GetComponentId();
         const Container::TSharedPtr<SkinnedMeshResource>& mesh = m_SkeletalAsset->GetMesh();
         RefreshMeshHandle();
-        outProxy.MeshHandle = getMeshHandle().Get();
+        outProxy.MeshHandle = LoadMeshHandle();
         outProxy.Material = LoadMaterial();
         const uint32_t slotCount = GetMaterialSlotCount();
         if (slotCount == 0 || slotCount > Rendering::MAX_MATERIAL_SLOTS)
@@ -697,7 +917,7 @@ namespace NorvesLib::Core::Component
         }
         ReservePoseEvaluationBuffers(skeleton.GetPoseRuntime().Parents.size());
         m_PendingClip = &clip;
-        m_PendingPoseTimeSeconds = m_AnimationTimeSeconds;
+        m_PendingPoseTimeSeconds = AnimationTimeSeconds;
         return true;
     }
 

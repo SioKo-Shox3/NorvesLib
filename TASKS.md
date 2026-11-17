@@ -7013,7 +7013,7 @@
 - notes: 方式は要件 `#### GR50` の設計案の Stage 1（CPU の空のモデルへ曇天を入れる）。空の LUT・空由来の IBL・霧の色・PT の不交差が同じモデルを引くので、モデルへ入れれば一度に揃う。連続の変化（Stage 2）は G11 の GR54 で、それまで雲量は場面ごとの固定値にする（CloudCover が変わると LUT〈Debug で 108〜140 ms の記録〉と IBL を CPU で作り直すため。運用の約束を SkyAtmosphere.h の注釈に書く）。CloudCover は SceneRevision に入れない（段階をまたぐ注意 4462 行の直す点。RTGI の履歴は光の変化を LightRevision が弱い再利用へ落とす今の仕組みに任せる）。既存の体積の雲 `CloudLayerParameters`（SkyAtmosphere.h:101。荒野が使う。WastelandRoutine.cpp:580）とは別物で、その見た目は変えない（c=0 の既定では雲の層の照りも不変）。霧の色の寄せ（Tint・SkyBlend）は G7-GR50-FOG-TINT。数値の既定（F・k・円盤の区間・Tint）は仮で、データで替えられる。日向と影の輝度比・空が最も明るいことの撮影の確かめは G7-GR50-CHECK。SkyAtmosphere.cpp・SkyAtmospherePass.cpp は起動画面の空の作業と同じファイルなので差分を小さくする。試験を足す理由: c=0 の既存の値がずれる・キャッシュの鍵の漏れで古い LUT・PT の累積が残るのは、撮影で気づきにくく黙って起きる。危険地帯（空・ライティング）なので評価者を通す。ロードマップ 1536・1550・1567 行。
 
 ## G7-GR49-ENV-INTERFACES: 環境の状態の JSON 保存とプリセット、AngelScript の数値の口、起動の引数と撮影の引数を足し、雲量を空の曇天へ解決する
-- status: todo
+- status: done
 - after: G7-GR49-ENV-SYSTEM, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR49
 - done-when: (1) EnvironmentSystem の Resolve が雲量を `SkyAtmosphereParameters::CloudCover`（G7-GR50-OVERCAST-SKY）へ書き、EnvironmentState の霧に Tint・SkyBlend・基準の仰角（G7-GR50-FOG-TINT の欄）を足して `VolumetricFogParameters` へ書く。(2) `ToJson`・`FromJson`（EnvironmentState JSON v1: formatVersion・gameTimeSeconds・timeOfDayHours・rain・wetness・cloudCover・wind{azimuthDeg,speed,gust}・fog{density,baseHeight,heightFalloff,maxDistance,ambientScale,tint[3],skyBlend,referenceElevationDeg}・cloudLayer{enabled,coverage}・sun{mode,altitudeDeg,azimuthDeg}・seed。部品は `Library/Core/Public/Text` の JsonWriter・JsonDocument。未知のキー・範囲外の値は警告つきで既定へ、SceneSerializer の寛容な読みと同じ方針）と、同じ形式の目標の値に遷移の秒数を持つ天候のプリセット（`Assets/Data/Environment/<name>.env.json`。晴れ・曇り・雨・豪雨の 4 つを仮の値で置く）を SetTarget へ渡す読み込みを足し、`LoadState` は DiscontinuityId を進める。(3) AngelScript: `ScriptRuntime::Initialize`（ScriptRuntime.h:61。呼び出しは ApplicationProcessor.cpp:1763）へ EnvironmentSystem を渡す口を、World だけを受ける今の呼び出しを壊さない形で足し、数値だけの関数 `SetRain(value, seconds)`・`SetWind(azimuthDeg, speed, gust, seconds)`・`SetCloudCover(value, seconds)`・`SetFogDensity(value, seconds)`・`GetRain()`・`GetWetness()`・`GetCloudCover()` を、EntityRef と同じ「Runtime のポインタを持つ値型」の流儀で登録する（グローバルの参照を持たない。文字列のアドオンは入れない）。(4) Game: `--rain=`・`--wetness=`・`--cloud-cover=`・`--wind=<方位>,<速さ>,<突風>`・`--environment-preset=<name>`（GameApplicationHandler.cpp:374-382 の `--sun-elevation=`・`--height-fog-density=` と同じ流儀。不正な値は拒否してログ）。どれかがあれば、シーンに入った後に今の場面の値から EnvironmentSystem を有効にして指定の値へ SetImmediate し、解決後の値を Game.log に 1 行（`ENVIRONMENT_RESOLVED rain=… wetness=… cloud=… wind=… fog=… discontinuity=…`）出す。引数が無ければ今までどおり無効。EnvironmentSystem が有効なときだけ、Rendering3DTest の太陽の操作（矢印キーと `--sun-elevation`。Rendering3DTestRoutine.cpp:2727-2798・3493）を EnvironmentState の Manual の太陽へ書く。(5) `Scripts/CaptureStartupScene.ps1` と `Scripts/CaptureScene.ps1` に `-Rains`・`-Wetnesses`・`-CloudCovers`（`-SunElevations` と同じく値ごとに撮り、出力の名前に値を付ける）と `-Wind` を足す。 CPU の試験: `EnvironmentStateTest` に、JSON の往復（ToJson→FromJson で全欄が一致）・未知のキーと範囲外と formatVersion の違いの扱い・4 つのプリセットの読み込みと SetTarget の値を足し、`EnvironmentScriptApiTest`（`AngelScriptBootstrapTest` の束の MEMBER）で `SetRain(0.8, 30.0)` を呼ぶスクリプトを 1/60 秒で 1800 回刻むと雨量が 0.8 へ ±1e-4 で届き途中の値が単調、ほかの Set の関数も目標へ届き Get が状態と一致する、を確かめる。
@@ -7082,7 +7082,7 @@
 - notes: 2026-11-02 の GR136 の決定（ロードマップ 4228 行。PROGRESS.md 8659 行）に従う: 効果の定義は GR136 の `VfxEffectAsset` の 1 つだけで、GR57 の設計案の `.pfx.json`・`ParticleEffectDesc` は作らない。GR57 は同じ定義を GPU で回す実行先で、GR136 の CPU の実行先が GPU の試験の「CPU 参照実装」を兼ねる。食い違いの決定: GR136 の乱数は xorshift32 の列（ParticleSystem と同じ。VfxEffectSystem.h:155）で、粒を並列に作る GPU では同じ列を再現できない。そこで乱数の流れを選べるようにし、GPU の実行先のエミッタは粒ごとの通し番号から引く Counter（PCG ハッシュ）にする。既存のエフェクトは Sequential のまま（結果を変えない）。GR57 の設計案の semi-implicit Euler は GR136 の順（速度を先に更新）と同じ式なので、GR136 の順をそのまま使う。寿命の曲線は GR136 が「共通の曲線が決まってから」としていた（ロードマップ 4245 行）が、`Math/Curves.h` の折れ線（`TryEvaluatePiecewiseLinear`）が統合ブランチにあるのでそれを使う。表面・ボーンのエミッタ（GR57 の P6。シ者の皮膚の表面から出す分）は段階をまたぐ注意の直す点（4459・4467 行）を採り、G7 では作らず G10 の `G10-GR60-SKIN-SURFACE-EMITTER` に任せた（GR19 の後）。その項目はこの定義（Executor=Gpu のエミッタの形に SkinSurface・Bone を足す）とシミュレーションの道を使う。理由: G10 の節が P6 を GR19 の後に作るとし、GR57 の設計案も垂直スライスの雨が使うのは P1〜P4 と書く。そのため G7 は GR12・GR13 を待たない。単発の放出（段階をまたぐ注意 4461 行）は GR136 の `RaiseEvent` と `SpawnOnEvent` を GPU の実行先でも受け、GameThread から RenderThread への値の列 `GpuParticleBurstQueue` は G7-GR57-GPU-SIMULATION で作る（G10 の EmitBurst・G11 の DropletEmitRequest はこの名前へ揃える）。試験を足す理由（`GpuParticleTypesTest`）: C++ と GLSL の構造体の並びのずれと、生成数の端数の持ち越しの誤りは、粒の数が少し違うだけで黙って起きる。CPU の GPU 試験の前提（並びと計画）を GPU なしで固定する。危険地帯は無い（CPU の Particle と新しい型だけ）が、Public の Particle の型を広げるので互換（既存の .vfx のクックと元の形式の読み）を試験で守る。要件 `#### GR57` の設計案（フェーズ P1）、データ形式、ロードマップ 1539・1553 行。
 
 ## G7-GR57-GPU-SIMULATION: GPU の実行先のエミッタを GameThread から値で RenderThread へ渡し、常駐のプールで生成・更新・寿命・衝突（深度・平面・高さ）を compute で回す
-- status: todo
+- status: done
 - after: G7-GR57-GPU-DEFINITION, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G4-GR02-FIXED-FRAME-CLOCK
 - gr: GR57
 - needs-gr: GR25, GR02
@@ -7093,7 +7093,7 @@
 - notes: 選定課題 G7-S7（ロードマップ 4531 行）は推奨の (A) を採る: GR57 のパスは G5 の GR25 の描画の拡張の段へファクトリで登録する（シミュレーションは GBuffer の段の最後、描画は Transparent と PostTemporalAA の段。G7-GR57-GPU-DRAW）。理由: `SetupDeferredPipeline`（SceneView.cpp:1058）の組み直しで消えず、段の位置が名前で決まる。10-02 の後に可視バッファ・DecalPass・FoliagePass・CloudLayerPass・DistortionPass が入り（SceneView.cpp:1094〜1371）、直に AddPass する (B) は並びが変わるたびに直す所が増える。GR25 の段の錨は G5-GR25-STAGE-REGISTRY の done-when にある。エンジンの内部のパスでも同じ登録の口を使い、パス名の規約（`Ext.<Game>.<Name>`）に合わなければエンジン用の接頭辞を GR25 の文書に足す。時計（段階をまたぐ注意 4460 行の直す点）: 粒の dt は TimeSystem の Particle のチャンネル（ApplicationProcessor.cpp:2723 の `PostTick` の群と同じ値）。`ViewRenderContext::DeltaTime` は RenderThread のフレームの時間なので積分に使わない。描画がゲームのフレームを飛ばしたときは、写しに載った時刻の差で進める（上限 1/15 秒、超えたら分けて刻む）。CPU への読み戻し（命中の通知）はしない（ロードマップ 1546 行の非ゴール）。`ParticleEmitterComponent` の更新は ECS の作り（`Docs/Plans/EcsUpdatePathPlan.md`）に合わせ、今の Component の登録の仕組みで系に載せる（UNCERTAIN: 今の Component から毎フレームの描画の変換を読む正しい場所は、`SocketAttachmentComponent`〈GAME-GR130-VFX-CHECK-P1〉の扱いを読んで確かめる）。間接の描画と生き残りの詰め込みは G7-GR57-GPU-INDIRECT。試験を足す理由: GPU と CPU の積分のずれ・衝突の取りこぼしは画面の粒の数と位置が少し違うだけで、撮影では気づけず黙って起きる。危険地帯（RenderThread・FramePacket・Public API の Component・RenderWorld）なので評価者を通す。共有の ApplicationProcessor.cpp・SceneView.cpp・試験の束の CMakeLists.txt は差分を小さくする。要件 `#### GR57` の設計案のパス構成 1)、（2）〜（6）、フェーズ P2 と P4 の衝突、ロードマップ 1539・1553・1563 行。
 
 ## G7-GR57-GPU-DRAW: GPU の粒をワールドの空間の板・速度で伸ばした筋・面に沿う板として、ソフト・霧・環境光の色つきで TAA の前と後の段に描く
-- status: todo
+- status: done
 - after: G7-GR57-GPU-SIMULATION, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR57
 - needs-gr: GR25, GR30
@@ -7104,7 +7104,7 @@
 - notes: 要件 `#### GR57` の設計案のパス構成 2)（フェーズ P3 と P4 の霧・環境光・PostTAA）。TAA の velocity の書き込みは GR30 の領分で、細い筋（雨・しぶき）は PostTAA に置いて TAA を通さない。PreTAA の大きくソフトな粒（灰・埃）だけがリアクティブを書く（G5-GR30-REACTIVE の notes の約束どおり）。PostTAA の筋は被写界深度・動きぼけ・SSR の対象外（G14 の GR62 で扱う。ロードマップ 1558 行）。既定の環境の IBL（grasslands_sunset の HDR）だと夕焼けの色が着くので、空が無効のシーンでは注意と注釈に書く。粒の深度の並べ替えはしない（ロードマップ 1546 行の非ゴール）。描き順が毎フレーム変わりうる重なりは、順に依らない加算か、スロットの順の描画で選べる。共有の SceneView.cpp と試験の束の CMakeLists.txt は差分を小さくする。試験を足す理由: 並びの誤り（粒が TAA の前に入る・組み直しで消える）と筋の長さ・幅の誤りは、撮影 1 枚で気づきにくく黙って起きる。危険地帯（RenderThread・パスの並び・TAA の入力）なので評価者を通す。ロードマップ 1539・1553・1566 行。
 
 ## G7-GR57-GPU-INDIRECT: 生きている粒だけをバケットごとに詰めて間接の描画で描き、容量ぶんの描画をやめる
-- status: todo
+- status: done
 - after: G7-GR57-GPU-DRAW, G5-GR28-DRAW-INDIRECT
 - gr: GR57
 - needs-gr: GR28
@@ -7115,7 +7115,7 @@
 - notes: 要件 `#### GR57` の設計案（d）Compact とフェーズ P5。間接の描画は GR28 の非インデックスの `DrawIndirect` を使い、静的な 6 要素のインデックスの経路（設計案の DrawIndexedIndirect）は作らない（GR28 が非インデックスの口を足すので、インデックスのバッファが要らない）。atomic の順で描画の順が毎フレーム変わりうるので、premultiplied の重なりが多いエミッタはスロットの順の描画を選べる、と注釈に書く。`firstInstance` を GPU が詰める使い方はしない（GR28 の notes の `bDrawIndirectFirstInstance` の前提を避ける。スロットは詰めた列から引く）。性能の記録（5 万粒で生成・更新・詰め・描画の合計 1.5 ms 以下が目標、合否にしない）は G7-GR57-CHECK。試験を足す理由: 詰めた数と描いた数のずれは粒が少し欠けるだけで、撮影では気づけず黙って起きる。危険地帯（RHI の間接の描画・RenderThread）なので評価者を通す。
 
 ## G7-GR58-RAIN-MODEL: 雨量から雨の本数・不透明度・太さ・傾き・遠景の層・霧の増分への写像を純関数にし、調整の値をデータに置いて、雨量に応じて霧を濃くする
-- status: todo
+- status: done
 - after: G7-GR49-ENV-SYSTEM, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR58
 - needs-gr: GR46
@@ -7126,7 +7126,7 @@
 - notes: G7-S5（ロードマップ 4532 行）の推奨 (A) を採る。理由: 雨量が EnvironmentParameters と RainParameters の 2 か所に載ると食い違いうる。値の出所が 1 つで、見た目の調整に再ビルドが要らない。近距離の雨のエフェクトの定義（Rain_Near）は G7-GR58-RAIN-NEAR が GR136 の形式で書き、RainTuning の近距離の値はそのエフェクトの上書きの値として渡す。数値の既定は全部仮（コンセプト案の雨は構図の確かめ用で採否は未定）。犬の走る速さ（動き取り）で筋の見え方が変わったら StreakShutterSeconds と落ちる速さを見直す。試験を足す理由: 写像の不連続（雨量の小さな変化で本数が跳ぶ）と霧の増分で履歴が切れることは、撮影 1 枚では気づけず黙って起きる。要件 `#### GR58` の設計案（C）と【フェーズ】P1、ロードマップ 1540・1554 行。
 
 ## G7-GR58-RAIN-CURTAIN: 遠景の雨のカーテンを、体積の霧の直後に全画面の手続きの 3 層で描き、近い物の手前には描かないようにする
-- status: todo
+- status: done
 - after: G7-GR58-RAIN-MODEL, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR58
 - needs-gr: GR46
@@ -7422,7 +7422,7 @@
 - notes: 要件 `#### GR114` の受け入れ確認のうち、撮影で測る分（影の先端の幾何の検算・GPU 時間・草とファーの方針）をここに分けた。`CaptureStartupScene.ps1` の `-SunElevations` は今 0〜90 の度（GR55 で負へ広げる）。GPU A/B の新しい試験（要件の `MegaGeometryDirectionalShadowVulkanTest`）は足さない: MegaGeometry の CSM 描画は SS-CSM-MEGA-CASTERS で撮影の昼・夕の確かめと基準画像の試験が済み、欠ければ撮影と `RenderingGolden*` で気づける（Docs/Testing.md の試験を足す条件に当たらない）。GPU 時間の目標は GR109（G19）で決め、ここは記録だけ。自動停止の 2000 lux は試しの値で根拠なし（撮影で曇天の地表照度を見て決め、決めた値を記録に書く）。grassland の視点名は G5-GR43-GRASS-CHECK と同じ。ロードマップ 2002 行。
 
 ## G11-GR54-SKY-SOURCE-SHARE: 空のモデルと放射輝度の源を空の LUT と空由来 IBL で 1 回だけ作って共有し、IBL の生成を空のパスへ移して所要時間を記録する
-- status: todo
+- status: done
 - after: G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR54
 - needs-gr: GR50
@@ -7433,7 +7433,7 @@
 - notes: GR54 の P0 と P1 の前半（IBL の所有の移動）。今あるもの: 各パスの中では太陽に依らない表を写す（SkyAtmosphere.cpp:393-410、LightingPass.cpp:741-776 の `previousModel`）が、空のパスと照明のパスがそれぞれモデルを作るので、太陽高度の変化 1 回で 2 回作る（要件の事実は今も成り立つ）。IBL の生成時間のログは無い（`Sky LUT generated` だけ）。要件の「RHI に遅延破棄の仕組みがあるか未確認」は、今は `GpuRetireQueue` がある。保持体にしたのは、空のパスと照明のパスの順（SceneView.cpp:1199 で空のパスを足す）に依らず同じ物を引けるようにし、CPU の試験で「1 回だけ作る」を確かめられるようにするため。RenderThread だけが触る（GameThread からは使わない）。G7 の GR50 が `SkyAtmosphereParameters` へ `CloudCover` を足すので、鍵の比較は `AreSkyAtmosphereParametersEqual` を使い、欄を自前で並べない。所要時間の実測（RelWithDebInfo。AGENTS.md の絶対規則 8 で Release でなく）は G11-GR54-SKY-MEASURE。G10-GR65-PALEFLAT が同じ `CreateIblResources` に全球の平均照度 E_avg の戻りを足すので、先に入った側に合わせて切り出し、E_avg を `IblGeneration` の戻りに残す（どちらが先でも、もう一方は rebase で合わせる）。危険地帯（照明・RenderThread・IBL の所有。PT も空のパスを使う）。評価者の反証を省かない。LightingPass.cpp は大きい共有のファイルなので差分を小さくする。試験を足す理由: 反証する契約は「同じ空を 1 回しか作らない」「太陽だけの変化で大気の表を作り直さない」。2 回作っても絵は同じでログの時間が倍になるだけなので撮影では気づけず、黙って起きる。ロードマップ 1987・1998 行、要件 `#### GR54` の P0・P1。
 
 ## G11-GR54-CLOUD-BLEND: 雲量の連続した変化を、晴天と単位曇天の空 LUT・IBL の重み付き和を GPU で書くだけで追い、CPU の作り直しを 0 回にする
-- status: todo
+- status: done
 - after: G11-GR54-SKY-SOURCE-SHARE, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR54
 - needs-gr: GR49, GR50
@@ -7444,7 +7444,7 @@
 - notes: GR54 の P1 の後半（ロードマップ 1987 行、要件 `#### GR54` の「キーの洞察」と P1）。空の放射輝度・拡散照度・GGX の前計算はどれも放射輝度に線形なので、晴天と単位曇天の重み付き和で雲量の連続変化を作り直し無しに追える（要件 5317 行）。雲量 0 で今の絵と同じにするため、重み (1,0) は写しにする。空の放射輝度 LUT も混ぜないと、背景と霧の色を作り直すことになり「CPU 再生成 0 回」を満たさない（要件は「LUT・IBL の再生成 0 回」）。太陽円盤と直達の弱め方は GR50 の CPU の小さな計算のまま（作り直しの対象でない）。段階をまたぐ注意（ロードマップ 4470・4474 行）: GPU で混ぜると CPU の平均照度が古くなるので同じ重みで混ぜる。雲量は SceneRevision に入れない前提（ロードマップ 4462 行）だが、今の `HashSceneEnvironmentRevision` は雲の層の `Coverage` を入れている（RenderingCoordinator.cpp:232）。GR50 の `CloudCover` をどう扱うかは G7 の決定に従い、入っていれば G11-GR55-CLOCK-SKIP で外す。`GameApplicationHandler.cpp` は共有のファイルなので差分を小さくする。計測（雲量 0 → 1 を 120 フレームで、フレーム時間の最大が中央値の 2 倍以内）は G11-GR54-SKY-MEASURE。危険地帯（照明・RenderThread・永続テクスチャの更新の順）。評価者の反証を省かない。試験を足す理由: 反証する契約は「混ぜた結果が CPU のモデルと一致する」「雲量 0 で今の絵を変えない」。誤差やミップの取り違えは曇天の撮影 1 枚では見分けにくく、黙って起きる。
 
 ## G11-GR54-SUN-KEYFRAMES: 太陽が連続して動いても空 LUT・IBL を止まらずに追えるよう、高度をはさむ晴天のキーフレーム 2 枚を GPU に持ち、次を JobSystem で作る
-- status: todo
+- status: done
 - after: G11-GR54-CLOUD-BLEND
 - gr: GR54
 - done-when: (1) `IblGeneration` を CPU の計算（`SkyAtmosphereModel`・放射輝度の源・拡散と鏡面の畳み込みの値の配列を作る。スレッド安全で装置に触れない）と RenderThread での転送に分ける。(2) キーフレームの窓（`Library/Core/Private/Rendering/SkyKeyframeWindow.{h,cpp}`）が、今の太陽高度をはさむ晴天のキーフレーム a・b を GPU に持ち、高度が b を越える前に次の c を `JobSystem::SubmitTask`（`Library/Core/Public/Thread/JobSystem.h:46`）のワーカーで CPU 生成し、できたら転送して窓を進める。キーフレームの高度は非一様の表（地平線付近 0〜6° を細かく。表はデータで変えられ、GR55 の夜の範囲の負の高度も置ける）。(3) `SkyCloudBlend.comp` を「晴天 a・晴天 b・単位曇天」の 3 入力の重み付き和と、太陽方位の経度方向のずらし（正距円筒の u のずらし）へ広げ、方位だけの変化は作り直さない。(4) 生成が間に合わないときは直前のキーフレームに留め（重みを端で止める）、警告を 1 回だけ出し、黒画面・落ちる・古い参照の解放が起きない。(5) Game に開発用の引数 `--sun-sweep=<開始の度>,<終わりの度>,<秒>` を足し、掃引の間は毎フレーム `SKY_SWEEP frame=… altitude=… key_a=… key_b=… weight_a=… weight_b=… mean_irradiance=…`（混ぜた全球の平均照度。CPU で重みから求める値）を出す。試験が通る: `SkyKeyframeWindowTest`（`CameraViewConstantsTest` の束へ MEMBER）で、高度の列に対する窓の選択と重みが連続（キーフレームの切り替えの前後で重みの和と各入力の寄与が跳ばない）、生成の遅れを模したとき端で留まること、表が非一様でも単調な高度の列で同じキーを 2 回作らないこと。`SkyAtmosphereModelTest` に、同じパラメータのモデルを複数のワーカーで同時に作った結果が逐次に作った結果とビット一致するケースを足す。`SkyCloudBlendVulkanTest` に、キーフレームの間の高度と方位のずらしを混ぜた結果と、その高度・方位で CPU のモデルを作り直した値との差のケースを足す（許容は空の放射輝度 LUT 3%・拡散 3%・鏡面 5% から始め、地平線付近の実測の誤差を記録して決める）。`RenderingGolden*` の 4 試験と `PathTracingOutdoorVulkanTest` が変わらない。
@@ -7470,7 +7470,7 @@
 - notes: 要件 `#### GR54` の受け入れ確認のうち、計測（P0 の所要時間、P1 の 120 フレームの雲量の変化、P2 の 60 秒の掃引）をここに分けた。Release でなく RelWithDebInfo（AGENTS.md の絶対規則 8）。`-GpuTimingFrames` の値は掃引の長さ（60 秒 × 60 fps）に合わせた目安で、根拠は掃引の秒数だけ。R7 の参照比較は参照比較の段（`NORVES_REFERENCE_TESTS`、数分〜1 時間）なので GPU を占有する。輝度の不連続の閾値 1% はロードマップ 1998 行の初期目標で、実測の根拠を記録して確定する。コードは変えない（直す必要が出たら、分かったことを書いて新しい項目を提案する）。
 
 ## G11-GR55-SUN-WEATHER: 太陽の軌道（時刻・日付・緯度から高度と方位）と、種と時刻だけで決まる天候の予定表を純関数とデータで作る
-- status: todo
+- status: done
 - after: G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES
 - gr: GR55
 - needs-gr: GR49
@@ -7481,7 +7481,7 @@
 - notes: 選定課題 G11-S6（GR55 の時刻・天候の既定値と範囲。ロードマップ 4553 行）は推奨の (A) を採る: 仮の既定値（北緯 55°・夏至寄りの日付 172・北のずれ 0、天候は曇天中心で雨量と霧が変わる表、セル 15 分）で作り、企画が決まったらデータだけ差し替える。理由: 作者の決定で、企画で保留の機能も採り、決めていない数値はデータにする（BRIEF）。値の根拠: 北緯 55° は要件の「議論記録の寒冷で草の高い地域（カムチャツカ）」の例で、企画の決定ではない（根拠なしの仮）。月明かり・夜は G11-GR55-NIGHT、時計・スキップは G11-GR55-CLOCK-SKIP。純関数とデータだけで、描画も環境状態も変えない。風の値は G5 の GR46 の `WindParameters`（G7-S1 の決定）へ写せる形（向き・速さ・突風）で持ち、式は持たない。試験を足す理由: 反証する契約は「同じ種と時刻で同じ天気（セーブは種と時刻だけ）」「遷移表の制約」「太陽の既知の高度」。決定論の崩れや稀な遷移は撮影 1 枚では見えず、ロードの後に天気が変わる形で黙って起きる。ロードマップ 1988・1999 行、要件 `#### GR55` の (W)(T)。
 
 ## G11-GR55-CLOCK-SKIP: 環境状態を時計と天候の予定表で動かし、時刻の一括スキップ（濡れの復元・不連続の印・通知）と、動く太陽・天候で RTGI の履歴を毎フレーム捨てない扱いを入れる
-- status: todo
+- status: done
 - after: G11-GR55-SUN-WEATHER, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT
 - gr: GR55
 - needs-gr: GR49, GR50
@@ -7517,7 +7517,7 @@
 - notes: 要件 `#### GR55` の受け入れ確認の撮影の分（夜の撮影・自動露出の収束・時計無効で不変）。`-SunElevations` の負の値は G11-GR55-NIGHT で台本が受けるようにする。`-GpuTimingFrames 1800` は時間の倍率 60 で 30 分のゲーム時間（30 秒）を回す目安で、根拠はこの見積もりだけ。黒つぶれの閾値と領域は着手時に決めて記録に書く（根拠なし）。コードは夜の下限のデータ以外変えない。ロードマップ 1999 行。
 
 ## G11-GR56-SKY-OCC-WORLD: 空の遮蔽の入力に、地形の高さ・散布のチャンクの樹木と岩・草の場の下草の層・曇天の空の明るさの分布をつなぐ
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-MAP, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET, G5-GR44-WORLD-FIELD, G5-GR44-TRAMPLE, G7-GR50-OVERCAST-SKY, G7-GR50-FOG-TINT, G5-GR90-SCATTER-BAKE, G5-GR90-SCATTER-RUNTIME
 - gr: GR56
 - needs-gr: GR37, GR42, GR44, GR50, GR90
@@ -7528,7 +7528,7 @@
 - notes: GR56 の P4 の前半（要件 5587 行、草の根元・岩陰は 5571-5577 行）。名前とディレクトリは G5 の項目に合わせた（G5-GR90-SCATTER-RUNTIME の `Library/Core/{Public,Private}/Scatter/ScatterSystem`、G5-GR42-GRASS-FIELD-CORE の `Library/Core/{Public,Private}/Vegetation/GrassField`、G5-GR37-TERRAIN-COMPONENT の TerrainComponent）。G5 が別の名前で入れていれば実物に合わせる。遮蔽物の欄は G5 の種の表（G5-GR90-SCATTER-BAKE の `Assets/Scatter`。NVSCT の文書 `Docs/Architecture/NVSCTv0.md`）に足し、cook が通すようにする。草の根元の暗さは草の材質 AO（G5 の GR43。G11-S4 の (A)）が受け持ち、ここは圃場の大きさの暗さだけ。森の大量の配置（GR47）は G12 で、当面は GR90 の散布と手置きで代える（ロードマップ 2005 行）。ストリーミング（GR40）も G12 で、ここは GR90 のチャンクの常駐・解放の通知だけを使う。取り込み時に遮蔽物の形を推定する（サイドカー GR78）のは G17 の GR81 の範囲で、ここは種の表の値と手置き。`Game/GameModes/Grassland` は G5 が作るシーンで、遮蔽を有効にして森の縁を見せる設定だけを足す（差分を小さくする）。危険地帯（RenderThread の入力・SceneRevision とは別の版）。評価者の反証を省かない。試験を足す理由: 反証する契約は「チャンクの常駐・解放と遮蔽物が一致する」「地形の高さがそのまま地面になる」。解放の漏れは遠くへ歩いた後にだけ出る黒い跡として、黙って起きる。
 
 ## G11-GR56-SKY-OCC-RT: RTGI・DDGI を使うときに樹冠だけの遮蔽で拡散を補い、樹冠を PT の参照だけに当たる instance mask 0x04 で TLAS へ入れる
-- status: todo
+- status: done
 - after: G11-GR56-SKY-OCC-WORLD, G11-GR56-SKY-OCC-SPECULAR
 - gr: GR56
 - done-when: (1) クリップマップに「樹冠の種別だけ」の L1 の第 2 組を足し（積分の費用と記憶域が約 2 倍。要件 5553 行）、RTGI か DDGI が選ばれたフレームは、拡散に「樹冠だけ」の可視率を掛ける（RTGI は `EvaluateRTGIEndpoint` の拡散の項、DDGI は DDGI の照度の項）。地形・岩・小屋は今 TLAS に入って光線が解くので、全種別の組は使わない。鏡面は常に G11-GR56-SKY-OCC-SPECULAR の円錐。(2) instance mask: `FramePacket.h:63-65` と `Assets/Shaders/Common/RayTracingInstanceMask.glsl` に 0x04（`RayTracingInstanceMaskSkyMapProxy`）を足す。樹冠の種別の遮蔽物に対応する描画物（散布の樹木・手置きで印を付けた物）は mask 0x02|0x04 で TLAS に入り、DDGI・RTGI の光線（cull mask 0x01。ProbeRadiance.comp・ProbeIrradianceUpdate.comp・ProbeEmitterSampling.glsl・DiffuseIndirect.comp）には当たらず、PT（全 bit）には当たる。RT の影の光線（RayTracingShadowRayGen.glsl）の cull mask を 0x05 にして樹冠も影を落とす。印は MeshProxy → DrawParams（DrawCommand.h の bCastShadow の隣）→ `BuildFrameSnapshot`、MegaGeometry の写しの経路（RenderingCoordinator.cpp:1642）の両方に通し、バッチの鍵にも入れる。試験が通る: `RTGIDiffuseIndirectVulkanTest` に、mask 0x04 の instance が RTGI の光線に当たらないケース、`DDGIProbeRayQueryVulkanTest` に DDGI の光線に当たらないケース、`PathTracingVulkanTest` に PT には当たるケースを足す。`RenderingRayTracingShadowVulkanTest` が cull mask 0x05 にしても変わらない（0x04 の物が無い場面）。`RenderingSkyOcclusionCanopyVulkanTest` に RTGI 有効の変種（樹冠だけの組で拡散を補う）を足し、樹冠の下の地面の比が RTGI 無効の結果と ±15% 以内。`RenderingGolden*` の 4 試験が変わらない。
@@ -7576,7 +7576,7 @@
 - notes: GR59 の P3（要件 5995 行）。今あるもの: 窓のイベント（Begin・End）とイベントの列（G3-GR11 done）、ソケット（G3-GR13 done、`SocketTypes.h`）。接地のイベントの名前を出すのは todo の G3-GR11-FOOT-CONTACT-SOURCE（needs-gr の GR11 でつながる）。UniRig の 14 関節には足先が無い（ロードマップ 2011 行）ので、足先の骨が無いときは足首＋データのずれで代える（GR103 の共通の骨格が入れば骨を使う）。要件の暫定（GR05 の歩様の位相から歩幅ごとに出す）は、接地のイベントが G3 で入るので作らない。放出の列 `GpuParticleBurstQueue`（位置・法線・速度・個数・エミッタ）は G7-GR57-GPU-SIMULATION の名前と欄に合わせた。足が水たまりを踏んだときの波紋は G11-GR59-PUDDLES の手続きの波紋の範囲外（雨の波紋だけ）。試験を足す理由: 反証する契約は「乾いた地面では出ない・接地の点から出る」。ずれは足の下でなく横から出るしぶきとして動いているときだけ見え、黙って起きる。ロードマップ 1990・2001 行。
 
 ## G11-GR59-PUDDLES: 雨の量と乾きで水位が上下する水たまり（被覆・暗化・つや・手続きの波紋・空の見え方を掛けた反射）と、屋根の下は濡れない雨の遮蔽を地面と一般のメッシュに入れる
-- status: todo
+- status: done
 - after: G11-GR59-OVERHEAD-MAP, G11-GR59-PUDDLE-MASK, G11-GR56-SKY-OCC-SPECULAR, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR44-WORLD-FIELD, G5-GR44-TRAMPLE, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR53-WET-MODEL, G7-GR53-WET-WRITERS
 - gr: GR59
 - needs-gr: GR37, GR44, GR49, GR53
@@ -7602,7 +7602,7 @@
 - notes: 要件 `#### GR59` の受け入れ確認の撮影・基準画像・計測の分（要件 6038・6040 行）。雨の強さは G7 の引数 `--rain=`（G7-GR49-ENV-INTERFACES）で決める。犬が走る場面は G4 の犬の移動の確かめの場面（`--dog-movement-smoke`。シーンの一覧には無い）か、grassland に犬が置かれていればそれを使う。`Scripts/UpdateRenderingGoldenBaselines.ps1` は Indoor・Outdoor の 2 枚専用（引数に 2 枚の SHA-256 を要する）なので、雨の場面の基準画像は GTAO の場面（`RenderingGTAOCornellRoomVulkanTest`）と同じ置き方で `Test/Core/Rendering/Baselines` に置き、承認の記録を GoldenBaselines.md に書く（UNCERTAIN: GTAO の場面の基準の置き方を読んでいない。着手時に確かめる）。目標の 0.3 ms は要件の目標値（未計測）で、合否は GR109 で決め、ここは記録。コードは基準画像と閾値の TSV 以外変えない。
 
 ## G11-GR52-FOG-STEPS: 霧と空気遠近の光線の歩を、手前を細かくする指数の配置と画素・時間のずらしにし、少ない歩で光の筋が参照に近づくようにする（既定は今のまま）
-- status: todo
+- status: done
 - after: G7-GR51-HEIGHTFOG-INCLUDE, G7-GR51-FORWARD-FOG
 - gr: GR52
 - needs-gr: GR51
@@ -7651,7 +7651,7 @@
 
 ## G11-GR36-WETNESS-DYNAMICS: 毛の濡れ度に、風と環境で速さの変わる乾きと、身震いの間だけ速く下がる厳密解を足し、身震いの窓イベントと呼び出しで動かす
 - status: todo
-- after: G3-GR11-FOOT-CONTACT-SOURCE, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES
+- after: G3-GR11-FOOT-CONTACT-SOURCE, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G6-GR34-COAT-SCENE, G6-GR35-WETNESS-STATE
 - gr: GR36
 - needs-gr: GR11, GR34, GR35, GR46, GR49
 - done-when: (1) G6 の GR35 の `AdvanceCoatWetness(state, dt, env)`（`Library/Core/Public/Rendering/CoatWetness.h`。G6-GR35-WETNESS-STATE で rate_d は定数）に、乾きの速さ rate_d = kD ×（1 ＋ kWind × |風|）× dryFactor（風は G5 の GR46 の `EvaluateWind` を犬の位置で引く〔G7-S1 の決定〕。dryFactor は GR49 の環境状態の値）と、身震いの残り時間 `ShakeRemainingSeconds` の間だけ濡れ度 W を exp(−dt/τ_shake)（既定 τ_shake=0.35 秒）で下げる項を足す。区間ごとの厳密解の式で進め、身震いの終わりをまたぐ大きな dt も分けて解く（寝床のスキップの dt でも安定）。係数（kD・kWind・τ_shake・無風の時定数 60〜180 秒の既定）はデータ。(2) G6 の GR34 の `FurCoatComponent` に `Shake(duration)` を足し、W を PROPERTY にする（保存の対象）。(3) トリガー: GR11 の窓イベント 1 つ（名前 `Shake`。Begin で身震いを始め End で止める。`AnimEventKind::Begin`・`End`、AnimationEvents.h:8-13）を `AnimationEventQueue::OnEvent` で受ける。中断（`bInterrupted`）でも止める。ゲームの処理からの `Shake()` の呼び出しも同じ状態を動かす。(4) 開発ビルドで `COAT_WETNESS` の行（ゲーム時刻・W・身震いの残り）を出し、Game に開発用の引数 `--coat-shake-at=<秒>`（その時刻に `Shake()` を呼ぶ）を足す（起動時の濡れ度は G6 の `--fur-wetness=<0〜1>` を使う。G11-GR36-SHAKE-CHECK が使う）。試験が通る: `CoatWetnessDynamicsTest`（`CameraViewConstantsTest` の束へ MEMBER）で、乾きの指数の減り方が解析値と一致、風が強いと時定数が 1/(1＋kWind×|風|) に縮む、身震いの後の W が始めの 25% 以下（既定の 1.5 秒）、dt の分け方に依らない（1 回の 10 秒と 600 回の 1/60 秒が 1e-5 以内）、大きな dt で平衡値へ安定して収まる、PROPERTY の保存の往復。`FurCoatShakeEventTest`（`EntityTreeTest` の束へ MEMBER）で、`Shake` の窓の Begin・End（と中断）が身震いを 1 回ずつ始め・止め、`Shake()` の呼び出しと同じ結果になること。
@@ -7676,11 +7676,18 @@
 - after: G5-GR90-SCATTER-RUNTIME, G12-GR47-INSTANCE-VARIATION, G5-GR90-SCATTER-BAKE
 - gr: GR47
 - needs-gr: GR90
-- done-when: AssetCook の `ScatterBaker`（G5-GR90-SCATTER-BAKE。`--kind world --format nvsct.v0.inst16`）に、規則で焼く spec のほかに「配置の一覧」の入力（JSON: 種の表（G5 の種の表と同じ欄。メッシュの論理パス・描く経路・影・`ray_tracing`（TLAS に入れるか。既定は入れる）・衝突の形の一覧（幹のカプセルなど。種のローカル））と、個体の列 {種・位置・ヨー・拡大・色味・種（任意）}）を足し、同じ NVSCT の書き手でチャンク（位置で決める）に分けて書く。位置・ヨー・拡大の量子化は NVSCT v0 の規則（G5-GR90）に従い、範囲外の拡大・NaN・未知の種・チャンクの寸法の不正を種別つきで拒否する。`ScatterSystem`（G5-GR90-SCATTER-RUNTIME）が NVSCT の色味を `MegaScatterInstance` の色味（G12-GR47-INSTANCE-VARIATION）へ渡す。`ScatterSystem` に、(1) 空間の照会 `ForEachInstanceInRadius(center, radius, filter, visitor)`（常駐のチャンクだけを走り、チャンクの AABB で先に捨てる。照会の範囲が全部常駐かを返す）、(2) 1 本の非表示 `SetInstanceHidden(ScatterInstanceId{散布・チャンク・チャンク内の番号}, bool)`（チャンクの解放と読み直しをまたいで覚えておき、常駐のたびに当て直す）と、その集合の `Serialize`・`Restore`（倒れた木の状態をセーブへ渡す口。結線は GR76 の側）、(3) 種の `ray_tracing` が偽の席を TLAS の選択（SCN-MEGA-RT-SELECT の席ごとの配列）から外す、を足す。grassland に手で置く森の配置の見本（`Assets/Scatter/grassland.forest.placement.json`。針葉樹・枯れ木・岩の仮のメッシュで 2 万本、一部の種は `ray_tracing` を偽）を足して CookAssets で焼き、grassland が規則の散布と並べて置く（開発ビルドだけの引数 `--grassland-forest=off` で森の配置だけを外せる）。新設の `ScatterSystemQueryTest`（`EntityTreeTest` の束へ MEMBER）が通る: 乱数で置いた 5 万本で `ForEachInstanceInRadius` の結果が常駐の全個体の総当たりと一致し、隠した個体を返さない。隠した個体がチャンクの解放と読み直しの後も隠れていて、`Serialize` → `Restore` で集合が一致する。`ray_tracing` が偽の種の席が TLAS の選択の配列に入らず、真の種と既存の散布は今どおり入る。`CookedScatterTest` に配置の一覧の cook の往復（全部の欄が量子化の誤差の内で一致・チャンクの割り当てが位置どおり・拒否の各ケース）を足して通る。`ScatterSystemResidencyTest`・`ScatterBakeTest` が通る。
-- verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest EntityTreeTest Game -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(ScatterSystemQueryTest|ScatterSystemResidencyTest|CookedScatterTest|ScatterBakeTest|MegaScatterVariationTest|EntityTreeTest)$" --no-tests=error --output-on-failure --timeout 600`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Terrain/Grassland/*"`
-- paths: Tools/AssetCook, Library/Core/Public/Asset/CookedScatterFormat.h, Library/Core/Private/Asset, Library/Core/Public/Scatter, Library/Core/Private/Scatter, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Scatter, Assets/AssetSets/GrasslandTerrain.json, Game/GameModes/Grassland, Test/Core/Asset, Test/Core/Object, Test/Core/Scatter, Docs/Architecture/NVSCTv0.md, TASKS.md, PROGRESS.md
+- done-when: 統合ブランチ(feature/scene-launcher)を取り込んだうえで、次を満たす。
+  AssetCook の `ScatterBaker`(`--kind world --format nvsct.v0.inst16`)は、規則で焼く spec のほかに「配置の一覧」の入力を読み、同じ NVSCT の書き手でチャンク(位置で決める)に分けて書く。入力は JSON で、種の表(G5 の種の表と同じ欄。メッシュの論理パス・描く経路・影・`ray_tracing`(既定は入れる)・衝突の形の一覧(種のローカル)・空の遮蔽物の欄(任意))と、個体の列 {種・位置・ヨー・拡大・色味・種(任意)} を持つ。量子化は NVSCT v0 の規則に従う。範囲外の拡大・NaN・未知の種・チャンクの寸法の不正は種別つきで拒否する。
+  NVSCT v0 の種の記録は統合ブランチの形(96 バイト。84〜96 は空の遮蔽物の欄)を変えず、衝突の形の範囲は種の記録の外(衝突の表の節)に置く。新しい欄を使わない規則の散布のファイルは、統合ブランチの今の出力と同じ並びのままにする。`Docs/Architecture/NVSCTv0.md` を合わせる。
+  `ScatterSystem` は NVSCT の色味・個体差の種を `MegaScatterInstance` へ渡し、次の 3 つを持つ。
+  (1) `ForEachInstanceInRadius(center, radius, filter, visitor)`: 常駐のチャンクだけを走り、チャンクの AABB で先に捨て、範囲が全部常駐かを返す。
+  (2) `SetInstanceHidden(ScatterInstanceId{散布・チャンク・チャンク内の番号}, bool)` と、その集合の `Serialize`・`Restore`: 非表示はチャンクの解放と読み直しをまたいで覚え、常駐のたびに当て直す。隠した個体は描画と空の遮蔽物の配列の両方から外す。
+  (3) `ray_tracing` が偽の種の席を TLAS の選択(SCN-MEGA-RT-SELECT の席ごとの配列)から外す。樹冠の 0x04 の組にも入れない。真の種と既存の散布は今どおり入る。
+  grassland に手で置く森の配置の見本(`Assets/Scatter/grassland.forest.placement.json`。針葉樹・枯れ木・岩の仮のメッシュで 2 万本、一部の種は `ray_tracing` を偽)を資産の一覧 `GrasslandTerrain.json` に載せる。grassland はそれを規則の散布と並べて置き、開発ビルドだけの引数 `--grassland-forest=off` で森の配置だけを外せる。
+  確かめは 2 つ: Debug の AssetCook と Game のビルドが通ること。森の配置を AssetCook で直接焼くと EXIT=0 で `SCATTER_COOKED chunks=… species=3 instances=20000` が出ること(全体のクックの manifest を前提にしない)。試験は作らない・回さない。
+- verify: `cmake --build build --config Debug --target AssetCook Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -Command "& ./build/Tools/AssetCook/Debug/AssetCook.exe --input (Resolve-Path Assets/Scatter/grassland.forest.placement.json).Path --out build/VerifyCook/Grassland/GrasslandForest.nvpkg --manifest build/VerifyCook/Grassland/GrasslandForest.manifest.json --logical Assets/Terrain/Grassland/GrasslandForest.nvsct --kind world --entry Assets/Terrain/Grassland/GrasslandForest.nvsct --entry-type Sct0 --format nvsct.v0.inst16 --variant default"`
+- paths: Tools/AssetCook, Library/Core/Public/Asset/CookedScatterFormat.h, Library/Core/Private/Asset, Library/Core/Public/Scatter, Library/Core/Private/Scatter, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Scatter, Assets/AssetSets/GrasslandTerrain.json, Game/GameModes/Grassland, Game/GameApplicationHandler.h, Game/GameApplicationHandler.cpp, Docs/Architecture/NVSCTv0.md, TASKS.md, PROGRESS.md
 - notes: 設計はロードマップ 2252・2254・2258 行（GR47 の保存形式・少数の目立つ物との使い分け・衝突）、完了条件は 2618〜2619 行。G12A-S9 のとおり、保存の形式は新しい NVINST を作らず NVSCT v0（G5-GR90）に入力の口を足す（要件の「バイナリ形式のシーン保存（GR90）」）。手で置く配置の作り手（エディタ・Blender・生成の台本）は企画で未定なので、入力は JSON の一覧にし、作り手を選ばない。主人公の近くの印象的な木・岩は今どおり Entity（Prefab）で置き、背景をこの経路にする。TLAS に入れる既定は「入れる」にして、今の散布（バナナ・荒野の岩）の見た目を変えない（RT の選択は SCN-MEGA-RT-SELECT が範囲で絞っている。ロードマップ 2248 行の「配置層は既定で false」は、RT の選択が全インスタンスを入れていた頃の前提）。試験を足す理由: 反証する契約は「照会が総当たりと同じ個体を返し、非表示がチャンクの出し入れとセーブをまたいで残り、RT の除外が指定の種だけに効く」こと。破れると倒した木が戻る・AI が見えない木に当たる・RT の影が抜けるとして、まれにしか出ず、撮影・ログでは気づけず黙って起きる。危険地帯（アセットのクック・Object の寿命・Public API）なので評価者を通す。
 
 ## G12-GR47-SCATTER-COLLIDERS: 散布の木の幹・岩に、Entity を作らずにチャンク単位の当たりを付け、出し入れと 1 本の非表示に合わせる
@@ -7694,7 +7701,7 @@
 - notes: 設計はロードマップ 2258 行（GR47 の衝突: 幹のカプセルの記録を GR09 へ渡す）、リスクは 2735 行。衝突の形の自動生成（GR81、G17）は範囲外で、形は種の表に人が書く（生成AIの木の形から幹のカプセルを作る作業は GR81 に任せる）。草は物理を持たない前提（ロードマップ 2072 行）なので、foliage の種の当たりは作らない（種の表で形を書けば付く）。共有のファイル（`Test/Modules/Physics/CMakeLists.txt`）は差分を小さくする。試験を足す理由: 反証する契約は「描いている木に当たりがあり、隠した・離れた木には当たらず、出し入れで数が戻る」こと。破れると見えない木に阻まれる・木を素通りするとして、遊んでいるときだけ出て、撮影・ログでは気づけず黙って起きる。危険地帯（物理・Object の寿命）なので評価者を通す。
 
 ## G12-GR48-IMPOSTOR-BAKE: インポスターのベイクを GPU で実装し、八面体の方向からアルベドと被覆・法線・材質・深度のアトラスを焼いて、オフラインの道具が PNG と寸法の情報を書き出す
-- status: todo
+- status: done
 - gr: GR48
 - done-when: (1) `ImpostorBakeService::BakeProceduralAtlas`（今はテクスチャを作って空のコマンドリストを Begin/End/Submit するだけ。`Library/Core/Private/Rendering/ImpostorBake.cpp:108-160`）が、セルごとに八面体（既定は上半球の hemi-octahedral。設定で全球）の方向から正射影でメッシュを描き、1 つのレンダーパスの MRT で albedo + coverage（RGBA8）・法線（オブジェクト空間を符号化、RGBA8）・ORM（AO・粗さ・金属度）・深度（R8）を各セルのビューポートへ書く（初期値 8 × 8 セル・1 セル 192px。設定で変えられる）。`impostor_bake.vert/.frag` は `gbuffer.frag` と同じ材質の読み方（`Common/PbrMaterialTextureSampling.glsl`）にする。(2) 八面体の軸の規約を「Y-up のオブジェクトの座標へ回してから符号化する」に統一し、`ImpostorMath`（`EncodeOctahedralDirection`。`ImpostorMath.h:21`）と `impostor.frag`（`EncodeOctahedral`。今は極が +Z）とベイクが同じ関数・同じ式を使う。(3) オフラインの道具 `Tools/ImpostorBaker`（新しい CLI。`Tools/CMakeLists.txt` に足す。ヘッドレスの Vulkan）が、cook 済みのメッシュか glTF を読んでベイクし、`CopyTextureToBuffer` で読み戻して PNG 4 枚と `.impostor.json`（寸法・半径・ピボット・セルの数・方式）を書く。PNG は AssetCook のテクスチャの cook（`--usage albedo`・`orm`・`single`。法線は 3 チャンネルなので BC7 linear）で焼く。(4) 試験: `ImpostorOctahedralTest` に Y-up の規約での符号化 → 復号の往復と、ベイクと実行時のセルの選択が同じ方向で同じセルを返すケースを足す。`RHITextureUpdateVulkanTest` の束へ `ImpostorBakeVulkanTest` を MEMBER で足す（UV 球と立方体を焼き、(a) 各セルの中心で coverage が閾値以上、(b) 法線のアトラスを復号した値が解析の値と 3 度以内（球）、(c) 深度が球の形に単調、(d) セルの境に隣のセルの色がにじまない）。既存の `ImpostorBakeServiceTest` の寸法・メタデータの検証が通る。`ImpostorBaker` がビルドできる。
 - verify: `cmake --build build --config Debug --target ImpostorBaker ImpostorBakeServiceTest ImpostorLODSwitchTest RHITextureUpdateVulkanTest -- /m:1`
@@ -7714,12 +7721,11 @@
 - notes: 設計はロードマップ 2277 行（GR48 の 3. GBuffer へ書くインポスター）。今のコードの事実: `impostor.frag` は照明の無い色を出すだけで、前方描画の半透明の合成で描かれ（`ForwardPass.cpp:202-215`）、霧は前方描画より前（ロードマップ 2277 行）なので掛からない。ロードマップの書く `GrassPass` と `GBufferCompatibleTargets` は、今は荒野の株の `FoliagePass`（`SceneView.cpp:1188`）と、G5 が足す `GrassPass`・`GBufferOverlayTargets`（`G5-GR43-GRASS-DRAW` の paths）にあたるので、その補助を待つ（after に挙げた）。GBuffer の契約（GR26。Material.a の意味など）が変わる前に書く口を増やすと二度手間になるので GR26 を needs-gr に入れた。`lighting.frag` は Albedo.a < 0.01 を天球とみなすので Albedo.a は必ず 1（G5-GR43-GRASS-DRAW の notes と同じ）。起動画面の F11 のインポスターの見本（`Rendering3DTestRoutine.cpp:1737` の `m_F11ImpostorComponents`。既定では出ない）は、このパスで描かれるようになる。既定の起動画面は変えない（絶対規則 7）。インポスターは TLAS に入らないので、DDGI・RTGI・RT の影・パストレーサーでは遠景の木が無いものとして扱われる（ロードマップ 2741 行のリスク。パストレーサーの見本では実メッシュで描く）。危険地帯（GBuffer・RenderThread・RHI の使い方）なので評価者を通す。やらないこと: 遷移のディザ（G12-GR48-CROSSFADE）、影の投影と配置の層（G12-GR48-LAYER-SHADOW）。
 
 ## G10-GR63-LOD-BUILDER: スキンメッシュを部位に分けて骨の重みを保ったまま LOD を焼き、NVSKEL v1 の SkinnedMesh に LOD と部位の表を足す
-- status: todo
+- status: done
 - gr: GR63
 - needs-gr: GR82
 - done-when: (1) `Tools/AssetCook/SkinnedLodBuilder.{h,cpp}` を足す。前処理（位置で溶接した位相。UV・法線の継ぎ目の頂点は元のまま、退化・重複の三角形の除去、重みの上位 4 本・合計 1 への正規化、重み合計 0 の頂点の報告）→ 部位の分割（三角形を最大の重みの関節でまとめ、空間的に連結な部位に直し、16〜64 部位・1 部位の影響の関節は 16 以下。数は引数で既定は仮）→ 部位ごとの簡略化（`Tools/AssetCook/CookMeshOptimizer.h` の `CookSimplifyParams` を使い、部位の境界の頂点は `VertexLock` で固定、部位の関節の重み・法線・UV を `Attributes` に渡す。結果は元の頂点番号なので LOD の頂点は LOD0 の頂点の部分集合）→ 部位×LOD ごとの頂点キャッシュの最適化 → 索引は [LOD0 の全部位][LOD1 の全部位]… の順。LOD ごとに三角形数と、オブジェクト空間の最大誤差（位置の誤差とスキンの変位の誤差の大きい方。変位の誤差は要件の式 Σ|Δw_j|×r_j×θref で、θref の既定は 0.5 rad で仮）を記録する。目標の三角形数は 100%/40%/12%/3%（仮。データで変える）。 (2) NVSKEL v1 の SkinnedMesh（role2。`Docs/Architecture/RigSplitV1Wire.md`）に、予約済みの任意の節 `LODS`（LOD ごとの三角形数・誤差）と `PART`（部位ごとのサブメッシュ番号・部位×LOD の索引の範囲・部位×関節のバインド姿勢の AABB）を足す（読み書きは `Library/Core/Private/Asset/RigSplitWire.cpp`）。部位はサブメッシュの中を分ける（描画の単位はサブメッシュ×部位×LOD）。表の無い資産と、LOD を頼まない cook の出力は今とバイト一致。節の書式と検査（範囲・重なり・索引の範囲外・部位×LOD の総数の上限）を `RigSplitV1Wire.md` に書く。(3) LOD は取り込み設定（`<ソース名>.import.json`。`Docs/Architecture/ImportSettings.md`）の `skinnedLod` の節（部位の数の範囲・LOD の目標・θref）で頼む。未知のキーは今の規約どおり拒否する。`--rig-split` の cook（`Tools/AssetCook/RigSplitCook.cpp`）がそれを読み、cook の報告に LOD ごとの三角形数・誤差・重み合計 0 の頂点数・部位数を出す。(4) `SkinnedLodBuilderTest`（`CookedMeshTest` の束へ MEMBER。足す前に `Docs/Testing.md` の 3 点を PROGRESS.md に書く。入力は試験の中でコードで作る小さい管状のスキン）: LOD ごとの三角形数が目標の ±5%、部位の境界の頂点の集合が全 LOD で同じ、LOD の頂点が LOD0 の頂点の部分集合、8 個のランダムな姿勢でスキン後の最大変位が記録した誤差の 1.1 倍以下、同じ入力の 2 回の cook がバイト一致。引数 `--giant-timing` を付けたときだけ、100 万三角形・128 関節の管で LOD の鎖を作り、かかった時間とピークの確保量を `SKINNED_LOD_BUILD_TIMING` の 1 行に出す（ctest の既定の実行では回さない）。`CookedSkinMeshV1Test` にケースを足す: `LODS`・`PART` の往復、壊れた表（範囲外の索引・重なり・部位の数 0）の拒否、表の無い旧い出力が今のローダで今と同じに読める。既存の `RigSplitCookTest`・`CookedSkinMeshV1Test`・`AssetCookMeshSimplifySmoke` が通る。
-- verify: `cmake --build build --config Debug --target CookedMeshTest AssetCook AssetCookMeshSimplifySmoke -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(SkinnedLodBuilderTest|CookedSkinMeshV1Test|CookedSkeletonV1Test|RigSplitCookTest|AssetCookMeshSimplifySmoke)$" --no-tests=error --output-on-failure --timeout 600`
+- verify: `cmake --build build --config Debug --target AssetCook Game -- /m:1`
 - paths: Tools/AssetCook/SkinnedLodBuilder.h, Tools/AssetCook/SkinnedLodBuilder.cpp, Tools/AssetCook/RigSplitCook.cpp, Tools/AssetCook/RigSplitCook.h, Tools/AssetCook/CookMeshOptimizer.h, Tools/AssetCook/CookMeshOptimizer.cpp, Tools/AssetCook/CMakeLists.txt, Library/Core/Private/Asset/RigSplitWire.cpp, Library/Core/Public/Asset, Library/Core/Private/Resource, Test/Core/Asset, Docs/Architecture/RigSplitV1Wire.md, Docs/Architecture/ImportSettings.md, Docs/Testing.md, TASKS.md, PROGRESS.md
 - notes: GR63 の Phase 1 の資産の側（ロードマップ 1942 行、要件 `#### GR63` の設計案 (1-a) とデータ形式）。選定課題 G10-S1（スキン LOD の簡略化の実装）は (B) meshoptimizer と決めた。理由: 推奨は「(B) の spike で品質を見て、足りなければ (A)」で、ThirdParty の追加が作者の判断とされていたが、meshoptimizer は既に `Library/ThirdParty/meshoptimizer`（`upstream/meshoptimizer.h:15` で 1.3）にあり、`Tools/AssetCook/CookMeshOptimizer.h` が頂点の固定・属性つきの簡略化を包んで静的メッシュの LOD の階層（`CookMeshDag`）に使っているので、新しい依存も作者の判断も要らない。品質の判定は (4) のスキン後の変位の試験で行い、満たせないときだけ (A)（`Library/Core/Public/Rendering/MegaGeometry/MeshSimplifier.h` の拡張）へ移ると PROGRESS.md に書く。同じ簡略化器を GR80（G17）と G11 の影専用の粗いメッシュも使える形にする（「段階をまたぐ注意」4391・4469 行）。UNCERTAIN: meshoptimizer 1.3 の属性つきの簡略化の属性の数の上限。部位ごとに簡略化して部位の関節（16 以下）の重みだけを属性に渡すのはこのため。超えるなら重みを大きい数本に絞る。GR80（G17）の修復は待たず、前処理の最小限（溶接・退化の除去・重みの正規化・重み合計 0 の報告）をこの中に持つ（ロードマップ 1967 行）。`LODS`・`PART` は `RigSplitV1Wire.md:83` で予約済みの FourCC で、未知の任意の節は読み飛ばす規約なので旧いローダを壊さない。部位とサブメッシュの関係（サブメッシュの中を部位に分ける）は「段階をまたぐ注意」4411・4448 行。100 万三角形の LOD の生成時間の記録は G10-GR63-GIANT-CHECK（RelWithDebInfo）。危険地帯（アセットの形式・アセットロード）なので評価者を通す。生成 AI の実物はリポジトリに入れない。G10-GR63-SKIN-CULL とは触るファイルが交わらないので並列に走れる。やらないこと: 実行時の LOD の選択と範囲の描画（G10-GR63-LOD-RUNTIME）、部位の境界の利用（G10-GR63-PART-CULL）。
 
@@ -7903,7 +7909,7 @@
 - notes: 完了条件はロードマップ 2620〜2621 行の撮影と計測の部分（G12A-S9 で経路を MegaGeometry の散布にしたので、Entity の経路との GBuffer の比較は、白の色味で既存の散布の撮影が変わらないことの確認に置き換えた）。`grassland-scatter-stress` は G5-GR90-SCATTER-RUNTIME が足す開発ビルドの引数。比較の基準の撮影（`G5-BASE/mega-bananas`）が無ければ、この段階の前のコミットで同じ引数で撮ってから比べる。計測は RelWithDebInfo（AGENTS.md の絶対規則 8）。直す必要が出たら、この項目では直さずに `G12-GR47-FIX-<名前>` を足す。
 
 ## G12-GR92-ASSET-BIND: 資産を持つ全コンポーネントが論理パスを正本に持ち、読み込みの後に非同期で資産を解決して束縛し、シーンから保存・復元できる
-- status: todo
+- status: done
 - after: G12-GR92-ASSETREF-SCENE-V3, G2-GR83-LOOSE-SKELETAL
 - gr: GR92
 - needs-gr: GR82, GR83
@@ -10844,3 +10850,34 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - paths: Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RenderedObjectHistory.h, Library/Core/Public/Rendering/RenderExtension/RenderExtensionData.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, TASKS.md, PROGRESS.md
 - from: G7-GR49-ENV-SYSTEM
+
+## G12-GR48-IMPOSTOR-GBUFFER-P1: GBuffer へ書くインポスターで、アトラスの方式(上半球・全球)と個体の回転を使ってセルを選び、法線をワールドへ戻す
+- status: todo
+- after: G12-GR48-IMPOSTOR-GBUFFER
+- done-when: (1) 計画の文書にある要件なのに、どのタスクにも入っていない作業(上の 3 に当たる)。ロードマップ 2275 行は、ベイクと実行時の両方で「Y-up のオブジェクトの座標へ回してから符号化する」規約にそろえると決めている。ところが今の実行時の `impostor.frag:44-46` は、個体の回転を無いものとして扱い、方式を `IMPOSTOR_LAYOUT_HEMI_OCTAHEDRAL` に決め打ちしていて、コメントにも「全球のアトラスは選べない」とある。G12-GR48-IMPOSTOR-GBUFFER の done-when にもこの点は無い。一方で `Tools/ImpostorBaker/Main.cpp:371` は `FullOctahedral` で焼けて、`ImpostorBakeMetadata::Layout`(`ImpostorBake.h:34`)に方式を残す。また、後に回る G12-GR48-LAYER-SHADOW は、GR47 の配置の層にある回った個体を `ImpostorGBufferPass` で描く。そこで次の (2)〜(5) を満たす。(2) `ImpostorBatch`(またはそのパスの束ごとの定数)が、アトラスの `ImpostorBakeMetadata::Layout` を運ぶ。`impostor_gbuffer.frag` は決め打ちの上半球をやめ、その方式を `EncodeImpostorOctahedral`(`Assets/Shaders/Common/ImpostorOctahedral.glsl`)に渡してセルを選ぶ。全球で焼いたアトラスも、ベイクと同じ関数・同じ式でセルを引く。(3) 視線の向きは、`packet.InstanceData` にある個体の世界行列の回転の逆(拡縮は除いて正規化する)で Y-up のオブジェクトの座標へ回してから符号化する。アトラスから読んだオブジェクトの空間の法線は、同じ回転でワールドへ戻す。深度のアトラスで `gl_FragDepth` を補正するときも、同じオブジェクトの空間の視線を使う。(4) 回っていない上半球の個体では、セルの選び方が変更の前と同じになる。F11 のインポスターの見本と既定の起動画面は変えない(絶対規則 7)。(5) Debug で `Game` のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Assets/Shaders/impostor_gbuffer.vert, Assets/Shaders/impostor_gbuffer.frag, Library/Core/Public/Rendering/ImpostorGBufferPass.h, Library/Core/Private/Rendering/ImpostorGBufferPass.cpp, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Private/Component/ImpostorComponent.cpp, TASKS.md, PROGRESS.md
+- from: G12-GR48-IMPOSTOR-GBUFFER
+
+## SCN-MEGA-RT-SELECT-P1: 絞ったクックで、既存の manifest に無い対象外の項目を、止めずに焼いて足す
+- status: todo
+- done-when: `Scripts/CookAssets.ps1` の `Invoke-CookEntry`（410〜419 行）が `-OnlyLogicalPath` で絞っているとき、対象外の項目が既存のマニフェストに無ければ throw しない。その項目を対象と同じ手順で焼いてマニフェストに足し、`COOK_ASSETS cooked_missing_untargeted=<論理パス>` を出す。既存のマニフェストにある対象外の項目は、今どおり引き継ぐ。manifest.json そのものが無いときの拒否（601 行）は変えない。こうすると、資産の一覧に後から足した項目（例: `Assets/Vegetation/Grassland/GrasslandGrassField.nvgfld`）を前のマニフェストが持っていない枠でも、絞ったクックが EXIT=0 で終わる。
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `git grep -q "cooked_missing_untargeted" -- Scripts/CookAssets.ps1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Assets/Vegetation/Grassland/GrasslandGrassField.nvgfld"`
+- paths: Scripts/CookAssets.ps1, TASKS.md, PROGRESS.md
+- effort: high
+- from: SCN-MEGA-RT-SELECT
+- notes: 判断の理由（1. 実際に起きている不具合）: 枠 NorvesLib-2-u2 の反復 2 で、地形を 14 分焼いたあとに 415 行の throw で EXIT=1 になった。原因は、枠のマニフェストが G5-GR42-GRASS-FIELD-ASSET で足された `GrasslandTerrain.json` の草の場の項目より古いこと。資産の一覧に項目が足されるたびに、全体をクックし直していない枠では絞ったクックがすべて落ちる。`-OnlyLogicalPath` を verify に使う todo のタスク（G12-GR47-PLACEMENT-COOK、G5-GR37-TERRAIN-COMPONENT-P1 など）も同じ落ち方をする。
+
+## G6-GR35-WETNESS-STATE-P1: 毛の濡れの当たり方を、真上の屋根・樹冠の判定と雨宿りの体積の小さい方にする
+- status: todo
+- after: G6-GR35-WETNESS-STATE
+- done-when: `FurCoatComponent` が `ETickGroup::PostPhysics` の Tick で、Entity の世界位置について `ComputeOverheadRainExposure`(`Library/Core/Private/Rendering/OverheadHeightMapMath.h:126`)を求める。これを `RainShelterVolume` が `SetRainExposure` で渡す値と別に持ち、小さい方を `AdvanceCoatWetness` の当たり方として使う。`ComputeOverheadRainExposure` に渡す遮蔽物の集合は、雨の遮蔽マップと同じものにする。具体的には、`RenderWorld::RegisterSkyOccluder` で登録した手置きの遮蔽物と、`ScatterSystem::PublishSkyOccluders` が出す散布のチャンクの遮蔽物のうち、雨を遮るもの。GameThread からこの集合を読む口を `RenderWorld` に足す(RenderThread のデータは読まない)。`RainShelterVolume` の重なりの数え方と `SetRainExposure` の意味は変えない。屋根の無い場所で体積の外にいるときは、当たり方を今と同じ 1 にする。Debug で `Game` のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Component/FurCoatComponent.h, Library/Core/Private/Component/FurCoatComponent.cpp, Library/Core/Public/Rendering/RenderWorld.h, Library/Core/Private/Rendering/RenderWorld.cpp, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
+- from: G6-GR35-WETNESS-STATE
+- notes: 根拠は 3 つ(「元の done-when の取りこぼし」と「計画の要件が一覧に無い」の両方に当たる)。
+  - 1 つ目: G11-GR59-PUDDLES の done-when (5) が「犬の毛の当たり方も遮蔽物の形から屋根を求めて渡す(`RainShelterVolume` と重なるときは小さい方)」を求めている(TASKS.md 7583 行)。しかし `FurCoatComponent` がまだ無かったので繋がれていない(PROGRESS.md 12069 行の既知の限界)。
+  - 2 つ目: G6-GR35-WETNESS-STATE の notes は、樹冠の下の遮蔽を GR59 が入れる前提にしている(ロードマップ 1461 行)。ところが GR59 の残りの項目(RAIN-HIT・FOOT-SPLASH)にも、G11-GR36-WETNESS-DYNAMICS にもこの作業は無い。
+  - 3 つ目: CPU の判定 `ComputeOverheadRainExposure` は実装済みだが、遮蔽物の一覧を GameThread から読む公開の口が無い。今の `RenderingCoordinator` には `GetSkyOccluderCount` しか無く、散布の遮蔽物は拡張データで RenderThread へ出ているだけ。

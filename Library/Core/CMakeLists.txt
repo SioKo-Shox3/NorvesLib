@@ -22,6 +22,7 @@ set(PRIVATE_SOURCES
     Private/Animation/GroundQuery.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
+    Private/Asset/AssetBinding.cpp
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
@@ -260,6 +261,8 @@ set(PRIVATE_SOURCES
     # Rendering
     Private/Rendering/GpuParticle/GpuParticleSpawnPlanner.cpp
     Private/Rendering/GpuParticle/GpuParticleEmitterAllocator.cpp
+    Private/Rendering/GpuParticle/GpuParticleSimulationPass.cpp
+    Private/Rendering/GpuParticle/GpuParticleDrawPass.cpp
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
     Private/Rendering/CanvasView.cpp
@@ -342,10 +345,16 @@ set(PRIVATE_SOURCES
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/HeightFogGpuParams.cpp
     Private/Rendering/Wind.cpp
+    Private/Rendering/RainModel.cpp
     Private/Rendering/EnvironmentParameters.cpp
     Private/Environment/EnvironmentState.cpp
     Private/Environment/EnvironmentSystem.cpp
+    Private/Environment/EnvironmentDataFile.h
+    Private/Environment/EnvironmentDataFile.cpp
+    Private/Environment/SunPath.cpp
+    Private/Environment/WeatherSchedule.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
+    Private/Rendering/PuddleSurfaceParams.h
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
     Private/Rendering/OverheadHeightMapPass.cpp
@@ -357,7 +366,14 @@ set(PRIVATE_SOURCES
     Private/Rendering/PathTracingExrOutput.cpp
     Private/Rendering/DDGIProbePass.cpp
     Private/Rendering/VolumetricsPass.cpp
+    Private/Rendering/RainCurtainPass.cpp
     Private/Rendering/SkyAtmospherePass.cpp
+    Private/Rendering/IblGeneration.h
+    Private/Rendering/IblGeneration.cpp
+    Private/Rendering/SkyAtmosphereSourceCache.h
+    Private/Rendering/SkyAtmosphereSourceCache.cpp
+    Private/Rendering/SkyKeyframeWindow.h
+    Private/Rendering/SkyKeyframeWindow.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
@@ -497,6 +513,7 @@ set(PRIVATE_SOURCES
     Private/Component/TerrainComponent.cpp
     Private/Component/GrassFieldComponent.cpp
     Private/Component/WitherSourceComponent.cpp
+    Private/Component/ParticleEmitterComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -579,6 +596,7 @@ set(PUBLIC_HEADERS
     Public/Save/SaveService.h
     Public/Save/SaveSlotStore.h
     Public/Save/SettingsStore.h
+    Public/Asset/AssetBinding.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
@@ -742,6 +760,10 @@ set(PUBLIC_HEADERS
     Public/Rendering/RenderTypes.h
     Public/Rendering/GpuResourceTypes.h
     Public/Rendering/GpuParticle/GpuParticleTypes.h
+    Public/Rendering/GpuParticle/GpuParticleFrame.h
+    Public/Rendering/GpuParticle/GpuParticleSimulationPass.h
+    Public/Rendering/GpuParticle/GpuParticleDrawPass.h
+    Public/Rendering/GpuParticle/GpuParticleDraw.h
     Public/Rendering/TextureAssetTypes.h
     Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h
@@ -759,14 +781,18 @@ set(PUBLIC_HEADERS
     Public/Rendering/VolumetricFog.h
     Public/Rendering/HeightFogGpuParams.h
     Public/Rendering/Wind.h
+    Public/Rendering/RainModel.h
     Public/Rendering/EnvironmentParameters.h
     Public/Environment/EnvironmentState.h
     Public/Environment/EnvironmentSystem.h
+    Public/Environment/SunPath.h
+    Public/Environment/WeatherSchedule.h
     Public/Rendering/EnvironmentGpuParams.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h
     Public/Rendering/OverheadHeightMapPass.h
     Public/Rendering/VolumetricsPass.h
+    Public/Rendering/RainCurtainPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h
     Public/Rendering/FrameCaptureHdrWriter.h
@@ -935,6 +961,7 @@ set(PUBLIC_HEADERS
     Public/Component/MegaGeometryComponent.h
     Public/Component/GrassFieldComponent.h
     Public/Component/WitherSourceComponent.h
+    Public/Component/ParticleEmitterComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h

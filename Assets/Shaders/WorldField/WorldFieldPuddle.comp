@@ -1,0 +1,79 @@
+﻿// 手置きの楕円と地形の地図から世界空間の水たまりの凹み度を焼く。
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#define WORLD_FIELD_PUDDLE_MAX_SOURCES 64
+
+layout(set = 0, binding = 0, r8) uniform writeonly image2D uPuddleNear;
+
+struct WorldFieldPuddleSourceGpu
+{
+    vec4 CenterRadii;
+    vec4 RotationFalloffLevel;
+    vec4 Reserved0;
+    vec4 Reserved1;
+};
+
+// 原点は 0、テクセル幅は 8、件数は 12、地形の地図は 16、源の配列は 48 バイト目。
+layout(std140, set = 0, binding = 1) uniform WorldFieldPuddleParams
+{
+    vec2 OriginXZ;
+    float TexelSize;
+    uint SourceCount;
+    vec4 TerrainMap;
+    uint TerrainEnabled;
+    float TerrainMaxX;
+    float TerrainMaxZ;
+    uint TerrainPadding;
+    WorldFieldPuddleSourceGpu Sources[WORLD_FIELD_PUDDLE_MAX_SOURCES];
+} uParams;
+
+layout(set = 0, binding = 2) uniform sampler2DArray uTerrainSplat;
+
+void main()
+{
+    uvec2 globalPixel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(globalPixel, uvec2(imageSize(uPuddleNear)))))
+    {
+        return;
+    }
+
+    ivec2 pixel = ivec2(globalPixel);
+    vec2 local = (vec2(pixel) + vec2(0.5)) * uParams.TexelSize;
+    float result = 0.0;
+    if (uParams.TerrainEnabled != 0u && textureSize(uTerrainSplat, 0).z >= 3)
+    {
+        vec2 worldXZ = uParams.OriginXZ + local;
+        if (all(greaterThanEqual(worldXZ, uParams.TerrainMap.xy)) &&
+            all(lessThanEqual(worldXZ, vec2(uParams.TerrainMaxX, uParams.TerrainMaxZ))))
+        {
+            vec2 uv = (worldXZ - uParams.TerrainMap.xy) * uParams.TerrainMap.zw;
+            result = textureLod(uTerrainSplat, vec3(uv, 2.0), 0.0).r;
+        }
+    }
+    uint sourceCount = min(uParams.SourceCount, uint(WORLD_FIELD_PUDDLE_MAX_SOURCES));
+    for (uint index = 0u; index < sourceCount; ++index)
+    {
+        WorldFieldPuddleSourceGpu source = uParams.Sources[index];
+        vec2 rel = (uParams.OriginXZ - source.CenterRadii.xy) + local;
+        float cosine = source.RotationFalloffLevel.x;
+        float sine = source.RotationFalloffLevel.y;
+        float d = length(vec2(dot(rel, vec2(cosine, sine)) / source.CenterRadii.z,
+                              dot(rel, vec2(-sine, cosine)) / source.CenterRadii.w));
+        float falloff = source.RotationFalloffLevel.z;
+        float shape;
+        // 幅が極小で 1.0 - falloff が 1.0 に丸められる場合も、段差として扱う。
+        if (falloff == 0.0 || 1.0 - falloff == 1.0)
+        {
+            shape = d < 1.0 ? 1.0 : 0.0;
+        }
+        else
+        {
+            shape = 1.0 - smoothstep(1.0 - falloff, 1.0, d);
+        }
+        result = max(result, source.RotationFalloffLevel.w * shape);
+    }
+
+    imageStore(uPuddleNear, pixel, vec4(clamp(result, 0.0, 1.0), 0.0, 0.0, 0.0));
+}

@@ -1,9 +1,13 @@
 ﻿#include "Component/MeshComponent.h"
+#include "Engine/Engine.h"
+#include "Rendering/ProceduralMeshGenerator.h"
+#include "Thread/Atomic.h"
 #include "Math/MatrixUtils.h"
 #include "Object/Entity.h"
 #include "Rendering/RenderResources.h"
 #include "Logging/LogMacros.h"
 #include <cmath>
+#include <limits>
 
 namespace NorvesLib::Core::Component
 {
@@ -11,6 +15,77 @@ namespace NorvesLib::Core::Component
 
     namespace
     {
+        constexpr uint64_t kProceduralMeshHandleBase = 0x5052'4F43'0000'0000ull;
+        constexpr uint64_t kProceduralMeshHandleEnd = 0x5052'4F43'FFFF'FFFFull;
+        Thread::Atomic<uint64_t> g_NextProceduralMeshHandle(kProceduralMeshHandleBase + 1);
+
+        bool IsSpecWhitespace(TCHAR character)
+        {
+            return character == static_cast<TCHAR>(' ') || character == static_cast<TCHAR>('\t') ||
+                   character == static_cast<TCHAR>('\r') || character == static_cast<TCHAR>('\n') ||
+                   character == static_cast<TCHAR>('\v') || character == static_cast<TCHAR>('\f');
+        }
+
+        template <typename T>
+        bool AppendSpecNumber(Container::String& text, const T& value)
+        {
+            Container::String number;
+            if (!Detail::SerializeValue<T>(&value, number))
+            {
+                return false;
+            }
+            if (!text.empty())
+            {
+                text += static_cast<TCHAR>(' ');
+            }
+            text += number;
+            return true;
+        }
+
+        bool IsValidProceduralSpec(const ProceduralMeshSpec& spec)
+        {
+            if (spec.Kind != ProceduralMeshKind::None && spec.Kind != ProceduralMeshKind::UVSphere &&
+                spec.Kind != ProceduralMeshKind::Plane)
+            {
+                return false;
+            }
+            if (spec.Segments[0] == 0 || spec.Segments[1] == 0)
+            {
+                return false;
+            }
+            if (spec.Kind == ProceduralMeshKind::None)
+            {
+                return true;
+            }
+            if (!std::isfinite(spec.Size.x) || spec.Size.x <= 0.0f)
+            {
+                return false;
+            }
+            return spec.Kind != ProceduralMeshKind::Plane ||
+                   (std::isfinite(spec.Size.z) && spec.Size.z > 0.0f);
+        }
+
+        bool CanGenerateProceduralSpec(const ProceduralMeshSpec& spec)
+        {
+            if (!IsValidProceduralSpec(spec) || spec.Kind == ProceduralMeshKind::None ||
+                spec.Segments[0] == (std::numeric_limits<uint32_t>::max)() ||
+                spec.Segments[1] == (std::numeric_limits<uint32_t>::max)())
+            {
+                return false;
+            }
+            const uint64_t first = spec.Segments[0];
+            const uint64_t second = spec.Segments[1];
+            if (spec.Kind == ProceduralMeshKind::UVSphere && second < 2)
+            {
+                return false;
+            }
+            const uint64_t rows = spec.Kind == ProceduralMeshKind::UVSphere ? second - 1 : second + 1;
+            const uint64_t vertices = rows * (first + 1) + (spec.Kind == ProceduralMeshKind::UVSphere ? 2 : 0);
+            const uint64_t cells = first * (spec.Kind == ProceduralMeshKind::UVSphere ? second - 1 : second);
+            return vertices <= (std::numeric_limits<uint32_t>::max)() / sizeof(Rendering::Mesh3DVertex) &&
+                   cells <= (std::numeric_limits<uint32_t>::max)() / 6;
+        }
+
         Rendering::BlendMode ResolveMaterialBlendMode(
             Rendering::MaterialHandle handle,
             const Rendering::MaterialResources *materials)
@@ -56,12 +131,85 @@ namespace NorvesLib::Core::Component
         }
     } // namespace
 
+    bool ProceduralMeshSpec::SerializeToString(Container::String& outValue) const
+    {
+        Container::String result;
+        const uint32_t kind = static_cast<uint32_t>(Kind);
+        if (!AppendSpecNumber(result, kind) || !AppendSpecNumber(result, Size.x) ||
+            !AppendSpecNumber(result, Size.y) || !AppendSpecNumber(result, Size.z) ||
+            !AppendSpecNumber(result, Segments[0]) || !AppendSpecNumber(result, Segments[1]))
+        {
+            return false;
+        }
+        outValue = result;
+        return true;
+    }
+
+    bool ProceduralMeshSpec::DeserializeFromString(const Container::String& inValue)
+    {
+        Container::String tokens[6];
+        size_t position = 0;
+        for (Container::String& token : tokens)
+        {
+            while (position < inValue.size() && IsSpecWhitespace(inValue[position]))
+            {
+                ++position;
+            }
+            const size_t start = position;
+            while (position < inValue.size() && !IsSpecWhitespace(inValue[position]))
+            {
+                ++position;
+            }
+            if (start == position)
+            {
+                return false;
+            }
+            token = inValue.substr(start, position - start);
+        }
+        while (position < inValue.size() && IsSpecWhitespace(inValue[position]))
+        {
+            ++position;
+        }
+        if (position != inValue.size() || tokens[0][0] == static_cast<TCHAR>('-') ||
+            tokens[4][0] == static_cast<TCHAR>('-') || tokens[5][0] == static_cast<TCHAR>('-'))
+        {
+            return false;
+        }
+
+        ProceduralMeshSpec parsed;
+        uint32_t kind = 0;
+        if (!Detail::DeserializeValue<uint32_t>(tokens[0], &kind) ||
+            kind > static_cast<uint32_t>(ProceduralMeshKind::Plane) ||
+            !Detail::DeserializeValue<float>(tokens[1], &parsed.Size.x) ||
+            !Detail::DeserializeValue<float>(tokens[2], &parsed.Size.y) ||
+            !Detail::DeserializeValue<float>(tokens[3], &parsed.Size.z) ||
+            !Detail::DeserializeValue<uint32_t>(tokens[4], &parsed.Segments[0]) ||
+            !Detail::DeserializeValue<uint32_t>(tokens[5], &parsed.Segments[1]))
+        {
+            return false;
+        }
+        parsed.Kind = static_cast<ProceduralMeshKind>(kind);
+        if (!IsValidProceduralSpec(parsed))
+        {
+            return false;
+        }
+        *this = parsed;
+        return true;
+    }
+
+    bool ProceduralMeshSpec::operator==(const ProceduralMeshSpec& other) const
+    {
+        return Kind == other.Kind && Size == other.Size &&
+               Segments[0] == other.Segments[0] && Segments[1] == other.Segments[1];
+    }
+
     MeshComponent::MeshComponent()
         : Component()
     {
         // PROPERTYマクロは値初期化するため、非ゼロデフォルト値を設定
         getbVisible().Set(true);
         getbCastShadow().Set(true);
+        bSkyMapProxy = false;
         getbReceiveShadow().Set(true);
         getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         ForcedLODLevel = -1;
@@ -72,6 +220,7 @@ namespace NorvesLib::Core::Component
     {
         getbVisible().Set(true);
         getbCastShadow().Set(true);
+        bSkyMapProxy = false;
         getbReceiveShadow().Set(true);
         getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         ForcedLODLevel = -1;
@@ -82,6 +231,7 @@ namespace NorvesLib::Core::Component
     {
         getbVisible().Set(true);
         getbCastShadow().Set(true);
+        bSkyMapProxy = false;
         getbReceiveShadow().Set(true);
         getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         ForcedLODLevel = -1;
@@ -105,6 +255,7 @@ namespace NorvesLib::Core::Component
 
     void MeshComponent::Finalize()
     {
+        ReleaseProceduralMesh();
         m_Materials.clear();
         Component::Finalize();
     }
@@ -112,6 +263,12 @@ namespace NorvesLib::Core::Component
     void MeshComponent::BeginPlay()
     {
         Component::BeginPlay();
+        const ProceduralMeshSpec& spec = ProceduralMesh.Get();
+        if ((m_bOwnsProceduralMesh && !(spec == m_AppliedProceduralMeshSpec)) ||
+            (spec.Kind != ProceduralMeshKind::None && !LoadMeshHandle().IsValid()))
+        {
+            RefreshProceduralMesh();
+        }
     }
 
     void MeshComponent::EndPlay()
@@ -125,8 +282,159 @@ namespace NorvesLib::Core::Component
 
     void MeshComponent::SetMeshHandle(Rendering::MeshDataHandle handle)
     {
-        getMeshHandle().Set(handle);
+        const Rendering::MeshDataHandle oldHandle = LoadMeshHandle();
+        const bool bReleaseOld = m_bOwnsProceduralMesh && oldHandle != handle;
+        StoreMeshHandle(handle);
         MarkRenderStateDirty();
+        if (bReleaseOld)
+        {
+            m_bOwnsProceduralMesh = false;
+            if (Engine::GEngine)
+            {
+                Engine::GEngine->GetRenderResources().Meshes().Unregister(oldHandle);
+            }
+        }
+        ProceduralMesh = ProceduralMeshSpec{};
+        if (m_bOwnsProceduralMesh)
+        {
+            // 同じハンドルを渡された場合は使用中の形を壊さず、所有権だけ維持する。
+            m_AppliedProceduralMeshSpec = ProceduralMesh.Get();
+        }
+    }
+
+    void MeshComponent::SetProceduralMeshSpec(const ProceduralMeshSpec& spec)
+    {
+        ProceduralMesh = spec;
+        if (bBegunPlay)
+        {
+            RefreshProceduralMesh();
+        }
+    }
+
+    void MeshComponent::OnPropertyApplied(const ClassProperty& property)
+    {
+        Component::OnPropertyApplied(property);
+        if (&property == s_PropertyPtr_ProceduralMesh && bBegunPlay)
+        {
+            RefreshProceduralMesh();
+        }
+    }
+
+    Rendering::MeshDataHandle MeshComponent::LoadMeshHandle() const
+    {
+        Rendering::MeshDataHandle handle = m_MeshHandleFallback;
+        (void)Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsMeshRender>().Type,
+                                     static_cast<uint32_t>(offsetof(Ecs::EcsMeshRender, MeshHandle)),
+                                     static_cast<uint32_t>(sizeof(handle)), &handle);
+        return handle;
+    }
+
+    void MeshComponent::StoreMeshHandle(Rendering::MeshDataHandle handle)
+    {
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsMeshRender>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            Ecs::EcsWriteColumnPart(row, type, static_cast<uint32_t>(offsetof(Ecs::EcsMeshRender, MeshHandle)),
+                                    static_cast<uint32_t>(sizeof(handle)), &handle);
+            return;
+        }
+        m_MeshHandleFallback = handle;
+    }
+
+    void MeshComponent::OnEcsRowAttached()
+    {
+        Component::OnEcsRowAttached();
+        StoreMeshHandle(m_MeshHandleFallback);
+    }
+
+    void MeshComponent::OnEcsRowDetaching()
+    {
+        Component::OnEcsRowDetaching();
+        m_MeshHandleFallback = LoadMeshHandle();
+    }
+
+    void MeshComponent::ReleaseProceduralMesh()
+    {
+        if (!m_bOwnsProceduralMesh)
+        {
+            return;
+        }
+        const Rendering::MeshDataHandle oldHandle = LoadMeshHandle();
+        StoreMeshHandle(Rendering::MeshDataHandle::Invalid());
+        MarkRenderStateDirty();
+        m_bOwnsProceduralMesh = false;
+        if (Engine::GEngine)
+        {
+            Engine::GEngine->GetRenderResources().Meshes().Unregister(oldHandle);
+        }
+    }
+
+    void MeshComponent::RefreshProceduralMesh()
+    {
+        const ProceduralMeshSpec& spec = ProceduralMesh.Get();
+        if (spec.Kind == ProceduralMeshKind::None)
+        {
+            ReleaseProceduralMesh();
+            return;
+        }
+        if (m_bOwnsProceduralMesh && spec == m_AppliedProceduralMeshSpec)
+        {
+            return;
+        }
+        if (!CanGenerateProceduralSpec(spec))
+        {
+            NORVES_LOG_WARNING("MeshComponent", "手続きメッシュの指定が不正なため生成できません");
+            return;
+        }
+        if (!Engine::GEngine)
+        {
+            NORVES_LOG_WARNING("MeshComponent", "エンジンがないため手続きメッシュを登録できません");
+            return;
+        }
+
+        Container::VariableArray<Rendering::Mesh3DVertex> vertices;
+        Container::VariableArray<uint32_t> indices;
+        if (spec.Kind == ProceduralMeshKind::UVSphere)
+        {
+            Rendering::ProceduralMeshGenerator::GenerateUVSphere(spec.Size.x, spec.Segments[0], spec.Segments[1],
+                                                                  vertices, indices);
+        }
+        else
+        {
+            Rendering::ProceduralMeshGenerator::GeneratePlane(spec.Size.x, spec.Size.z, spec.Segments[0],
+                                                               spec.Segments[1], vertices, indices);
+        }
+
+        Rendering::MeshResources& meshes = Engine::GEngine->GetRenderResources().Meshes();
+        Rendering::MeshDataHandle newHandle;
+        do
+        {
+            newHandle.Id = g_NextProceduralMeshHandle.FetchAdd(1);
+            if (newHandle.Id <= kProceduralMeshHandleBase || newHandle.Id > kProceduralMeshHandleEnd)
+            {
+                NORVES_LOG_WARNING("MeshComponent", "手続きメッシュ用の番号が不足しています");
+                return;
+            }
+        } while (meshes.GetGPUData(newHandle) != nullptr);
+
+        if (!meshes.Register(newHandle, vertices.data(), vertices.size() * sizeof(Rendering::Mesh3DVertex),
+                             indices.data(), static_cast<uint32_t>(indices.size())))
+        {
+            NORVES_LOG_WARNING("MeshComponent", "手続きメッシュを登録できませんでした");
+            return;
+        }
+
+        const Rendering::MeshDataHandle oldHandle = LoadMeshHandle();
+        const bool bReleaseOld = m_bOwnsProceduralMesh;
+        StoreMeshHandle(newHandle);
+        m_bOwnsProceduralMesh = true;
+        m_AppliedProceduralMeshSpec = spec;
+        MarkRenderStateDirty();
+        if (bReleaseOld)
+        {
+            meshes.Unregister(oldHandle);
+        }
     }
 
     // ========================================
@@ -193,7 +501,14 @@ namespace NorvesLib::Core::Component
 
         if (group.Levels[0].MeshHandle.IsValid())
         {
-            getMeshHandle().Set(group.Levels[0].MeshHandle);
+            if (m_bOwnsProceduralMesh && group.Levels[0].MeshHandle != LoadMeshHandle())
+            {
+                SetMeshHandle(group.Levels[0].MeshHandle);
+            }
+            else
+            {
+                StoreMeshHandle(group.Levels[0].MeshHandle);
+            }
         }
         if (levelCount == 1)
         {
@@ -307,7 +622,7 @@ namespace NorvesLib::Core::Component
 
     void MeshComponent::CollectRenderResourceRefs(Container::VariableArray<Rendering::RenderResourceRef>& out) const
     {
-        const Rendering::MeshDataHandle meshHandle = getMeshHandle().Get();
+        const Rendering::MeshDataHandle meshHandle = LoadMeshHandle();
         if (meshHandle.IsValid())
         {
             out.push_back(Rendering::RenderResourceRef{Rendering::RenderResourceKind::Mesh, meshHandle.Id});
@@ -334,7 +649,7 @@ namespace NorvesLib::Core::Component
                                        const Rendering::MeshResources* meshes) const
     {
         // メッシュが無効なら生成しない
-        const Rendering::MeshDataHandle meshHandle = getMeshHandle().Get();
+        const Rendering::MeshDataHandle meshHandle = LoadMeshHandle();
         if (!meshHandle.IsValid())
         {
             return false;
@@ -418,6 +733,7 @@ namespace NorvesLib::Core::Component
         // 描画フラグ
         outProxy.bVisible = getbVisible().Get();
         outProxy.bCastShadow = getbCastShadow().Get();
+        outProxy.bSkyMapProxy = bSkyMapProxy.Get();
         outProxy.bReceiveShadow = getbReceiveShadow().Get();
         outProxy.LayerMask = getRenderLayerProp().Get();
 

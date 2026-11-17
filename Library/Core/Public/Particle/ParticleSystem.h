@@ -67,6 +67,8 @@ namespace NorvesLib::Core::Particle
         const HitEffectEmitter& GetHitEffects() const;
         void Clear();
         void Tick(float deltaTime);
+        void Tick(float deltaTime, float gpuUnscaledDeltaTime);
+        void BuildGpuParticleFrame(Rendering::GpuParticleScene& out);
         void AppendBoardProxies(VariableArray<Rendering::BoardProxy>& outProxies) const;
 
     private:

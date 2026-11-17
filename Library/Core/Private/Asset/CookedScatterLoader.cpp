@@ -425,12 +425,20 @@ namespace NorvesLib::Core::Asset
         const uint64_t variationSeedSize = Read64(data, HeaderOffset::VariationSeedSize);
         const uint64_t rangeCount = static_cast<uint64_t>(chunkCount) * speciesCount;
         const uint64_t collisionOffset = rangeOffset + rangeSize;
+        // 衝突の表の節は、空か、種ごとの範囲の後に形の記録が 1 つ以上続く。
+        const uint64_t collisionRangeSize = static_cast<uint64_t>(speciesCount) * CollisionSpeciesRangeRecordSize;
+        const bool bCollisionTableValid =
+            collisionTableSize == 0 ||
+            (collisionTableSize > collisionRangeSize && (collisionTableSize - collisionRangeSize) % CollisionRecordSize == 0);
+        const uint64_t collisionShapeOffset = collisionOffset + (collisionTableSize == 0 ? 0 : collisionRangeSize);
+        const uint64_t collisionShapeCount =
+            collisionTableSize == 0 ? 0 : (collisionTableSize - collisionRangeSize) / CollisionRecordSize;
         const uint64_t variationSeedOffset = instanceOffset + instanceSize;
         if (speciesOffset != HeaderSize || speciesSize != static_cast<uint64_t>(speciesCount) * SpeciesRecordSize ||
             !Within(speciesOffset, speciesSize, fileSize) || chunkOffset != speciesOffset + speciesSize ||
             chunkTableSize != static_cast<uint64_t>(chunkCount) * ChunkRecordSize || !Within(chunkOffset, chunkTableSize, fileSize) ||
             rangeOffset != chunkOffset + chunkTableSize || rangeSize != rangeCount * RangeRecordSize ||
-            !Within(rangeOffset, rangeSize, fileSize) || collisionTableSize % CollisionRecordSize != 0 ||
+            !Within(rangeOffset, rangeSize, fileSize) || !bCollisionTableValid ||
             !Within(collisionOffset, collisionTableSize, fileSize) || stringOffset != collisionOffset + collisionTableSize ||
             !Within(stringOffset, stringSize, fileSize) || stringSize > UINT32_MAX ||
             stringOffset + stringSize > UINT64_MAX - (InstanceAlignment - 1) ||
@@ -498,12 +506,41 @@ namespace NorvesLib::Core::Asset
             species.WindStiffness = ReadFloat(data, record + SpeciesRecordOffset::WindStiffness);
             species.WindPhaseSeed = Read32(data, record + SpeciesRecordOffset::WindPhaseSeed);
             species.Flags = Read32(data, record + SpeciesRecordOffset::Flags);
-            species.CollisionFirst = Read32(data, record + SpeciesRecordOffset::CollisionFirst);
-            species.CollisionCount = Read32(data, record + SpeciesRecordOffset::CollisionCount);
-            if ((species.Flags & ~ScatterSpeciesKnownFlags) != 0 ||
-                Read32(data, record + SpeciesRecordOffset::Reserved1) != 0)
+            if (collisionTableSize != 0)
+            {
+                const size_t rangeRecord =
+                    static_cast<size_t>(collisionOffset + static_cast<uint64_t>(i) * CollisionSpeciesRangeRecordSize);
+                species.CollisionFirst = Read32(data, rangeRecord + CollisionSpeciesRangeOffset::First);
+                species.CollisionCount = Read32(data, rangeRecord + CollisionSpeciesRangeOffset::Count);
+            }
+            const uint32_t occluderBits = Read32(data, record + SpeciesRecordOffset::SkyOccluderBits);
+            const uint32_t occluderShape = occluderBits & 3u;
+            if ((species.Flags & ~ScatterSpeciesKnownFlags) != 0 || (occluderBits & ~0x00ffff07u) != 0 ||
+                (occluderShape == 0 &&
+                 (occluderBits != 0 || Read64(data, record + SpeciesRecordOffset::SkyOccluderRadiusMeters) != 0)))
             {
                 return Fail(Status::ReservedNonZero);
+            }
+            if (occluderShape > 2)
+            {
+                return Fail(Status::InvalidSkyOccluder);
+            }
+            if (occluderShape != 0)
+            {
+                const uint32_t base = (occluderBits >> 8) & 0xffu;
+                species.SkyOccluderRadiusMeters = ReadFloat(data, record + SpeciesRecordOffset::SkyOccluderRadiusMeters);
+                species.SkyOccluderHeightMeters = ReadFloat(data, record + SpeciesRecordOffset::SkyOccluderHeightMeters);
+                if (base > 242 || !std::isfinite(species.SkyOccluderRadiusMeters) ||
+                    species.SkyOccluderRadiusMeters <= 0.0f || species.SkyOccluderRadiusMeters > 256.0f ||
+                    !std::isfinite(species.SkyOccluderHeightMeters) ||
+                    species.SkyOccluderHeightMeters <= 0.0f || species.SkyOccluderHeightMeters > 256.0f)
+                {
+                    return Fail(Status::InvalidSkyOccluder);
+                }
+                species.SkyOccluderShape = occluderShape;
+                species.bSkyOccluderCanopy = (occluderBits & 4u) != 0;
+                species.SkyOccluderBaseRatio = static_cast<float>(base) / 255.0f;
+                species.SkyOccluderKappa = static_cast<float>((occluderBits >> 16) & 0xffu) / 255.0f;
             }
             if (!std::isfinite(species.MeshRadiusMeters) || species.MeshRadiusMeters < 0.0f ||
                 !std::isfinite(species.MinSpacingMeters) || species.MinSpacingMeters <= 0.0f ||
@@ -517,7 +554,7 @@ namespace NorvesLib::Core::Asset
             }
             if (species.CollisionCount > MaxCollisionShapesPerSpecies ||
                 (species.CollisionCount == 0 && species.CollisionFirst != 0) ||
-                !Within(species.CollisionFirst, species.CollisionCount, collisionTableSize / CollisionRecordSize))
+                !Within(species.CollisionFirst, species.CollisionCount, collisionShapeCount))
             {
                 return Fail(Status::CollisionOutOfRange);
             }
@@ -577,10 +614,10 @@ namespace NorvesLib::Core::Asset
                 return Fail(Status::InstanceRangeOutOfRange);
             }
         }
-        scatter.CollisionShapes.resize(static_cast<size_t>(collisionTableSize / CollisionRecordSize));
+        scatter.CollisionShapes.resize(static_cast<size_t>(collisionShapeCount));
         for (size_t i = 0; i < scatter.CollisionShapes.size(); ++i)
         {
-            const size_t record = static_cast<size_t>(collisionOffset + i * CollisionRecordSize);
+            const size_t record = static_cast<size_t>(collisionShapeOffset + i * CollisionRecordSize);
             if (Read32(data, record + CollisionRecordOffset::Reserved0) != 0 ||
                 Read32(data, record + CollisionRecordOffset::Reserved1) != 0 ||
                 Read64(data, record + CollisionRecordOffset::Reserved2) != 0)
@@ -630,6 +667,7 @@ namespace NorvesLib::Core::Asset
         case CookedScatterParseStatus::ChunkOutOfRange: return "ChunkOutOfRange";
         case CookedScatterParseStatus::InvalidChunkBounds: return "InvalidChunkBounds";
         case CookedScatterParseStatus::InstanceRangeOutOfRange: return "InstanceRangeOutOfRange";
+        case CookedScatterParseStatus::InvalidSkyOccluder: return "InvalidSkyOccluder";
         case CookedScatterParseStatus::CollisionOutOfRange: return "CollisionOutOfRange";
         }
         return "Unknown";

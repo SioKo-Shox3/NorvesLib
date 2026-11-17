@@ -82,6 +82,11 @@
 
 // VisibilityResolvePass.cpp の EnvironmentBindingIndex と同じ、全変種で空いている束縛。
 NORVES_DECLARE_ENVIRONMENT_UBO(0, 37)
+// VisibilityResolvePass.cpp の PuddleSurfaceBindingIndex・OverheadHeightMapBindingIndex・PuddleFieldBindingIndex と対応。
+// 通常・タイル・dump の全変種で同じ束縛を使う。
+NORVES_DECLARE_PUDDLE_SURFACE_UBO(0, 39)
+layout(set = 0, binding = 40) uniform sampler2D overheadHeightMapTexture;
+layout(set = 0, binding = 41) uniform sampler2D puddleFieldTexture;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -1015,16 +1020,32 @@ void main()
         shadingModelId = materialEntry.header.y & GBUFFER_SHADING_MODEL_ID_MASK;
         shadingParams = ResolveShadingParams(VisShadingParamsForRecord(record), materialEntry.shadingParams);
     }
+    float puddleCoverage = 0.0;
     if (!bDebugView)
     {
         const float rawInstanceP0 = bHasMaterial ? VisShadingParamsForRecord(record).x : -1.0;
         const float rawMaterialP0 = bHasMaterial ? materialEntry.shadingParams.x : -1.0;
         // 材質は x が金属度、y が粗さ。値をそのまま渡し、濡れ 0 では既存の値と法線を保つ。
         // 幾何法線はラスタの経路と同じ補間の頂点の法線（両面は反転済み）。
-        ApplyWetSurfaceFromEnvironment(surface.albedo.rgb, surface.material.y, surface.material.x, surface.normal,
-                                       resolved.normal, u_Environment.params,
-                                       ResolveWetSurfaceResponse(rawInstanceP0, rawMaterialP0,
-                                                                 shadingModelId == GBUFFER_SHADING_MODEL_DEFAULT_LIT));
+        const vec3 worldPos = resolved.hitPosition + params.cameraPosition.xyz;
+        const float rainExposure = PuddleRainExposure(overheadHeightMapTexture, u_PuddleSurface.params, worldPos);
+        float puddleCavity;
+#ifdef NORVES_VISRESOLVE_TILES
+        const TerrainSplatParams splat = MakeTerrainSplatParams(tileParams.terrainSplat);
+        if ((tileParams.tile.z & VIS_TILE_FLAG_TERRAIN_SPLAT) != 0u && IsTerrainSplatEnabled(splat))
+        {
+            puddleCavity = TerrainSplatPuddlePotential(terrainSplatMapTexture, splat, worldPos.xz);
+        }
+        else
+#endif
+        {
+            puddleCavity = SamplePuddleFieldLayer(puddleFieldTexture, u_PuddleSurface.params.puddleField, worldPos.xz);
+        }
+        puddleCoverage = ApplyWetSurfaceWithPuddle(surface.albedo.rgb, surface.material.y, surface.material.x, surface.normal,
+                                                  resolved.normal, u_Environment.params,
+                                                  ResolveWetSurfaceResponse(rawInstanceP0, rawMaterialP0,
+                                                                            shadingModelId == GBUFFER_SHADING_MODEL_DEFAULT_LIT),
+                                                  rainExposure, puddleCavity, worldPos.xz);
     }
     imageStore(albedoImage, ivec2(pixel), surface.albedo);
     imageStore(normalImage, ivec2(pixel), GBufferEncodeNormal(surface.normal, shadingModelId, receiverFlags));
@@ -1046,7 +1067,9 @@ void main()
     const vec3 emissive = (bHasMaterial && !bDebugView)
                               ? ComputePreExposedEmissive(emissiveChromaticity, materialEntry.emissive.a, params.frame.x)
                               : vec3(0.0);
-    imageStore(emissiveImage, ivec2(pixel), GBufferEncodeEmissive(emissive, shadingParams.y));
+    const float emissiveP1 = !bDebugView && shadingModelId == GBUFFER_SHADING_MODEL_DEFAULT_LIT
+                                 ? puddleCoverage : shadingParams.y;
+    imageStore(emissiveImage, ivec2(pixel), GBufferEncodeEmissive(emissive, emissiveP1));
     if ((params.screen.z & RESOLVE_FLAG_GEOMETRIC_NORMAL) != 0u)
     {
         // 面の法線は 3 頂点の辺の外積（補間の法線や法線マップを含まない形そのもの）。巻きの向きに依らず頂点の法線の側へ向け、

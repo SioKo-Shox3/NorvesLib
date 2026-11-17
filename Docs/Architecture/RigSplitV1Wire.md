@@ -6,7 +6,7 @@ GR82 Stage B2。ClipBank schema 1 の外枠と author-rest 規則を引き継ぐ
 
 `NVSKELv1`、256 byte header、32 byte directory、LE、16 byte section alignment。headerは `ClipBankV1Wire.md` と同じ位置でroleだけが異なる。role1=Skeleton、role2=SkinnedMesh、role3=既存ClipBank。profile=1、topology algorithm=1。payload hashはdirectoryを含むbytes[256,end)のFNV-1a64。
 
-bit0=required。未知optionalも範囲・積・alignment・padding・重なり・FourCC重複・hashを先に検査する。他roleの既知tableはoptionalを装っても拒否する。未知requiredは拒否。writerは必須tableだけを正準順で出し、読み飛ばしたoptionalのbytesを再保存しない。ContentHashは解析した元blob全体のFNVであり、再encodeした別blobのhashへ自動で更新されない。
+bit0=required。未知optionalも範囲・積・alignment・padding・重なり・FourCC重複・hashを先に検査する。他roleの既知tableはoptionalを装っても拒否する。未知requiredは拒否。writerは必須tableと対応する任意tableを正準順で出し、読み飛ばした未知optionalのbytesを再保存しない。ContentHashは解析した元blob全体のFNVであり、再encodeした別blobのhashへ自動で更新されない。
 
 profile1は直接TRS、正のscale、単一root、外部親なし、最大128 joint。ROOTは正規化されたIdentity bytesだけを受ける。restをSkeletonIdに含めず、完全な名前/親列も比較する。非恒等ROOT、Armature、256 joint、clip-only sourceは後続profileとする。
 
@@ -32,13 +32,39 @@ profile1は直接TRS、正のscale、単一root、外部親なし、最大128 jo
 - SREF: offset0にSTRS path offset u64、8にpath length u32、12にprofile u32、16にSkeletonId u64、24にSkeleton完全blob hash u64、32にcurrent rest hash u64、40にROOT hash u64、48–63はzero
 - VERT: position3f / normal3f / UV2f / joint4u32 / weight4f。zero-weightのslotも正準indexへ写し、全4 indexを検査する。weightは有限非負、和は1±1e-5
 - IBMSはpalette順のf32[16]。MNGTはmesh node Mを1件。finite affineかつ既存行列逆算の有限domain内であること。IBM/MはMesh固有で、Skeletonへ格納しない
-- SUBMは既存0.2の64 byte record。baseVertex=0、全indexを順序付きで隙間・重複なく所有し、既存有限bounds/slot/range検査を行う
+- SUBMは既存0.2の64 byte record。baseVertex=0、既存有限bounds/slot/range検査を行う。LOD表が無ければ全indexを、表があればLOD0のindexだけを順序付きで隙間・重複なく所有する。
 - MSLT: offset0にname offset u64、8にlength u32、12はzero、16にMATS index u32、20–31はzero。完全UTF8 slot名は一意。profile1はMSLT/MATS同件数を必須とし、writerは生成slot順にMATSを並べる。parserは件数と参照を検査する
 - MATSは `CookedMaterialFormat.h` の128 byte codec。4つのtexture参照は同STRSへ向ける。全係数、alpha mode、double-sided、ARM、発光を保持し、CPU所有値ではoffsetを所有pathへ置換する
 
 論理pathは非空の相対ASCIIで、空segment、dot/dot-dot、backslash、colon、percent、query/fragmentを拒否する。native source locatorのUnicodeとjoint/clip/slotのUTF8は別契約。
 
 Meshの束縛は完全topologyとSkeleton blob/rest/ROOT hashの全てを検査する。ClipBankのrest overrideでMeshの世代pinは解除されない。同じSkeletonに別Mesh IBMを持たせることはできる。
+
+## role2 の任意節 LODS・PART（GR63）
+
+`LODS` と `PART` は両方あるか両方ない。いずれもflags=0の任意節であり、writerは表があるときだけ必須10節の `MATS` の後に `LODS`、`PART` の順で置く。数値はすべてリトルエンディアン。表の無い資産と、LODを頼まないcookの出力は従来とバイト一致する。旧いローダは2節を未知の任意節として読み飛ばす。ただし旧いrole2ローダはSUBMにINDX全体の所有を要求するため、LOD1以降の索引を含む資産は受け入れない。
+
+- `LODS`: 16 byte record、1〜8件。offset 0は三角形数 `TriangleCount` u32、4は最大誤差 `MaxError` f32、8〜15は0。誤差は頂点座標と同じオブジェクト空間の単位。
+- `PART`: 528 byte record、1〜256件。offset 0はサブメッシュ番号 `SubMeshIndex` u32、4は関節数 `JointCount` u32（1〜16）、8〜15は0。offset 16 + k×8（k=0〜7）はLOD kの `FirstIndex` u32と `IndexCount` u32で、存在するLOD数以降の枠はすべて0。offset 80 + j×28（j=0〜15）は `JointIndex` u32、`Min` f32×3、`Max` f32×3で、関節数以降の枠はすべて0。
+
+INDXは `[LOD0の全部位][LOD1の全部位]…` の順で、各LODの中はサブメッシュ順、その中は部位順とする。部位はサブメッシュの中を分け、描画の単位はサブメッシュ×部位×LOD。頂点バッファは全LODで共有し、LODの頂点はLOD0が参照する頂点の部分集合、部位の境界の頂点は全LODで同じとする。
+
+表がある場合、SUBMがINDXの `[0, 3×T0)`（LOD0）だけを所有し、LOD1以降はPARTの範囲が所有する。表が無い場合は従来どおりSUBMがINDX全体を所有する。各関節のAABBは、関節の重みが0より大きい部位の頂点をメッシュ空間のバインド姿勢で包む。実行時には各箱を関節のスキン行列で動かし、部位の全関節の箱の和で部位を包む。
+
+表と関連データは次を検査する。`T_k` はLOD kの `TriangleCount`、範囲は半開区間とする。
+
+1. LODSとPARTは両方空なら有効で、片方だけ空は無効。
+2. LODは1〜8件、部位は1〜256件、部位×LODは2048件以下。積はu64で計算する。
+3. 各 `T_k` は1以上、`MaxError` は有限かつ0以上。全LODの `T_k` の和×3がINDX全体の件数と一致する。
+4. SUBMの `IndexCount` の合計は3×T0と一致する。SUBM自体の順序・材質・範囲は既存の `ValidateSkeletalSubmeshData` がLOD0の索引に対して検査する。
+5. 各部位の `SubMeshIndex` はSUBMの範囲内で、記録順に非減少。すべてのサブメッシュに1部位以上ある。
+6. 各LODについて、部位の範囲は記録順にそのLODの開始から終端まで隙間なく続く。開始は `3×Σ_{i<k} T_i`、終端は開始に `3×T_k` を足した値。各 `IndexCount` は0を含む3の倍数。
+7. LOD0では各サブメッシュの最初の部位の開始が `IndexStart` に、最後の部位の終端が `IndexStart + IndexCount` に一致する。
+8. LOD数以降の `LodRanges` は `FirstIndex` と `IndexCount` がともに0。
+9. 各部位の関節AABBは1〜16件。関節番号は関節数未満の狭義昇順で、各軸の `Min` と `Max` は有限かつ `Min ≤ Max`。
+10. INDX全体の各索引は頂点数未満。LOD1以降の索引はLOD0が参照する頂点だけを使い、頂点数のフラグ列で検査する。
+
+読み取り時はさらに2節の有無、件数、予約byte、未使用枠と関節数を検査し、成功時だけ所有表を置き換える。
 
 ## Resource と姿勢
 
@@ -80,7 +106,7 @@ Bank順→内部clip順を維持し、全名重複は拒否。全bankのrest比�
 
 loopは端点の姿勢差からの候補で、明示Loop/Onceを優先する。移動とyawは作者rest・階層・ROOTを合成し、+Y上/+Z前のモデル空間を固定間隔で標本化した要約。既定30Hz、最大4096標本。接地判定や移動の適用はしない。姿勢距離の長さは明示値、未指定ならrest joint位置の対角（退化時1m）で正規化する。fps補正は作者fpsとsource fpsの両方が必須で、キー時刻を `timeScale * authoredFps / sourceFps` 倍する。fpsを推測しない。
 
-後続の任意節名を予約する: SOCK（ソケット）、MARK（イベント/位相）、CMPR（圧縮）、LODS（LOD）、PART（部位）、SURF（表面標本）。CLIPとROOTは既存の必須節名であり再利用しない。未実装の任意節は従来通り読み飛ばし、必須節は拒否する。
+role2の任意節LODS（LOD）・PART（部位）は上記の書式を使う。後続の任意節名を予約する: SOCK（ソケット）、MARK（イベント/位相）、CMPR（圧縮）、SURF（表面標本）。CLIPとROOTは既存の必須節名であり再利用しない。未実装の任意節は従来通り読み飛ばし、必須節は拒否する。
 
 ## 明示ファイルCLI
 

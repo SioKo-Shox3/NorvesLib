@@ -128,6 +128,7 @@ namespace NorvesLib::Core::Rendering
         h.Add(p.bHasMaterialOverrides);
         h.Add(p.bVisible);
         h.Add(p.bCastShadow);
+        h.Add(p.bSkyMapProxy);
         h.Add(p.bReceiveShadow);
         h.Add(p.bAffectDynamicIndirectLighting);
         h.Add(p.bAffectDistanceFieldLighting);
@@ -185,6 +186,7 @@ namespace NorvesLib::Core::Rendering
         h.Add(p.bVisible);
         h.Add(p.bCastShadow);
         h.Add(p.bRayTracing);
+        h.Add(p.bSkyMapProxy);
         h.Add(p.LayerMask);
         h.Add(p.Tint);
         h.Add(p.VariationSeed);

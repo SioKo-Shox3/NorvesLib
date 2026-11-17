@@ -62,7 +62,7 @@ C++ 構造体のメモリ配置をファイルへの変換に使わない。特�
 | 128 / 136 | `uint64` × 2 | `RangeTableOffset` / `RangeTableSize` | チャンク表の直後 / `ChunkCount * SpeciesCount * 16` |
 | 144 / 152 | `uint64` × 2 | `StringTableOffset` / `StringTableSize` | 範囲表の終端 + `CollisionTableSize` / 文字列のバイト数。最大 `UINT32_MAX` |
 | 160 / 168 | `uint64` × 2 | `InstanceOffset` / `InstanceSize` | 文字列表の終端を 16 の倍数に切り上げた位置 / 配列のバイト数。大きさは 16 の倍数 |
-| 176 | `uint64` | `CollisionTableSize` | 範囲表の直後にある衝突の形の表のバイト数。48 の倍数、0 可 |
+| 176 | `uint64` | `CollisionTableSize` | 範囲表の直後にある衝突の形の表の節のバイト数。0、または `SpeciesCount * 8 + 48 * 形の数`（形は 1 つ以上） |
 | 184 | `uint64` | `VariationSeedSize` | インスタンス配列の直後にある個体差の種の配列のバイト数。0 または `(InstanceSize / 16) * 4` |
 
 原点と格子の外端 `OriginX + GridCountX * ChunkSizeMeters`、`OriginZ + GridCountZ * ChunkSizeMeters` は有限。
@@ -90,14 +90,17 @@ C++ 構造体のメモリ配置をファイルへの変換に使わない。特�
 | 72 | `float32` | `WindStiffness` | 風の硬さ。有限で非負 |
 | 76 | `uint32` | `WindPhaseSeed` | 風の位相の種 |
 | 80 | `uint32` | `Flags` | bit 0 = 衝突の印、bit 1 = TLAS の選択に入れない、bit 2 = 影を落とさない。bit 3..31 は 0 |
-| 84 | `uint32` | `CollisionFirst` | 衝突の形の表での先頭レコード番号 |
-| 88 | `uint32` | `CollisionCount` | 形の数。0..16 |
-| 92 | `uint32` | `Reserved1` | 0 |
+| 84 | `uint32` | `SkyOccluderBits` | bit 0..1 は形（0 = なし、1 = 楕円体、2 = 箱）、bit 2 は canopy、bit 8..15 は底の比、bit 16..23 は κ。その他のビットは 0 |
+| 88 | `float32` | `SkyOccluderRadiusMeters` | 遮蔽物の半径 [m]。形がある場合は有限の `(0, 256]` |
+| 92 | `float32` | `SkyOccluderHeightMeters` | 遮蔽物の高さ [m]。形がある場合は有限の `(0, 256]` |
 
 `LodCount` 以上の未使用のパス参照は位置・長さとも 0。書き手は文字列を各種の名前、LOD0 から
 有効な LOD の順に隙間なく追加し、重複文字列も個別に書く。読み手は文字列参照の範囲を検査し、順序や共有は制限しない。
 
-`CollisionFirst + CollisionCount` は形の総数以下とし、`CollisionCount == 0` なら `CollisionFirst == 0`。
+底の比と κ はそれぞれ `round(value * 255)` で量子化し、読み手は `q / 255` に戻す。
+底の比の量子化値は 0..242、κ は 0..255。形が 0 のとき 84..95 の 12 バイトはすべて 0 で、
+遮蔽物なしとして読む。旧形式の予約欄が 0 のファイルも遮蔽物なしとして読める。
+衝突の形の範囲は種の記録ではなく、衝突の形の表の節の頭に置く（後述）。
 衝突の印と形の数は独立で、規則による cook は形がなくても bit 0 を立てられる。
 bit 1・bit 2 の既定は 0 で、TLAS の選択に入り、影を落とす。
 
@@ -129,9 +132,20 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 `Offset <= InstanceSize / 16`、`Count <= InstanceSize / 16 - Offset`。読み手は範囲同士の重なりや
 配列に参照されないレコードの存在を制限しない。書き手は与えられた範囲・配列の順序を保持する。
 
-## 衝突の形の表（1 件 48 バイト）
+## 衝突の形の表（種ごとの範囲 1 件 8 バイト + 形 1 件 48 バイト）
 
-各レコードは種のローカル座標で表し、個体のヨーと拡大に従って回転・拡大する。
+節は、種ごとの範囲を種表と同じ順に `SpeciesCount` 件並べ、その直後に形のレコードを並べる。
+形が 1 つも無いファイルは節ごと省き、`CollisionTableSize` を 0 にする（このとき全種の範囲は 0 として読む）。
+新しい欄を使わない規則の散布は、この節も個体差の種の配列も持たない。
+
+| オフセット | 型 | 項目 | 意味・規則 |
+| ---: | --- | --- | --- |
+| 0 | `uint32` | `CollisionFirst` | 形のレコードでの先頭番号 |
+| 4 | `uint32` | `CollisionCount` | 形の数。0..16 |
+
+`CollisionFirst + CollisionCount` は形の総数以下とし、`CollisionCount == 0` なら `CollisionFirst == 0`。
+
+形のレコードは種のローカル座標で表し、個体のヨーと拡大に従って回転・拡大する。
 `A`・`B`・`Radius` の値はすべて有限。種ごとの参照は重なってもよく、参照されない形も置ける。
 
 | オフセット | 型 | 項目 | 意味・規則 |
@@ -199,9 +213,11 @@ AABB はメッシュ半径を足さない。各値は有限で、各軸の最小
 4. ヘッダ予約欄が 0 以外なら `ReservedNonZero`。チャンク寸法・格子・原点が不正なら `InvalidDimensions`。
 5. 種数が範囲外なら `SpeciesOutOfRange`、チャンク数が格子を超えれば `ChunkOutOfRange`。
 6. 衝突の形の表の長さ、表・文字列表・配列の位置、長さ、順序、整列、ファイル終端が不正なら `TableOutOfRange`。個体差の種の配列の長さもここで検査する。隙間が 0 以外なら `ReservedNonZero`。
-7. 各種について、描画経路・LOD 数、名前と LOD の文字列参照、未定義フラグと予約欄、数値、衝突の形の参照の順に検査する。
+7. 各種について、描画経路・LOD 数、名前と LOD の文字列参照、未定義フラグと予約欄、遮蔽物、数値、衝突の形の参照の順に検査する。
    描画経路・LOD 数・数値が不正なら `SpeciesOutOfRange`、文字列参照が空または範囲外なら `StringOutOfRange`。
-   未使用 LOD 参照・予約欄・未定義フラグが 0 以外なら `ReservedNonZero`、衝突の形の参照が不正なら `CollisionOutOfRange`。
+   未使用 LOD 参照・予約欄・未定義フラグ・遮蔽物の未使用ビットが 0 以外、または形が 0 で 84..95 がすべて 0 でなければ `ReservedNonZero`。
+   遮蔽物の形が範囲外、半径・高さが不正、底の比の量子化値が 242 を超える場合は `InvalidSkyOccluder`。
+   衝突の形の参照が不正なら `CollisionOutOfRange`。
 8. チャンク座標が範囲外または重複なら `ChunkOutOfRange`、Y 範囲または AABB が不正なら `InvalidChunkBounds`、予約欄が 0 以外なら `ReservedNonZero`。
 9. 範囲表の offset・count がインスタンス配列の外なら `InstanceRangeOutOfRange`。
 10. 各衝突の形について、予約欄が 0 以外なら `ReservedNonZero`、種類または数値が不正なら `CollisionOutOfRange`。
@@ -305,7 +321,8 @@ JSON は UTF-8（先頭 BOM 可）。全オブジェクトで未知の鍵・重�
     "exclude": { "road_threshold": 0.5, "wetness": [0.0, 0.8] },
     "scale_range": [0.7, 1.4], "slope_follow": 0.8,
     "brightness_variation": 0.1, "dry_from_mask": false, "collision": false,
-    "wind": { "stiffness": 1.0, "phase_seed": 7 }
+    "wind": { "stiffness": 1.0, "phase_seed": 7 },
+    "sky_occluder": { "shape": "ellipsoid", "class": "solid", "radius_m": 1.0, "height_m": 1.3 }
   }]
 }
 ```
@@ -343,6 +360,12 @@ JSON は UTF-8（先頭 BOM 可）。全オブジェクトで未知の鍵・重�
 | `wind` | 下位項目の既定 | 風の属性オブジェクト。空のオブジェクトも可 |
 | `wind.stiffness` | 1.0 | 有限で非負 |
 | `wind.phase_seed` | 0 | uint32 範囲の10進整数または10進文字列 |
+| `sky_occluder` | 遮蔽物なし | 遮蔽物の属性オブジェクト |
+| `sky_occluder.shape` | 必須 | `ellipsoid` または `box` |
+| `sky_occluder.class` | 必須 | `solid` または `canopy` |
+| `sky_occluder.radius_m` / `height_m` | 必須 | 有限の `(0, 256]` [m]。float32 で 0 に丸まる正の値は最小の正の値として保存 |
+| `sky_occluder.base_ratio` | 0 | 有限の `0..0.95` |
+| `sky_occluder.kappa` | solid では 1、canopy では必須 | 有限の `0..1` |
 
 density の layer 形式は `{"source":"layer","layer":"GRS0","channel":"r"}`。
 寸法・半径・間隔・拡大・基準密度・標高・風の硬さは有限の float の最大値以下とする。

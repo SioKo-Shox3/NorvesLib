@@ -21,6 +21,9 @@
 # -Width と -Height は両方を与えると --window-size=<幅>x<高さ> で窓とバックバッファの大きさを替える。
 # -GameArgs は Game へ足す引数を、先頭の -- を除いてカンマ区切りで与える（例: -GameArgs night,sun-elevation=10）。
 #   値にカンマを含む引数（startup-camera=0,5,2.5）は、カンマの次が英字で始まらない限り分けない。
+# -Rains・-Wetnesses・-CloudCovers は 0〜1 の値を並べ、直積の組ごとに OutDir の別フォルダへ撮る。
+# -Wind は方位（0〜360 度）、速さ（0〜100 m/s）、突風（0〜1）を順に与え、すべての組に適用する。
+# 気象はシーン準備後に有効になり、GR50・GR53 が入るまでは空の曇り度のほかは見た目が変わらない。
 # -RequireAssets を付けると、資産の欠けを失敗にする。付けないときは欠けを metrics.json の missing_assets に数えて警告として出す。
 #   欠けの検出は2つ。シーンの定義の必要な資産は Game が --scene-report で書く報告（<視点>.SceneReport.txt）から読むので、
 #   ログを書かない Release でも検査できる。各シーンが読み込み失敗で出す印（COOKED_MODEL_MISSING・MEGA_BANANAS_ASSET_MISSING など）は
@@ -98,6 +101,7 @@ param(
     [string[]]$Views = @(),
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo')]
     [string]$Configuration = 'Debug',
+    [Alias('W', 'Wi')]
     [ValidateRange(0, 7680)]
     [int]$Width = 0,
     [ValidateRange(0, 4320)]
@@ -136,11 +140,190 @@ param(
     [ValidateRange(0.0, 255.0)]
     [double]$CompareMeanLuminanceLimit = 0.1,
     [ValidateRange(0.0, 100.0)]
-    [double]$ComparePsnrLimit = 45.0
+    [double]$ComparePsnrLimit = 45.0,
+    [string[]]$Rains = @(),
+    [string[]]$Wetnesses = @(),
+    [string[]]$CloudCovers = @(),
+    [string[]]$Wind = @()
 )
 
 $ErrorActionPreference = 'Stop'
 $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+
+# カンマ区切りの文字列や配列を、範囲を確かめて数値の配列にする。
+function ConvertTo-NumberList([string[]]$Values, [double]$Minimum, [double]$Maximum, [string]$Name)
+{
+    $numbers = @()
+    foreach ($item in ($Values -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries))
+    {
+        $number = 0.0
+        if (-not [double]::TryParse($item.Trim(), [Globalization.NumberStyles]::Float, $invariant, [ref]$number) -or
+            [double]::IsNaN($number) -or [double]::IsInfinity($number) -or
+            $number -lt $Minimum -or $number -gt $Maximum)
+        {
+            throw "CAPTURE_SCENE result=fail reason=invalid_$Name value=$item（$Minimum〜$Maximum）"
+        }
+        $numbers += $number
+    }
+    return ,$numbers
+}
+
+try
+{
+    $rainList = ConvertTo-NumberList $Rains 0.0 1.0 'rain'
+    $wetnessList = ConvertTo-NumberList $Wetnesses 0.0 1.0 'wetness'
+    $cloudCoverList = ConvertTo-NumberList $CloudCovers 0.0 1.0 'cloud_cover'
+}
+catch
+{
+    Write-Output $_.Exception.Message
+    exit 1
+}
+$windArgument = $null
+if ($PSBoundParameters.ContainsKey('Wind'))
+{
+    $windInput = $Wind -join ','
+    $windParts = @($windInput.Split(','))
+    $parsedWind = @()
+    $windMaximums = @(360.0, 100.0, 1.0)
+    if ($windParts.Count -eq 3)
+    {
+        for ($windIndex = 0; $windIndex -lt 3; ++$windIndex)
+        {
+            $number = 0.0
+            if (-not [double]::TryParse($windParts[$windIndex].Trim(), [Globalization.NumberStyles]::Float, $invariant, [ref]$number) -or
+                [double]::IsNaN($number) -or [double]::IsInfinity($number) -or
+                $number -lt 0.0 -or $number -gt $windMaximums[$windIndex])
+            {
+                break
+            }
+            $parsedWind += $number
+        }
+    }
+    if ($parsedWind.Count -ne 3)
+    {
+        Write-Output "CAPTURE_SCENE result=fail reason=invalid_wind value=$windInput（方位 0〜360 度、速さ 0〜100 m/s、突風 0〜1 の3つを指定する）"
+        exit 1
+    }
+    $windArgument = ($parsedWind | ForEach-Object { $_.ToString($invariant) }) -join ','
+}
+
+# 値の組ごとに独立した PowerShell で台本を呼ぶ。型定義や終了コードが他の組に影響しないようにする。
+if ($rainList.Count -gt 0 -or $wetnessList.Count -gt 0 -or $cloudCoverList.Count -gt 0)
+{
+    $rainOptions = @($null)
+    $wetnessOptions = @($null)
+    $cloudCoverOptions = @($null)
+    if ($rainList.Count -gt 0) { $rainOptions = @($rainList) }
+    if ($wetnessList.Count -gt 0) { $wetnessOptions = @($wetnessList) }
+    if ($cloudCoverList.Count -gt 0) { $cloudCoverOptions = @($cloudCoverList) }
+
+    $baseChildParameters = @{}
+    foreach ($key in $PSBoundParameters.Keys)
+    {
+        if ($key -in @('Rains', 'Wetnesses', 'CloudCovers')) { continue }
+        $parameterValue = $PSBoundParameters[$key]
+        if ($parameterValue -is [System.Management.Automation.SwitchParameter]) { $parameterValue = [bool]$parameterValue }
+        $baseChildParameters[$key] = $parameterValue
+    }
+    $childCommand = @(
+        '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)'
+        'try {'
+        '$request = [System.Management.Automation.PSSerializer]::Deserialize([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd().Trim())))'
+        '$childParameters = @{}'
+        'foreach ($key in $request.Parameters.Keys) { $childParameters[$key] = $request.Parameters[$key] }'
+        '$captureScript = $request.ScriptPath'
+        '& $captureScript @childParameters'
+        'exit $LASTEXITCODE'
+        '} catch {'
+        '[Console]::Error.WriteLine($_.Exception.Message)'
+        'exit 1'
+        '}'
+    ) -join [Environment]::NewLine
+    $encodedChildCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childCommand))
+    $failedCombinations = @()
+    foreach ($rain in $rainOptions)
+    {
+        foreach ($wetness in $wetnessOptions)
+        {
+            foreach ($cloudCover in $cloudCoverOptions)
+            {
+                $nameParts = @()
+                $childGameArgs = @($GameArgs)
+                if ($null -ne $rain)
+                {
+                    $value = $rain.ToString($invariant)
+                    $nameParts += "rain$value"
+                    $childGameArgs += "rain=$value"
+                }
+                if ($null -ne $wetness)
+                {
+                    $value = $wetness.ToString($invariant)
+                    $nameParts += "wet$value"
+                    $childGameArgs += "wetness=$value"
+                }
+                if ($null -ne $cloudCover)
+                {
+                    $value = $cloudCover.ToString($invariant)
+                    $nameParts += "cloud$value"
+                    $childGameArgs += "cloud-cover=$value"
+                }
+                $combinationName = $nameParts -join '-'
+                $childProcess = $null
+                try
+                {
+                    $childParameters = $baseChildParameters.Clone()
+                    $childParameters['GameArgs'] = $childGameArgs
+                    $childParameters['OutDir'] = Join-Path $OutDir $combinationName
+                    $request = [pscustomobject]@{ ScriptPath = $PSCommandPath; Parameters = $childParameters }
+                    $serializedRequest = [System.Management.Automation.PSSerializer]::Serialize($request, 10)
+                    $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($serializedRequest))
+                    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+                    $startInfo.FileName = (Get-Command powershell.exe -CommandType Application).Source
+                    $startInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -EncodedCommand $encodedChildCommand"
+                    $startInfo.WorkingDirectory = (Get-Location).ProviderPath
+                    $startInfo.UseShellExecute = $false
+                    $startInfo.CreateNoWindow = $true
+                    $startInfo.RedirectStandardInput = $true
+                    $startInfo.RedirectStandardOutput = $true
+                    $startInfo.RedirectStandardError = $true
+                    $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
+                    $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
+                    $childProcess = [System.Diagnostics.Process]::Start($startInfo)
+                    $stderrTask = $childProcess.StandardError.ReadToEndAsync()
+                    $childProcess.StandardInput.WriteLine($payload)
+                    $childProcess.StandardInput.Close()
+                    while ($null -ne ($line = $childProcess.StandardOutput.ReadLine())) { Write-Output $line }
+                    $childProcess.WaitForExit()
+                    $errorText = $stderrTask.GetAwaiter().GetResult()
+                    if ($errorText.Trim() -ne '') { Write-Output $errorText.TrimEnd() }
+                    if ($childProcess.ExitCode -ne 0)
+                    {
+                        $failedCombinations += [pscustomobject]@{ Name = $combinationName; Detail = "exit_code=$($childProcess.ExitCode)" }
+                    }
+                }
+                catch
+                {
+                    $detail = $_.Exception.Message -replace '[\r\n]+', ' '
+                    $failedCombinations += [pscustomobject]@{ Name = $combinationName; Detail = $detail }
+                }
+                finally
+                {
+                    if ($null -ne $childProcess) { $childProcess.Dispose() }
+                }
+            }
+        }
+    }
+    if ($failedCombinations.Count -gt 0)
+    {
+        foreach ($failure in $failedCombinations)
+        {
+            Write-Output "CAPTURE_SCENE result=fail reason=weather_capture_failed combination=$($failure.Name) detail=$($failure.Detail)"
+        }
+        exit 1
+    }
+    exit 0
+}
 
 if ($Scene -notmatch '^[a-z0-9][a-z0-9-]*$')
 {
@@ -258,6 +441,7 @@ foreach ($gameArgument in $GameArgs)
         }
     }
 }
+if ($null -ne $windArgument) { $extraArguments += "--wind=$windArgument" }
 # 計測の窓から外す、末尾の撮影のフレームの直前のフレーム数
 $timingTailFrames = 2
 $pathCaptureFrames = $null

@@ -245,6 +245,9 @@ namespace NorvesLib::Core::Rendering::Terrain
         bool HasPuddlePotential() const;
         /// 最近の頂点の凹み度（0..1）。層が無い・手続きの作り方・範囲外は 0
         float SamplePuddlePotential(float x, float z) const;
+        /// 頂点ごとに 1 バイトを持つ行優先の凹み度。格子の並びは GetGridLayout と同じ。
+        /// 層が無い・手続きの作り方では空。返す範囲は高さ場が所有する
+        Container::Span<const uint8_t> GetPuddlePotential() const;
         /// スプラットの層数。手続きの作り方では 0
         uint32_t GetSplatLayerCount() const;
         /// スプラットの層の名前。範囲外は空

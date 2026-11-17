@@ -3,6 +3,11 @@
 #ifndef NORVES_PARTICLE_COMMON_GLSL
 #define NORVES_PARTICLE_COMMON_GLSL
 
+// GpuParticleFrame.h の kGpuParticlePoolCapacity と同じ値。
+const uint kGpuParticlePoolCapacity = 262144u;
+// GpuParticleDraw.h の kGpuParticleDrawBucketCount と同じ値。
+const uint kGpuParticleDrawBucketCount = 4u;
+
 // 粒が生存している旗。
 const uint kGpuParticleFlagAlive = 1u << 0u;
 // 粒が衝突面に留まっている旗。
@@ -63,6 +68,10 @@ const uint kGpuEmitterRenderLightingMask = 0x1u;
 const uint kGpuEmitterRenderSubPixelCompensationShift = 5u;
 // シフト前の 幅 1px 未満の補償 のマスク。
 const uint kGpuEmitterRenderSubPixelCompensationMask = 0x1u;
+// RenderFlags 内のスロットの順に描く設定の開始ビット。
+const uint kGpuEmitterRenderSlotOrderShift = 6u;
+// シフト前のスロットの順に描く設定のマスク。
+const uint kGpuEmitterRenderSlotOrderMask = 0x1u;
 // CurveKeyCounts 内の Size のキー数の開始ビット。
 const uint kGpuCurveKeyCountSizeShift = 0u;
 // CurveKeyCounts 内の Color のキー数の開始ビット。
@@ -74,7 +83,8 @@ const uint kGpuCurveKeyCountStretchShift = 24u;
 // シフト前の曲線キー数のマスク。0 は曲線なし。
 const uint kGpuCurveKeyCountMask = 0xFFu;
 
-// 粒の位置・年齢、速度・寿命、通し番号・エミッタのスロット・状態の旗・予約 0。
+// 粒の位置・年齢、速度・寿命、通し番号・エミッタのスロット・状態の旗。
+// meta.w は命中の法線（GpuParticlePackNormal。0 は法線なし）。
 struct GpuParticle
 {
     vec4 posAge;
@@ -108,7 +118,7 @@ struct GpuEmitterParams
     GpuCollisionParams planeCollision;          // 176: 平面の衝突応答。
     GpuCollisionParams heightFieldCollision;    // 192: 高さ場の衝突応答。
     GpuCollisionParams depthCollision;          // 208: 深度の衝突応答。
-    uint renderFlags;                          // 224: bit 0〜1 向き・2 合成・3 描画段階・4 照明・5 幅 1px 未満の補償。
+    uint renderFlags;                          // 224: bit 0〜1 向き・2 合成・3 描画段階・4 照明・5 幅 1px 未満の補償・6 スロットの順に描く設定。
     float softDistance;                        // 228: ソフトパーティクルの距離。
     float fogInfluence;                        // 232: 霧の影響。
     float streakShutterSeconds;                // 236: 伸びのシャッター時間。
@@ -263,6 +273,56 @@ vec3 VfxTurbulenceAcceleration(vec3 position, float frequency, float strength, u
     }
 
     return acceleration;
+}
+
+// 命中の法線が格納されていることを示す旗。bit 30 は使わない。
+const uint kGpuParticleNormalValidBit = 1u << 31u;
+
+// 法線を八面体に写像し、x・y を各 15 bit の unorm に詰める。無効な法線は 0 を返す。
+uint GpuParticlePackNormal(vec3 n)
+{
+    if (any(isnan(n)) || any(isinf(n)))
+    {
+        return 0u;
+    }
+    float maximumComponent = max(max(abs(n.x), abs(n.y)), abs(n.z));
+    if (maximumComponent <= 1.0e-8)
+    {
+        return 0u;
+    }
+    // 先に最大成分で割り、有限で大きな入力でも和のオーバーフローを避ける。
+    n /= maximumComponent;
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec2 octahedral = n.xy;
+    if (n.z < 0.0)
+    {
+        // 軸上の 0 は正側に折り返し、負の Z 軸も四隅へ写す。
+        vec2 direction = vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+        octahedral = (vec2(1.0) - abs(octahedral.yx)) * direction;
+    }
+    vec2 unorm = clamp(octahedral * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+    uvec2 quantized = uvec2(floor(unorm * 32767.0 + 0.5));
+    return kGpuParticleNormalValidBit | quantized.x | (quantized.y << 15u);
+}
+
+// 格納した法線を復元して正規化する。法線なしは上向きを返し、戻り値を false にする。
+bool GpuParticleUnpackNormal(uint packed, out vec3 n)
+{
+    if ((packed & kGpuParticleNormalValidBit) == 0u)
+    {
+        n = vec3(0.0, 1.0, 0.0);
+        return false;
+    }
+    vec2 octahedral = vec2(float(packed & 0x7FFFu), float((packed >> 15u) & 0x7FFFu)) /
+        32767.0 * 2.0 - 1.0;
+    n = vec3(octahedral, 1.0 - abs(octahedral.x) - abs(octahedral.y));
+    if (n.z < 0.0)
+    {
+        vec2 direction = vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+        n.xy = (vec2(1.0) - abs(n.yx)) * direction;
+    }
+    n = normalize(n);
+    return true;
 }
 
 // 通し番号からリングのスロットを返す。capacity は 1 以上が前提で、0 なら poolOffset を返す。

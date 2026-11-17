@@ -1,6 +1,11 @@
 ﻿// 空からの光を遮る設定と、遮蔽物の鉛直区間を表す。
 #pragma once
 
+#include "Container/Span.h"
+#include "Container/VariableArray.h"
+#include "Rendering/RenderExtension/RenderExtensionData.h"
+
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
@@ -161,4 +166,168 @@ namespace NorvesLib::Core::Rendering
         float worldZ,
         float& outBottomY,
         float& outTopY);
+
+    namespace Terrain
+    {
+        class TerrainHeightField;
+    }
+
+    /**
+     * @brief 地面の高さと下草の層で共用する、世界座標の格子の配置。
+     *
+     * テクセル (i, j) の中心は (OriginX + (i + 0.5) * TexelMeters,
+     * OriginZ + (j + 0.5) * TexelMeters)。配列は行優先で j * Width + i、j は Z 方向。
+     */
+    struct SkyOcclusionFieldLayout
+    {
+        float OriginX = 0.0f;      // 格子の最小の角（メートル）。
+        float OriginZ = 0.0f;
+        float TexelMeters = 0.0f;  // テクセルの幅。
+        std::uint32_t Width = 0u;  // X 方向のテクセル数。
+        std::uint32_t Height = 0u; // Z 方向のテクセル数。
+        std::uint32_t Reserved[3] = {};
+    };
+
+    static_assert(sizeof(SkyOcclusionFieldLayout) == 32u);
+    static_assert(std::is_trivially_copyable_v<SkyOcclusionFieldLayout>);
+    static_assert(std::is_standard_layout_v<SkyOcclusionFieldLayout>);
+
+    /** @brief 有限な原点、正のテクセル幅、1〜8192 の寸法とゼロの予約欄を検査する。 */
+    bool IsValidSkyOcclusionFieldLayout(const SkyOcclusionFieldLayout& layout);
+
+    /**
+     * @brief u = x * [0] + [2]、v = z * [1] + [3] の変換を求める。
+     * 無効な配置なら全成分をゼロにする。
+     */
+    void ComputeSkyOcclusionFieldWorldToUv(
+        const SkyOcclusionFieldLayout& layout, float outScaleOffset[4]);
+
+    /**
+     * @brief textureLod の線形補間と端の延長に合わせて格子を引く。
+     * 範囲外、不正な配置・配列・座標、非有限な標本では fallback を返す。
+     */
+    float SampleSkyOcclusionField(const SkyOcclusionFieldLayout& layout,
+        Container::Span<const float> values, float x, float z, float fallback);
+
+    /** @brief 地面から下草の層の頂までの高さと、層全体の遮蔽率。 */
+    struct SkyOcclusionUndergrowthTexel
+    {
+        float TopMeters = 0.0f; // 地面から層の頂までの高さ。
+        float Kappa = 0.0f;     // 層の全体を通した遮蔽率 [0,1]。
+    };
+
+    static_assert(sizeof(SkyOcclusionUndergrowthTexel) == 8u);
+    static_assert(std::is_trivially_copyable_v<SkyOcclusionUndergrowthTexel>);
+
+    /// 下草の層全体の遮蔽率の上限。
+    inline constexpr float SkyOcclusionUndergrowthMaxKappa = 0.3f;
+    /// 下草の層を作る最小の高さ（メートル）。
+    inline constexpr float SkyOcclusionUndergrowthMinTopMeters = 0.02f;
+
+    /** @brief 密度と草丈から下草の層を求める。非有限な入力はゼロとして扱う。 */
+    SkyOcclusionUndergrowthTexel ComputeSkyOcclusionUndergrowthLayer(
+        float density, float grassHeightMeters);
+
+    /** @brief 踏み倒しの割合で遮蔽率を減らす。非有限な割合はゼロとして扱う。 */
+    float ApplySkyOcclusionTrample(float kappa, float flatten);
+
+    /**
+     * @brief 下草の高さと遮蔽率から消散係数（1/m）を求める。
+     * GPU の写し込みも同じ式を使う。
+     */
+    float ComputeSkyOcclusionUndergrowthExtinction(float topMeters, float kappa);
+
+    /**
+     * @brief 雲量と天頂・地平線の明るさの比から、空の重みの定数項と傾きを求める。
+     *
+     * 一般化した CIE の曇天 L ∝ 1 + (r - 1)s（s は仰角の正弦）を、
+     * 上半球のコサインの重みの平均が 1 になるよう正規化する。
+     * SkyAtmosphere.cpp の ComputeOvercastZenithRadiance と同じ正規化。
+     * 雲量ゼロでは一様な重み (1, 0) を返す。
+     */
+    void ComputeSkyOcclusionSkyWeightCoefficients(float cloudCover,
+        float zenithToHorizonRatio, float& outConstant, float& outSlope);
+
+    /** @brief 仰角の正弦に対する空の明るさの重みを評価する。 */
+    float EvaluateSkyOcclusionSkyWeight(float constant, float slope, float sinElevation);
+
+    /** @brief 散布する種の尺度 1 における遮蔽物の寸法と遮蔽率。 */
+    struct SkyOccluderSpeciesDesc
+    {
+        bool bEnabled = false;
+        SkyOccluderShape Shape = SkyOccluderShape::Ellipsoid;
+        SkyOccluderClass Class = SkyOccluderClass::Solid;
+        float RadiusMeters = 0.0f; // 尺度 1 の水平半径。
+        float HeightMeters = 0.0f; // 尺度 1 の高さ。
+        float BaseRatio = 0.0f;    // 高さに対する底の持ち上げの割合。
+        float Kappa = 1.0f;        // 樹冠の遮蔽率。Solid は 1 として扱う。
+    };
+
+    /**
+     * @brief 種の指定と物の配置から、動く印・雨の印を持たない遮蔽物を決定的に作る。
+     * 無効な指定では false を返し、出力を変更しない。
+     */
+    bool MakeSkyOccluderFromInstance(const SkyOccluderSpeciesDesc& desc,
+        float x, float groundY, float z, float yaw, float scale, SkyOccluderProxy& outProxy);
+
+    /** @brief GPU の三角関数の丸め差を含む、遮蔽物の水平の外接矩形を求める。 */
+    void GetSkyOccluderHorizontalBounds(const SkyOccluderProxy& proxy,
+        double& outMinX, double& outMinZ, double& outMaxX, double& outMaxZ);
+
+    /**
+     * @brief 散布チャンクの遮蔽物の連続範囲と水平の外接矩形。
+     *
+     * 表は ChunkKey の昇順で重複なし。Offset/Count は遮蔽物の配列で前から
+     * 隙間も重なりもなく並び、Count は 1 以上とする。矩形は範囲の各遮蔽物の
+     * GetSkyOccluderHorizontalBounds の和を float へ外側に丸めたもの。
+     */
+    struct SkyOccluderChunkRange
+    {
+        std::uint64_t ChunkKey = 0u; // 散布の中で一意で決定的なチャンクの鍵。
+        std::uint64_t Revision = 0u; // チャンクの中身を作り直すたびに増える版。
+        std::uint32_t Offset = 0u;   // チャンクの遮蔽物の配列での先頭。
+        std::uint32_t Count = 0u;
+        float MinX = 0.0f;           // 水平の外接矩形（外側へ丸める）。
+        float MinZ = 0.0f;
+        float MaxX = 0.0f;
+        float MaxZ = 0.0f;
+    };
+
+    static_assert(sizeof(SkyOccluderChunkRange) == 40u);
+    static_assert(std::is_trivially_copyable_v<SkyOccluderChunkRange>);
+
+    /** @brief 鍵の昇順、配列全体を覆う連続範囲、有限で整列した矩形を検査する。 */
+    bool IsValidSkyOccluderChunkRanges(
+        Container::Span<const SkyOccluderChunkRange> ranges, std::size_t occluderCount);
+
+    // 配置と配列は同じ GameThread のフレームで両方出し、無くなるときは両方消す。
+    // キーが無いときは地面を SkyOcclusionParameters::GroundHeightMeters の一定値とし、
+    // 下草なし、チャンクの遮蔽物なしとして扱う。
+    /// 地面の高さの格子の配置。
+    inline constexpr RenderExtensionDataKey<SkyOcclusionFieldLayout> kSkyOcclusionGroundLayoutKey{
+        Identity::Literal("SkyOcclusion.GroundLayout", sizeof("SkyOcclusion.GroundLayout") - 1)};
+    /// 地面の高さの行優先配列。
+    inline constexpr RenderExtensionDataKey<float> kSkyOcclusionGroundHeightsKey{
+        Identity::Literal("SkyOcclusion.GroundHeights", sizeof("SkyOcclusion.GroundHeights") - 1)};
+    /// 下草の層の格子の配置。
+    inline constexpr RenderExtensionDataKey<SkyOcclusionFieldLayout> kSkyOcclusionUndergrowthLayoutKey{
+        Identity::Literal("SkyOcclusion.UndergrowthLayout", sizeof("SkyOcclusion.UndergrowthLayout") - 1)};
+    /// 下草の層の行優先配列。
+    inline constexpr RenderExtensionDataKey<SkyOcclusionUndergrowthTexel> kSkyOcclusionUndergrowthKey{
+        Identity::Literal("SkyOcclusion.Undergrowth", sizeof("SkyOcclusion.Undergrowth") - 1)};
+    /// チャンクごとの遮蔽物の範囲の表。
+    inline constexpr RenderExtensionDataKey<SkyOccluderChunkRange> kSkyOcclusionChunkRangesKey{
+        Identity::Literal("SkyOcclusion.ChunkRanges", sizeof("SkyOcclusion.ChunkRanges") - 1)};
+    /// チャンクの範囲の表が指す遮蔽物の配列。
+    inline constexpr RenderExtensionDataKey<SkyOccluderProxy> kSkyOcclusionChunkOccludersKey{
+        Identity::Literal("SkyOcclusion.ChunkOccluders", sizeof("SkyOcclusion.ChunkOccluders") - 1)};
+
+    /**
+     * @brief 地形の頂点格子の全体を覆う配置と、テクセル中心の地面の高さを作る。
+     * 解像度の上限は 1〜4096 に収め、非有限な標本は有限な代替高さで置き換える。
+     * 格子や出力の配置が不正なら false を返し、出力を変更しない。
+     */
+    bool BuildSkyOcclusionGroundHeights(const Terrain::TerrainHeightField& field,
+        std::uint32_t maxResolution, float fallbackHeight, SkyOcclusionFieldLayout& outLayout,
+        Container::VariableArray<float>& outHeights);
 } // namespace NorvesLib::Core::Rendering

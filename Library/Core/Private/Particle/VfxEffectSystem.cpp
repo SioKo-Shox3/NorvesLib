@@ -1,10 +1,14 @@
 ﻿#include "Particle/VfxEffectSystem.h"
 
+#include "Logging/LogMacros.h"
 #include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
 #include "Particle/VfxSchema.h"
 #include "Particle/VfxSimulationMath.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/GpuParticle/GpuParticleFrame.h"
+#include "Rendering/GpuParticle/GpuParticleEmitterAllocator.h"
+#include "Rendering/GpuParticle/GpuParticleSpawnPlanner.h"
 
 #include <cmath>
 #include <cstring>
@@ -158,7 +162,7 @@ namespace NorvesLib::Core::Particle
             case VfxModuleType::GpuSpriteRenderer:
             {
                 constexpr const char* names[] = {"Orientation", "Blend", "Pass", "SoftDistance", "Lighting", "FogInfluence",
-                    "StreakShutterSeconds", "SubPixelCompensation", "NearFadeDistance", "Texture"};
+                    "StreakShutterSeconds", "SubPixelCompensation", "NearFadeDistance", "Texture", "DrawInSlotOrder"};
                 return ArgumentAt(names, index);
             }
             default:
@@ -249,6 +253,39 @@ namespace NorvesLib::Core::Particle
             std::isfinite(WorldSize.x) && std::isfinite(WorldSize.y) && WorldSize.x > 0.0f && WorldSize.y > 0.0f;
     }
 
+    struct VfxEffectSystem::GpuExecutionState
+    {
+        struct PendingBurst
+        {
+            VfxEffectHandle Handle;
+            uint32_t EmitterIndex = 0u;
+            uint32_t Epoch = 0u;
+            Rendering::GpuParticleBurst Burst{};
+        };
+
+        Rendering::GpuParticleEmitterAllocator Allocator{Rendering::kGpuParticlePoolCapacity};
+        VariableArray<PendingBurst> Bursts;
+        uint32_t OverflowCount = 0u;
+        float PendingDeltaTime = 0.0f;
+        float PendingUnscaledDeltaTime = 0.0f;
+        double ParticleTime = 0.0;
+        double UnscaledTime = 0.0;
+    };
+
+    VfxEffectSystem::VfxEffectSystem() = default;
+    VfxEffectSystem::~VfxEffectSystem() = default;
+    VfxEffectSystem::VfxEffectSystem(VfxEffectSystem&&) noexcept = default;
+    VfxEffectSystem& VfxEffectSystem::operator=(VfxEffectSystem&&) noexcept = default;
+
+    VfxEffectSystem::GpuExecutionState& VfxEffectSystem::EnsureGpuState()
+    {
+        if (!m_GpuState)
+        {
+            m_GpuState = MakeUnique<GpuExecutionState>();
+        }
+        return *m_GpuState;
+    }
+
     VfxEffectHandle VfxEffectSystem::CreateInstance(const VfxEffectAsset& asset, const VfxInstanceDesc& desc, Container::String* outError)
     {
         if (!ValidateVfxEffect(asset, outError))
@@ -276,6 +313,7 @@ namespace NorvesLib::Core::Particle
         slot.Asset = asset;
         slot.Desc = desc;
         slot.Time = 0.0;
+        slot.bHasPreviousGpuPosition = false;
         slot.Events.clear();
         slot.Emitters.clear();
         slot.Emitters.resize(asset.Emitters.size());
@@ -311,6 +349,11 @@ namespace NorvesLib::Core::Particle
             {
                 ReleaseSlot(index);
             }
+        }
+        if (m_GpuState)
+        {
+            m_GpuState->Bursts.clear();
+            m_GpuState->OverflowCount = 0u;
         }
     }
 
@@ -396,6 +439,11 @@ namespace NorvesLib::Core::Particle
         {
             slot.Emitters[emitterIndex].Particles.resize(maxParticles);
         }
+        if (slot.Emitters[emitterIndex].Executor == VfxExecutor::Gpu ||
+            emitter.Properties[slot.PropertyIndices[ExecutorProperty]].UInt == static_cast<uint32_t>(VfxExecutor::Gpu))
+        {
+            RefreshEmitter(slot, emitterIndex);
+        }
         return true;
     }
 
@@ -446,12 +494,68 @@ namespace NorvesLib::Core::Particle
         return true;
     }
 
+    bool VfxEffectSystem::RaiseGpuBurst(VfxEffectHandle handle, uint32_t emitterIndex, const Math::Vector3& position,
+        const Math::Vector3& normal, const Math::Vector3& velocity, uint32_t count)
+    {
+        if (!IsLiveInstance(handle) || !IsFinite(position) || !IsFinite(normal) || !IsFinite(velocity))
+        {
+            return false;
+        }
+        InstanceSlot& slot = m_Instances[handle.Index];
+        if (emitterIndex >= slot.Emitters.size() ||
+            slot.Asset.Emitters[emitterIndex].Properties[slot.PropertyIndices[ExecutorProperty]].UInt != static_cast<uint32_t>(VfxExecutor::Gpu))
+        {
+            return false;
+        }
+        RefreshEmitter(slot, emitterIndex);
+        const EmitterState& emitter = slot.Emitters[emitterIndex];
+        const Math::Vector3 burstPosition = position + emitter.Offset;
+        if (emitter.Executor != VfxExecutor::Gpu || !IsFinite(burstPosition))
+        {
+            return false;
+        }
+        GpuExecutionState& gpu = EnsureGpuState();
+        if (!gpu.Allocator.IsLive({emitter.GpuPoolIndex, emitter.GpuPoolGeneration}))
+        {
+            return false;
+        }
+        if (gpu.Bursts.size() >= Rendering::kGpuParticleMaxBursts)
+        {
+            if (gpu.OverflowCount != std::numeric_limits<uint32_t>::max())
+            {
+                ++gpu.OverflowCount;
+            }
+            return false;
+        }
+        GpuExecutionState::PendingBurst pending;
+        pending.Handle = handle;
+        pending.EmitterIndex = emitterIndex;
+        pending.Epoch = emitter.GpuEpoch;
+        pending.Burst.Position[0] = burstPosition.x;
+        pending.Burst.Position[1] = burstPosition.y;
+        pending.Burst.Position[2] = burstPosition.z;
+        pending.Burst.Normal[0] = normal.x;
+        pending.Burst.Normal[1] = normal.y;
+        pending.Burst.Normal[2] = normal.z;
+        pending.Burst.Velocity[0] = velocity.x;
+        pending.Burst.Velocity[1] = velocity.y;
+        pending.Burst.Velocity[2] = velocity.z;
+        pending.Burst.Count = count;
+        gpu.Bursts.push_back(pending);
+        return true;
+    }
+
     void VfxEffectSystem::Tick(float deltaTime)
     {
         Tick(deltaTime, VfxTickContext{});
     }
 
     void VfxEffectSystem::Tick(float deltaTime, const VfxTickContext& context)
+    {
+        Tick(deltaTime, context, context.UnscaledDeltaTime);
+    }
+
+    void VfxEffectSystem::Tick(float deltaTime, const VfxTickContext& context, float gpuUnscaledDeltaTime)
     {
         if (!std::isfinite(deltaTime) || deltaTime < 0.0f)
         {
@@ -460,6 +564,13 @@ namespace NorvesLib::Core::Particle
         const Rendering::WindParameters wind = Rendering::SanitizeWindParameters(context.Wind);
         const float unscaledDeltaTime = std::isfinite(context.UnscaledDeltaTime) && context.UnscaledDeltaTime >= 0.0f ?
             context.UnscaledDeltaTime : deltaTime;
+        const float gpuDeltaTime = std::isfinite(gpuUnscaledDeltaTime) && gpuUnscaledDeltaTime >= 0.0f ?
+            gpuUnscaledDeltaTime : unscaledDeltaTime;
+        GpuExecutionState& gpu = EnsureGpuState();
+        gpu.PendingDeltaTime += deltaTime;
+        gpu.PendingUnscaledDeltaTime += gpuDeltaTime;
+        gpu.ParticleTime += deltaTime;
+        gpu.UnscaledTime += gpuDeltaTime;
         for (InstanceSlot& slot : m_Instances)
         {
             if (!slot.bActive)
@@ -474,6 +585,49 @@ namespace NorvesLib::Core::Particle
                 RefreshEmitter(slot, emitterIndex);
                 EmitterState& emitter = slot.Emitters[emitterIndex];
                 const float emitterDeltaTime = emitter.TimeChannel == VfxTimeChannel::Unscaled ? unscaledDeltaTime : deltaTime;
+                if (emitter.Executor == VfxExecutor::Gpu)
+                {
+                    emitter.GpuPendingDeltaTime += emitter.TimeChannel == VfxTimeChannel::Unscaled ? gpuDeltaTime : deltaTime;
+                    if (slot.Desc.bEnabled)
+                    {
+                        const VfxEmitterAsset& asset = slot.Asset.Emitters[emitterIndex];
+                        for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
+                        {
+                            const VfxModule& module = asset.Modules[moduleIndex];
+                            const ModuleBinding& binding = emitter.Bindings[moduleIndex];
+                            if (module.Type == VfxModuleType::SpawnBurst)
+                            {
+                                const double time = module.Values[binding.Arguments[1]].Vector.x;
+                                if (start <= time && time < end)
+                                {
+                                    const uint32_t count = module.Values[binding.Arguments[0]].UInt;
+                                    const uint32_t remaining = std::numeric_limits<uint32_t>::max() - emitter.GpuPendingBurstCount;
+                                    emitter.GpuPendingBurstCount += count < remaining ? count : remaining;
+                                }
+                            }
+                        }
+                        for (const PendingEvent& event : slot.Events)
+                        {
+                            if (event.Time < start || event.Time >= end)
+                            {
+                                continue;
+                            }
+                            for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
+                            {
+                                const VfxModule& module = asset.Modules[moduleIndex];
+                                const ModuleBinding& binding = emitter.Bindings[moduleIndex];
+                                if (module.Type == VfxModuleType::SpawnOnEvent && module.Values[binding.Arguments[0]].Name == event.Name)
+                                {
+                                    const VfxEffectHandle handle{static_cast<uint32_t>(&slot - m_Instances.data()), slot.Generation};
+                                    RaiseGpuBurst(handle, emitterIndex, event.Position,
+                                        event.bOriented ? event.Normal : Math::Vector3(0.0f), Math::Vector3(0.0f),
+                                        module.Values[binding.Arguments[1]].UInt);
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
                 uint32_t writeIndex = 0u;
                 for (uint32_t readIndex = 0u; readIndex < emitter.Particles.size(); ++readIndex)
                 {
@@ -584,7 +738,16 @@ namespace NorvesLib::Core::Particle
             }
             for (const ChildSpawn& child : children)
             {
-                SpawnParticles(slot, slot.Emitters[child.EmitterIndex], 1u, child.Position, end, 0.0f, context, nullptr, true);
+                EmitterState& target = slot.Emitters[child.EmitterIndex];
+                if (target.Executor == VfxExecutor::Cpu)
+                {
+                    SpawnParticles(slot, target, 1u, child.Position, end, 0.0f, context, nullptr, true);
+                }
+                else
+                {
+                    const VfxEffectHandle handle{static_cast<uint32_t>(&slot - m_Instances.data()), slot.Generation};
+                    RaiseGpuBurst(handle, child.EmitterIndex, child.Position, Math::Vector3(0.0f), Math::Vector3(0.0f), 1u);
+                }
             }
             uint32_t writeIndex = 0u;
             for (uint32_t readIndex = 0u; readIndex < slot.Events.size(); ++readIndex)
@@ -600,6 +763,365 @@ namespace NorvesLib::Core::Particle
             }
             slot.Events.resize(writeIndex);
             slot.Time = end;
+        }
+    }
+
+    Rendering::GpuEmitterParams VfxEffectSystem::PackGpuEmitterParams(const InstanceSlot& slot, uint32_t emitterIndex,
+        EmitterState& emitter, const VariableArray<uint32_t>& frameIndices, Rendering::GpuParticleScene& out)
+    {
+        Rendering::GpuEmitterParams params{};
+        params.PlaneCollision.ChildEmitter = Rendering::kGpuParticleInvalidEmitter;
+        params.HeightFieldCollision.ChildEmitter = Rendering::kGpuParticleInvalidEmitter;
+        params.DepthCollision.ChildEmitter = Rendering::kGpuParticleInvalidEmitter;
+        params.Seed = emitter.StreamSeed;
+        params.Lifetime = emitter.Lifetime;
+        const Math::Vector3 position = emitter.Shape == VfxSpawnShape::CameraBox ? emitter.Offset : slot.Desc.Position + emitter.Offset;
+        const auto copyVector3 = [](float* destination, const Math::Vector3& value)
+        {
+            destination[0] = value.x;
+            destination[1] = value.y;
+            destination[2] = value.z;
+        };
+        copyVector3(params.Position, position);
+        copyVector3(params.VelocityMin, emitter.VelocityMin);
+        copyVector3(params.VelocityMax, emitter.VelocityMax);
+        copyVector3(params.Acceleration, emitter.Acceleration);
+        params.Color[0] = emitter.Color.x;
+        params.Color[1] = emitter.Color.y;
+        params.Color[2] = emitter.Color.z;
+        params.Color[3] = emitter.Color.w;
+        params.Size[0] = emitter.Size.x;
+        params.Size[1] = emitter.Size.y;
+        params.Radius = emitter.ShapeRadius;
+        params.ConeAngleRadians = emitter.ConeAngle * (Math::Constants::PI / 180.0f);
+        params.ConeLength = emitter.ConeLength;
+        const Math::Vector3 extents = emitter.Shape == VfxSpawnShape::CameraBox ?
+            Math::Vector3(emitter.CameraBoxHalfWidth, emitter.CameraBoxHeight * 0.5f, emitter.CameraBoxHalfWidth) : emitter.BoxHalfExtents;
+        copyVector3(params.BoxHalfExtents, extents);
+        params.Flags = (static_cast<uint32_t>(emitter.Shape) & Rendering::kGpuEmitterShapeMask) << Rendering::kGpuEmitterShapeShift;
+        if (emitter.Shape != VfxSpawnShape::Point)
+        {
+            params.Flags |= Rendering::kGpuEmitterFlagShape;
+        }
+        if (emitter.Shape == VfxSpawnShape::CameraBox && emitter.WrapPolicy == VfxWrapPolicy::WrapInCameraBox)
+        {
+            params.Flags |= Rendering::kGpuEmitterFlagWrapInCameraBox;
+        }
+        if (emitter.TimeChannel == VfxTimeChannel::Unscaled)
+        {
+            params.Flags |= Rendering::kGpuEmitterFlagUnscaledTime;
+        }
+
+        params.CurveKeyOffset = static_cast<uint32_t>(out.CurveKeys.size());
+        constexpr uint32_t curveFlags[] = {Rendering::kGpuEmitterFlagCurveSize, Rendering::kGpuEmitterFlagCurveColor,
+            Rendering::kGpuEmitterFlagCurveOpacity, Rendering::kGpuEmitterFlagCurveStretch};
+        for (uint32_t target = 0u; target < 4u; ++target)
+        {
+            const LifeCurveState& curve = emitter.Curves[target];
+            if (curve.KeyCount == 0u)
+            {
+                continue;
+            }
+            params.Flags |= curveFlags[target];
+            params.CurveKeyCounts |= (curve.KeyCount & Rendering::kGpuCurveKeyCountMask) << (target * 8u);
+            for (uint32_t index = 0u; index < curve.KeyCount; ++index)
+            {
+                out.CurveKeys.push_back({static_cast<float>(curve.Keys[index].Time), curve.Keys[index].Value});
+            }
+            if (target == static_cast<uint32_t>(VfxCurveTarget::Color))
+            {
+                params.CurveColor[0] = curve.Color.x;
+                params.CurveColor[1] = curve.Color.y;
+                params.CurveColor[2] = curve.Color.z;
+                params.CurveColor[3] = curve.Color.w;
+            }
+        }
+
+        const VfxEmitterAsset& asset = slot.Asset.Emitters[emitterIndex];
+        uint32_t seen = 0u;
+        const auto firstModule = [&](uint32_t bit)
+        {
+            if ((seen & bit) == 0u)
+            {
+                seen |= bit;
+                return true;
+            }
+            if ((emitter.GpuDuplicateWarnings & bit) == 0u)
+            {
+                LOG_WARNING("GPU エミッタの同種モジュールが複数あるため先頭だけを使います");
+                emitter.GpuDuplicateWarnings |= bit;
+            }
+            return false;
+        };
+        for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
+        {
+            const VfxModule& module = asset.Modules[moduleIndex];
+            const ModuleBinding& binding = emitter.Bindings[moduleIndex];
+            const auto value = [&](uint32_t argument) -> const VfxValue&
+            {
+                return module.Values[binding.Arguments[argument]];
+            };
+            switch (module.Type)
+            {
+            case VfxModuleType::Drag:
+                if (firstModule(1u << 0u))
+                {
+                    params.Flags |= Rendering::kGpuEmitterFlagDrag;
+                    params.Drag = value(0u).Vector.x;
+                }
+                break;
+            case VfxModuleType::WindInfluence:
+                if (firstModule(1u << 1u))
+                {
+                    params.Flags |= Rendering::kGpuEmitterFlagWind;
+                    params.WindCoupling = value(0u).Vector.x;
+                    params.WindScale = value(1u).Vector.x;
+                }
+                break;
+            case VfxModuleType::Turbulence:
+                if (firstModule(1u << 2u))
+                {
+                    params.Flags |= Rendering::kGpuEmitterFlagTurbulence;
+                    params.TurbulenceStrength = value(0u).Vector.x;
+                    params.TurbulenceFrequency = value(1u).Vector.x;
+                }
+                break;
+            case VfxModuleType::ActivationFraction:
+                if (firstModule(1u << 3u))
+                {
+                    params.Flags |= Rendering::kGpuEmitterFlagActivation;
+                    params.ActivationFraction = value(0u).Vector.x;
+                    params.ActivationRamp = value(1u).Vector.x;
+                }
+                break;
+            case VfxModuleType::CollisionPlane:
+            case VfxModuleType::CollisionHeightField:
+            case VfxModuleType::CollisionDepth:
+            {
+                const bool bPlane = module.Type == VfxModuleType::CollisionPlane;
+                const bool bDepth = module.Type == VfxModuleType::CollisionDepth;
+                const uint32_t bit = bPlane ? (1u << 4u) : bDepth ? (1u << 6u) : (1u << 5u);
+                if (!firstModule(bit))
+                {
+                    break;
+                }
+                Rendering::GpuCollisionParams& collision = bPlane ? params.PlaneCollision :
+                    bDepth ? params.DepthCollision : params.HeightFieldCollision;
+                const uint32_t responseIndex = bPlane ? 2u : bDepth ? 1u : 0u;
+                if (bPlane)
+                {
+                    params.Flags |= Rendering::kGpuEmitterFlagCollisionPlane;
+                    params.GroundY = value(0u).Vector.x;
+                    params.KillBelowY = value(1u).Vector.x;
+                }
+                else if (bDepth)
+                {
+                    params.Flags |= Rendering::kGpuEmitterFlagCollisionDepth;
+                    params.DepthThickness = value(0u).Vector.x;
+                }
+                else
+                {
+                    params.Flags |= Rendering::kGpuEmitterFlagCollisionHeightField;
+                }
+                collision.Response = value(responseIndex).UInt;
+                collision.Restitution = value(responseIndex + 1u).Vector.x;
+                collision.ChildProbability = value(responseIndex + 3u).Vector.x;
+                const Container::String& childName = value(responseIndex + 2u).Name;
+                for (uint32_t childIndex = 0u; childIndex < slot.Asset.Emitters.size(); ++childIndex)
+                {
+                    if (slot.Asset.Emitters[childIndex].Name == childName)
+                    {
+                        collision.ChildEmitter = frameIndices[childIndex];
+                        break;
+                    }
+                }
+                break;
+            }
+            case VfxModuleType::GpuSpriteRenderer:
+                if (firstModule(1u << 7u))
+                {
+                    params.RenderFlags =
+                        ((value(0u).UInt & Rendering::kGpuEmitterRenderOrientationMask) << Rendering::kGpuEmitterRenderOrientationShift) |
+                        ((value(1u).UInt & Rendering::kGpuEmitterRenderBlendMask) << Rendering::kGpuEmitterRenderBlendShift) |
+                        ((value(2u).UInt & Rendering::kGpuEmitterRenderPassMask) << Rendering::kGpuEmitterRenderPassShift) |
+                        ((value(4u).UInt & Rendering::kGpuEmitterRenderLightingMask) << Rendering::kGpuEmitterRenderLightingShift) |
+                        ((value(7u).UInt & Rendering::kGpuEmitterRenderSubPixelCompensationMask) << Rendering::kGpuEmitterRenderSubPixelCompensationShift) |
+                        ((value(10u).UInt & Rendering::kGpuEmitterRenderSlotOrderMask) << Rendering::kGpuEmitterRenderSlotOrderShift);
+                    params.SoftDistance = value(3u).Vector.x;
+                    params.FogInfluence = value(5u).Vector.x;
+                    params.StreakShutterSeconds = value(6u).Vector.x;
+                    params.NearFadeDistance = value(8u).Vector.x;
+                }
+                break;
+            default:
+                break;
+            }
+        }
+        return params;
+    }
+
+    void VfxEffectSystem::BuildGpuParticleFrame(Rendering::GpuParticleScene& out)
+    {
+        out.Clear();
+        GpuExecutionState& gpu = EnsureGpuState();
+        struct FrameReference
+        {
+            uint32_t InstanceIndex;
+            uint32_t EmitterIndex;
+        };
+        VariableArray<FrameReference> references;
+        VariableArray<VariableArray<uint32_t>> frameIndices;
+        frameIndices.resize(m_Instances.size());
+        for (uint32_t instanceIndex = 0u; instanceIndex < m_Instances.size(); ++instanceIndex)
+        {
+            InstanceSlot& slot = m_Instances[instanceIndex];
+            if (!slot.bActive)
+            {
+                continue;
+            }
+            frameIndices[instanceIndex].resize(slot.Emitters.size(), Rendering::kGpuParticleInvalidEmitter);
+            for (uint32_t emitterIndex = 0u; emitterIndex < slot.Emitters.size(); ++emitterIndex)
+            {
+                EmitterState& emitter = slot.Emitters[emitterIndex];
+                const VfxEmitterAsset& asset = slot.Asset.Emitters[emitterIndex];
+                if (emitter.Executor == VfxExecutor::Gpu ||
+                    asset.Properties[slot.PropertyIndices[ExecutorProperty]].UInt == static_cast<uint32_t>(VfxExecutor::Gpu))
+                {
+                    RefreshEmitter(slot, emitterIndex);
+                }
+                Rendering::GpuParticleEmitterRange range;
+                if (emitter.Executor != VfxExecutor::Gpu ||
+                    !gpu.Allocator.TryGetRange({emitter.GpuPoolIndex, emitter.GpuPoolGeneration}, range))
+                {
+                    continue;
+                }
+                frameIndices[instanceIndex][emitterIndex] = static_cast<uint32_t>(references.size());
+                references.push_back({instanceIndex, emitterIndex});
+            }
+        }
+
+        VariableArray<Rendering::GpuParticleSpawnRequest> requests;
+        VariableArray<Rendering::GpuParticleSpawnState> states;
+        requests.reserve(references.size());
+        states.reserve(references.size());
+        out.Emitters.reserve(references.size());
+        for (uint32_t frameIndex = 0u; frameIndex < references.size(); ++frameIndex)
+        {
+            const FrameReference& reference = references[frameIndex];
+            InstanceSlot& slot = m_Instances[reference.InstanceIndex];
+            EmitterState& emitter = slot.Emitters[reference.EmitterIndex];
+            Rendering::GpuParticleEmitterRange range;
+            gpu.Allocator.TryGetRange({emitter.GpuPoolIndex, emitter.GpuPoolGeneration}, range);
+            Rendering::GpuParticleEmitterFrame frame;
+            frame.InstanceId = (static_cast<uint64_t>(slot.Generation) << 32u) | reference.InstanceIndex;
+            frame.EmitterIndex = reference.EmitterIndex;
+            frame.PoolSlot = emitter.GpuPoolIndex;
+            frame.AllocationGeneration = emitter.GpuPoolGeneration;
+            frame.World = Math::MatrixUtils::CreateTranslation(slot.Desc.Position);
+            frame.PreviousWorld = Math::MatrixUtils::CreateTranslation(
+                slot.bHasPreviousGpuPosition ? slot.PreviousGpuPosition : slot.Desc.Position);
+            frame.bEnabled = slot.Desc.bEnabled;
+            frame.Params = PackGpuEmitterParams(slot, reference.EmitterIndex, emitter, frameIndices[reference.InstanceIndex], out);
+            frame.Params.PoolOffset = range.Offset;
+            frame.Params.Capacity = range.Capacity;
+            out.Emitters.push_back(frame);
+
+            float rate = 0.0f;
+            if (slot.Desc.bEnabled)
+            {
+                const VfxEmitterAsset& asset = slot.Asset.Emitters[reference.EmitterIndex];
+                for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
+                {
+                    const VfxModule& module = asset.Modules[moduleIndex];
+                    if (module.Type == VfxModuleType::SpawnRate)
+                    {
+                        rate += module.Values[emitter.Bindings[moduleIndex].Arguments[0]].Vector.x;
+                    }
+                }
+            }
+            requests.push_back({frameIndex, rate, slot.Desc.bEnabled ? emitter.GpuPendingDeltaTime : 0.0f,
+                slot.Desc.bEnabled ? emitter.GpuPendingBurstCount : 0u, range.Capacity});
+            states.push_back({emitter.SpawnAccumulator, emitter.NextSerial});
+        }
+        out.JobSpawnCount = Rendering::GpuParticleSpawnPlanner::Plan(
+            Container::Span<const Rendering::GpuParticleSpawnRequest>(requests.data(), requests.size()),
+            Container::Span<Rendering::GpuParticleSpawnState>(states.data(), states.size()), out.SpawnJobs);
+        for (uint32_t frameIndex = 0u; frameIndex < references.size(); ++frameIndex)
+        {
+            const FrameReference& reference = references[frameIndex];
+            InstanceSlot& slot = m_Instances[reference.InstanceIndex];
+            EmitterState& emitter = slot.Emitters[reference.EmitterIndex];
+            if (slot.Desc.bEnabled)
+            {
+                emitter.SpawnAccumulator = states[frameIndex].Accumulator;
+                emitter.NextSerial = states[frameIndex].NextSerial;
+            }
+            out.Emitters[frameIndex].Params.SerialBase = emitter.NextSerial;
+        }
+        for (const Rendering::GpuSpawnJob& job : out.SpawnJobs)
+        {
+            out.Emitters[job.EmitterIndex].Params.SerialBase = job.FirstSerial;
+            out.Emitters[job.EmitterIndex].Params.SpawnCount = job.Count;
+        }
+        out.TotalSpawnCount = out.JobSpawnCount;
+        out.Bursts.OverflowCount = gpu.OverflowCount;
+        for (const GpuExecutionState::PendingBurst& pending : gpu.Bursts)
+        {
+            if (!IsLiveInstance(pending.Handle))
+            {
+                continue;
+            }
+            InstanceSlot& slot = m_Instances[pending.Handle.Index];
+            if (pending.EmitterIndex >= slot.Emitters.size())
+            {
+                continue;
+            }
+            EmitterState& emitter = slot.Emitters[pending.EmitterIndex];
+            const uint32_t frameIndex = frameIndices[pending.Handle.Index][pending.EmitterIndex];
+            if (frameIndex == Rendering::kGpuParticleInvalidEmitter || emitter.GpuEpoch != pending.Epoch)
+            {
+                continue;
+            }
+            Rendering::GpuParticleBurst burst = pending.Burst;
+            const uint32_t requested = burst.Count;
+            burst.Count = requested < out.Emitters[frameIndex].Params.Capacity ? requested : out.Emitters[frameIndex].Params.Capacity;
+            burst.EmitterIndex = frameIndex;
+            burst.FirstSerial = emitter.NextSerial;
+            burst.OutputOffset = out.TotalSpawnCount;
+            emitter.NextSerial += requested;
+            if (out.Bursts.Push(burst))
+            {
+                out.TotalSpawnCount += burst.Count;
+            }
+        }
+        out.DeltaTime = gpu.PendingDeltaTime;
+        out.UnscaledDeltaTime = gpu.PendingUnscaledDeltaTime;
+        out.ParticleTime = gpu.ParticleTime;
+        out.UnscaledTime = gpu.UnscaledTime;
+        gpu.PendingDeltaTime = 0.0f;
+        gpu.PendingUnscaledDeltaTime = 0.0f;
+        gpu.Bursts.clear();
+        gpu.OverflowCount = 0u;
+        for (uint32_t instanceIndex = 0u; instanceIndex < m_Instances.size(); ++instanceIndex)
+        {
+            InstanceSlot& slot = m_Instances[instanceIndex];
+            if (!slot.bActive)
+            {
+                continue;
+            }
+            bool bHasGpuEmitter = false;
+            for (uint32_t emitterIndex = 0u; emitterIndex < slot.Emitters.size(); ++emitterIndex)
+            {
+                EmitterState& emitter = slot.Emitters[emitterIndex];
+                emitter.GpuPendingDeltaTime = 0.0f;
+                emitter.GpuPendingBurstCount = 0u;
+                bHasGpuEmitter |= frameIndices[instanceIndex][emitterIndex] != Rendering::kGpuParticleInvalidEmitter;
+            }
+            if (bHasGpuEmitter)
+            {
+                slot.PreviousGpuPosition = slot.Desc.Position;
+                slot.bHasPreviousGpuPosition = true;
+            }
         }
     }
 
@@ -870,6 +1392,7 @@ namespace NorvesLib::Core::Particle
     void VfxEffectSystem::RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex)
     {
         EmitterState& emitter = slot.Emitters[emitterIndex];
+        const VfxExecutor previousExecutor = emitter.Executor;
         const VfxEmitterAsset& asset = slot.Asset.Emitters[emitterIndex];
         const uint32_t capacity = asset.Properties[slot.PropertyIndices[CapacityProperty]].UInt;
         emitter.MaxParticles = capacity != 0u ? capacity : asset.Properties[slot.PropertyIndices[MaxParticlesProperty]].UInt;
@@ -1026,6 +1549,44 @@ namespace NorvesLib::Core::Particle
             default:
                 break;
             }
+        }
+        if (emitter.Executor != previousExecutor)
+        {
+            emitter.GpuPendingDeltaTime = 0.0f;
+            emitter.GpuPendingBurstCount = 0u;
+            if (emitter.Executor == VfxExecutor::Gpu)
+            {
+                emitter.Particles.clear();
+                ++emitter.GpuEpoch;
+            }
+        }
+        if (emitter.Executor == VfxExecutor::Gpu || emitter.GpuPoolGeneration != 0u)
+        {
+            GpuExecutionState& gpu = EnsureGpuState();
+            Rendering::GpuParticleEmitterHandle handle{emitter.GpuPoolIndex, emitter.GpuPoolGeneration};
+            Rendering::GpuParticleEmitterRange range;
+            if (handle.IsValid() && (emitter.Executor != VfxExecutor::Gpu ||
+                !gpu.Allocator.TryGetRange(handle, range) || range.Capacity != emitter.MaxParticles))
+            {
+                gpu.Allocator.Free(handle);
+                handle = {};
+            }
+            if (emitter.Executor == VfxExecutor::Gpu && !handle.IsValid())
+            {
+                handle = gpu.Allocator.Allocate(emitter.MaxParticles);
+                if (handle.IsValid() && handle.Index >= Rendering::kGpuParticleMaxEmitters)
+                {
+                    gpu.Allocator.Free(handle);
+                    handle = {};
+                }
+                if (!handle.IsValid() && !emitter.bGpuAllocationWarned)
+                {
+                    LOG_WARNING("GPU エミッタの粒プールを確保できません");
+                    emitter.bGpuAllocationWarned = true;
+                }
+            }
+            emitter.GpuPoolIndex = handle.Index;
+            emitter.GpuPoolGeneration = handle.Generation;
         }
     }
 
@@ -1239,6 +1800,14 @@ namespace NorvesLib::Core::Particle
     void VfxEffectSystem::ReleaseSlot(uint32_t index)
     {
         InstanceSlot& slot = m_Instances[index];
+        if (m_GpuState)
+        {
+            for (const EmitterState& emitter : slot.Emitters)
+            {
+                m_GpuState->Allocator.Free({emitter.GpuPoolIndex, emitter.GpuPoolGeneration});
+            }
+        }
+        slot.bHasPreviousGpuPosition = false;
         slot.Asset = VfxEffectAsset{};
         slot.Emitters.clear();
         slot.Events.clear();
