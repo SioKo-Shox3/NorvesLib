@@ -568,11 +568,15 @@ namespace NorvesLib::Core::ResourceIO
             return false;
         }
         const auto* cpu = receipt->m_Cpu.GetData();
+        // 表がある split は、GPU で頂点と標本を読むため描画 lease を持てる。
+        // 表が無い split に lease がある場合は、従来どおり一致しない。
         if (!cpu || !asset.GetMesh() || !asset.GetSkeleton() ||
             asset.GetResourcePath() != identity.GetData()->BundleUri ||
             asset.GetMesh()->GetSplitMesh() != cpu->Mesh.GetData() ||
             asset.GetSkeleton()->GetSplitSkeleton() != cpu->Skeleton.GetData() ||
-            asset.GetMesh()->GetRenderAssetLease() || asset.GetClipCount() != cpu->Clips.size())
+            (asset.GetMesh()->GetRenderAssetLease() &&
+             (!cpu->Mesh.GetData() || cpu->Mesh.GetData()->SurfaceSamples.empty())) ||
+            asset.GetClipCount() != cpu->Clips.size())
         {
             return false;
         }

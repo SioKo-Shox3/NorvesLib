@@ -1128,6 +1128,13 @@ namespace NorvesLib::Core::Rendering
         return impl && impl->SkinnedMeshes && impl->SkinnedMeshes->TryGetChunks(handle, out);
     }
 
+    bool SkinnedMeshResources::TryGetSurfaceSource(SkinnedMeshHandle handle, SkinnedSurfaceGpuSource& out) const
+    {
+        out = {};
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->SkinnedMeshes && impl->SkinnedMeshes->TryGetSurfaceSource(handle, out);
+    }
+
     void SkinnedMeshResources::SetChunkBuilderForTesting(MeshIndexChunkBuilder builder)
     {
         auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
