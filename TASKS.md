@@ -7703,7 +7703,7 @@
 - notes: 設計はロードマップ 2269〜2275 行（GR48 の 2. インポスターのベイク）。決定（ロードマップ 2275 行が「実測で決める」とするセルの割り付け）: 既定を上半球の hemi-octahedral にし、全球の八面体は設定で選べるようにする。理由: 舞台の視点は地面にいて水平の付近に集中し（ロードマップ 2745 行のリスク）、下からの視線はほぼ無いので、同じセルの数で水平の帯の方位の分解能が約 2 倍になる。実の AI の木で足りなければ G12-GR48-CHECK で全球や方位 × 仰角の格子との比べを記録する。GPU で焼く理由: AI のメッシュは数十万〜百万の三角形で、材質のテクスチャを近景と同じ式で引きたい（CPU のラスタは材質の再現が別の実装になる。ロードマップ 2273 行）。今の NVTEX は BC があるので（`CookedTextureFormat.h:23-37`）、アトラスはロードマップ 2742 行の見積もり（無圧縮で 1 樹種あたり約 30〜40MB）より小さく焼ける。`Tools/ImpostorBaker` は道具の実行ファイルで、試験の実行ファイルではない。ベイクの見た目（法線・AO の二重の暗さ、深度の食い違い）が近景とずれると遷移で明るさが跳ぶ（ロードマップ 2743 行）ので、材質の読み方を `gbuffer.frag` と共有する。危険地帯（RHI/Vulkan）なので評価者を通す。やらないこと: 実行時の GBuffer の描画、遷移。
 
 ## G12-GR48-IMPOSTOR-GBUFFER: インポスターを半透明の前方描画でなく GBuffer へ書く専用のパスで描き、ライティング・影の受け・霧・濡れに参加させる
-- status: done
+- status: doing
 - after: G12-GR48-IMPOSTOR-BAKE, G12-GR48-MESH-LOD-SELECT, G5-GR43-GRASS-DRAW, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR48
 - needs-gr: GR26
