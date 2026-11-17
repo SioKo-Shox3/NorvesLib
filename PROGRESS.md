@@ -12215,3 +12215,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 表面の標本の記録の型と NVSKEL role2 の任意節 SURF の読み書き: 着地(直し 0 回)
 - U4 GPU の放出の記述に SkinSurface・Bone の欄と、スキンの源の行と、骨の選び方の道具を足す: 着地(直し 0 回)
 - U5 スキンの表面の点を CPU の SkinPosition と同じ式でスキニングする GLSL の部品: 着地(直し 0 回)
+- U2 取り込み設定の surfaceSamples と、面積に比例して決定的に選ぶ cook: 着地(直し 0 回)
