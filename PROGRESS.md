@@ -12123,3 +12123,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `--grassland-forest=` の解析とモードへの受け渡しは置き場が `Game/GameApplicationHandler.{h,cpp}`（paths の外）にしか無いため、引数 1 つの解析とメンバ 2 つ・キャプチャ 1 つだけを足した。
 - Notes: （2026-11-17、判断役の判断で再開）verify の 3 行目を `CookAssets.ps1 -OnlyLogicalPath` から AssetCook で森の配置を直接焼く形に替え、試験の行を外した。全体のクック（`-OnlyLogicalPath` なしの CookAssets と `.harness/relay/precook` の系）は止めて再開しない。枠 NorvesLib-2 の `build/CookedAssets` に残る途中の全体のクック（14 項目の manifest）は使わない。manifest が無いときの `-OnlyLogicalPath` の拒否は SCN-MEGA-RT-SELECT-P1 で扱う。
 - U8 配置の一覧の種の表で空の遮蔽物の欄を規則の種の表と同じ読み手で受け、タスクの verify を回す: 着地(直し 0 回)
+
+## G12-GR47-PLACEMENT-COOK 統合ブランチの取り込みと仕上げ（2026-11-17、run 20261117-203902）
+- Done: 統合ブランチ feature/scene-launcher を取り込み、10 ファイルの衝突を解いた。NVSCT v0 の種の記録は統合ブランチの形（84〜96 は空の遮蔽物の欄）のまま残し、種ごとの衝突の形の範囲 {first, count} は衝突の表の節（ヘッダ 176）の頭に種の数だけ並べる形へ移した。形が 1 つも無いファイルは節ごと書かないので、新しい欄を使わない規則の散布のファイルは統合ブランチの出力と同じ並びになる。`Docs/Architecture/NVSCTv0.md` を合わせた。
+- Done: `SceneProxy` は `bRayTracing` と `bSkyMapProxy` を両方持ち、ハッシュにも両方入れる。`ray_tracing` が偽の種は TLAS の選択から外し、樹冠の空の遮蔽の組（instance mask 0x04）にも入れない。`ScatterSystem` は隠した個体を空の遮蔽物の配列にも入れず、常駐中に `SetInstanceHidden` で切り替えたときと `RestoreHiddenInstances` で集合を戻したときは、そのチャンクの遮蔽物の配列を作り直して公開する（常駐・解放のときは非表示の当て直しと同じ場所で配列を作る）。
+- Done: 配置の一覧の種の表で任意の `sky_occluder` を受ける。規則の散布 spec と同じ `ScatterSpecInput::SkyOccluder` で読み、種への写しは `CopyScatterSkyOccluder`（ScatterBaker と共有）で行う。欄の無い森の配置の出力はバイト単位で変わらない（SHA256 一致）。
+- 証拠: `.harness/runs/20261117-203902/verify-final.txt`（`cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT=0。AssetCook で森の配置を直接焼いて `SCATTER_COOKED chunks=204 species=3 instances=20000`・EXIT=0）。取り込み直後のビルドは `.harness/runs/20261117-203902/merge-build-1.txt`（EXIT=0）。
+- 回さなかったもの: 試験は作らない・回さない決まりで、ctest の行は回していない。撮影・アプリの起動はしない決まり。
+- Next: ランナーの評価者の反証（危険地帯: アセットのクック・Public API の `ScatterSystem`・TLAS の選択）。人が見るときの見どころ: grassland（ランチャーの草原）で規則の散布と並んで針葉樹・枯れ木・岩の森が出ること、枯れ木だけが RT の反射・影の光線に映らないこと、`--grassland-forest=off` で森だけが消えること、森が 384 m（岩は 256 m）で出入りすること。規則の散布の樹冠の空の遮蔽（統合ブランチで入った見た目）が取り込みの前と変わらないこと。
+- Notes: 判断役が決めた 2 点（衝突の形の範囲を種の記録の外に置く・`ray_tracing` 偽を樹冠の 0x04 より優先する）をそのまま採った。森の配置の見本には `sky_occluder` を付けていない（欄は任意）。
