@@ -12,6 +12,19 @@ namespace NorvesLib::Core::Rendering
 
 namespace NorvesLib::Core::Component
 {
+    /// アトラスの焼き込み情報を、保存可能な8整数の文字列で保持する。
+    struct ImpostorAtlasMetadataValue
+    {
+        static constexpr TypeKind SchemaTypeKind = TypeKind::String;
+        static constexpr const char *SchemaTypeName = "ImpostorAtlasMetadata";
+
+        Rendering::ImpostorBakeMetadata Value;
+
+        bool SerializeToString(Container::String &out) const;
+        bool DeserializeFromString(const Container::String &in);
+        bool operator==(const ImpostorAtlasMetadataValue &other) const;
+    };
+
     class ImpostorComponent : public BillboardComponent
     {
         REFLECTION_CLASS(ImpostorComponent, BillboardComponent)
@@ -22,8 +35,17 @@ namespace NorvesLib::Core::Component
         explicit ImpostorComponent(const IUnknown *sourceObject);
         virtual ~ImpostorComponent();
 
+        void BeginPlay() override;
+        void Finalize() override;
+        void OnPropertyApplied(const ClassProperty &property) override;
+
         bool SetBakedAtlas(Rendering::TextureHandle texture,
                            const Rendering::ImpostorBakeMetadata &metadata);
+        bool SetBakedAtlas(Rendering::TextureHandle texture,
+                           const Rendering::ImpostorBakeMetadata &metadata,
+                           Container::StringView sourcePath);
+        const TextureAssetRef &GetBakedAtlasAsset() const { return BakedAtlasAsset.Get(); }
+        void SetBakedAtlasAsset(const TextureAssetRef &reference);
         void ReleaseBakedAtlas(Rendering::TextureResources &textures,
                                Rendering::RenderWorld *renderWorld = nullptr);
         void SetSourceMeshComponentId(uint64_t componentId);
@@ -36,18 +58,23 @@ namespace NorvesLib::Core::Component
         void SetLODSwitchScreenSize(float screenSize);
         float GetLODSwitchScreenSize() const { return LODSwitchScreenSize; }
 
-        Rendering::TextureHandle GetBakedAtlasTextureHandle() const { return BakedAtlasTextureHandle; }
-        const Rendering::ImpostorBakeMetadata &GetBakedAtlasMetadata() const { return BakedAtlasMetadata; }
-        bool HasBakedAtlas() const { return BakedAtlasTextureHandle->IsValid() && BakedAtlasMetadata->IsValid(); }
+        Rendering::TextureHandle GetBakedAtlasTextureHandle() const { return m_BakedAtlasTexture; }
+        const Rendering::ImpostorBakeMetadata &GetBakedAtlasMetadata() const { return BakedAtlasMetadata->Value; }
+        bool HasBakedAtlas() const { return m_BakedAtlasTexture.IsValid() && BakedAtlasMetadata->Value.IsValid(); }
 
         bool BuildBoardProxy(Rendering::BoardProxy &outProxy,
                              const Rendering::MaterialResources *materials = nullptr) const override;
 
     protected:
-        PROPERTY(Rendering::TextureHandle, BakedAtlasTextureHandle)
-        PROPERTY(Rendering::ImpostorBakeMetadata, BakedAtlasMetadata)
+        void PollAssetBindings() override;
+
+        PROPERTY(TextureAssetRef, BakedAtlasAsset)
+        PROPERTY(ImpostorAtlasMetadataValue, BakedAtlasMetadata)
         PROPERTY(float, LODSwitchDistance)
         PROPERTY(float, LODSwitchScreenSize)
+        Rendering::TextureHandle m_BakedAtlasTexture = Rendering::TextureHandle::Invalid();
+        bool m_bBakedAtlasExternal = false;
+        Asset::AssetBinding m_AtlasBinding;
         uint64_t m_SourceMeshComponentId = 0;
     };
 

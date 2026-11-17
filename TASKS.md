@@ -7126,7 +7126,7 @@
 - notes: G7-S5（ロードマップ 4532 行）の推奨 (A) を採る。理由: 雨量が EnvironmentParameters と RainParameters の 2 か所に載ると食い違いうる。値の出所が 1 つで、見た目の調整に再ビルドが要らない。近距離の雨のエフェクトの定義（Rain_Near）は G7-GR58-RAIN-NEAR が GR136 の形式で書き、RainTuning の近距離の値はそのエフェクトの上書きの値として渡す。数値の既定は全部仮（コンセプト案の雨は構図の確かめ用で採否は未定）。犬の走る速さ（動き取り）で筋の見え方が変わったら StreakShutterSeconds と落ちる速さを見直す。試験を足す理由: 写像の不連続（雨量の小さな変化で本数が跳ぶ）と霧の増分で履歴が切れることは、撮影 1 枚では気づけず黙って起きる。要件 `#### GR58` の設計案（C）と【フェーズ】P1、ロードマップ 1540・1554 行。
 
 ## G7-GR58-RAIN-CURTAIN: 遠景の雨のカーテンを、体積の霧の直後に全画面の手続きの 3 層で描き、近い物の手前には描かないようにする
-- status: todo
+- status: done
 - after: G7-GR58-RAIN-MODEL, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM
 - gr: GR58
 - needs-gr: GR46
@@ -7902,7 +7902,7 @@
 - notes: 完了条件はロードマップ 2620〜2621 行の撮影と計測の部分（G12A-S9 で経路を MegaGeometry の散布にしたので、Entity の経路との GBuffer の比較は、白の色味で既存の散布の撮影が変わらないことの確認に置き換えた）。`grassland-scatter-stress` は G5-GR90-SCATTER-RUNTIME が足す開発ビルドの引数。比較の基準の撮影（`G5-BASE/mega-bananas`）が無ければ、この段階の前のコミットで同じ引数で撮ってから比べる。計測は RelWithDebInfo（AGENTS.md の絶対規則 8）。直す必要が出たら、この項目では直さずに `G12-GR47-FIX-<名前>` を足す。
 
 ## G12-GR92-ASSET-BIND: 資産を持つ全コンポーネントが論理パスを正本に持ち、読み込みの後に非同期で資産を解決して束縛し、シーンから保存・復元できる
-- status: todo
+- status: done
 - after: G12-GR92-ASSETREF-SCENE-V3, G2-GR83-LOOSE-SKELETAL
 - gr: GR92
 - needs-gr: GR82, GR83
@@ -10851,3 +10851,14 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - paths: Assets/Shaders/impostor_gbuffer.vert, Assets/Shaders/impostor_gbuffer.frag, Library/Core/Public/Rendering/ImpostorGBufferPass.h, Library/Core/Private/Rendering/ImpostorGBufferPass.cpp, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Private/Component/ImpostorComponent.cpp, TASKS.md, PROGRESS.md
 - from: G12-GR48-IMPOSTOR-GBUFFER
+
+## SCN-MEGA-RT-SELECT-P1: 絞ったクックで、既存の manifest に無い対象外の項目を、止めずに焼いて足す
+- status: todo
+- done-when: `Scripts/CookAssets.ps1` の `Invoke-CookEntry`（410〜419 行）が `-OnlyLogicalPath` で絞っているとき、対象外の項目が既存のマニフェストに無ければ throw しない。その項目を対象と同じ手順で焼いてマニフェストに足し、`COOK_ASSETS cooked_missing_untargeted=<論理パス>` を出す。既存のマニフェストにある対象外の項目は、今どおり引き継ぐ。manifest.json そのものが無いときの拒否（601 行）は変えない。こうすると、資産の一覧に後から足した項目（例: `Assets/Vegetation/Grassland/GrasslandGrassField.nvgfld`）を前のマニフェストが持っていない枠でも、絞ったクックが EXIT=0 で終わる。
+- verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
+- verify: `git grep -q "cooked_missing_untargeted" -- Scripts/CookAssets.ps1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe -OnlyLogicalPath "Assets/Vegetation/Grassland/GrasslandGrassField.nvgfld"`
+- paths: Scripts/CookAssets.ps1, TASKS.md, PROGRESS.md
+- effort: high
+- from: SCN-MEGA-RT-SELECT
+- notes: 判断の理由（1. 実際に起きている不具合）: 枠 NorvesLib-2-u2 の反復 2 で、地形を 14 分焼いたあとに 415 行の throw で EXIT=1 になった。原因は、枠のマニフェストが G5-GR42-GRASS-FIELD-ASSET で足された `GrasslandTerrain.json` の草の場の項目より古いこと。資産の一覧に項目が足されるたびに、全体をクックし直していない枠では絞ったクックがすべて落ちる。`-OnlyLogicalPath` を verify に使う todo のタスク（G12-GR47-PLACEMENT-COOK、G5-GR37-TERRAIN-COMPONENT-P1 など）も同じ落ち方をする。
