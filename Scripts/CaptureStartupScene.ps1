@@ -8,7 +8,7 @@
 # Slang SDK 未設定の neural_material_decode.slang のコンパイル失敗だけは既知として除外する。
 # -Configuration Release はログが無効で Game.log を書かないため、ログの検査（シェーダーの失敗・間接光の出どころ）を飛ばす。
 #
-# -SunElevations を与えると、各視点を太陽の仰角（度）ごとに撮り、<視点>-sun<仰角>.png として保存する
+# -SunElevations を与えると、各視点を太陽の仰角（-20〜90 度）ごとに撮り、<視点>-sun<仰角>.png として保存する
 # （例: -SunElevations 10,45,3 で朝・昼・夕）。方位は -SunAzimuth（省略時は起動画面の既定）。
 # -Rains・-Wetnesses・-CloudCovers は 0〜1 の値を並べ、各視点と太陽の条件に直積で組み合わせて撮る。
 # -Wind は方位（0〜360 度）、速さ（0〜100 m/s）、突風（0〜1）を順に与える。
@@ -508,7 +508,7 @@ if ($viewNameList.Count -gt 0)
     $views = @($views | Where-Object { $_.Name -in $viewNameList })
 }
 
-$sunElevationList = ConvertTo-NumberList $SunElevations 0.0 90.0 'sun_elevation'
+$sunElevationList = ConvertTo-NumberList $SunElevations -20.0 90.0 'sun_elevation'
 $exposureList = ConvertTo-NumberList $ExposureEV100s -6.0 24.0 'exposure_ev100'
 $rainList = ConvertTo-NumberList $Rains 0.0 1.0 'rain'
 $wetnessList = ConvertTo-NumberList $Wetnesses 0.0 1.0 'wetness'

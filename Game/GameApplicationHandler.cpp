@@ -653,7 +653,7 @@ namespace Game
                      resolved.Fog.DensityAtBaseHeight, resolved.Environment.DiscontinuityId);
         }
 
-        // --sun-elevation=<deg> / --sun-azimuth=<deg>: 起動時の空の太陽の仰角（0〜90）と方位（-180〜180）。
+        // --sun-elevation=<deg> / --sun-azimuth=<deg>: 起動時の空の太陽の仰角（-20〜90）と方位（-180〜180）。
         // --exposure-ev100=<ev>: 起動時の手動露出（EV100、-6〜24）。
         constexpr const TCHAR *kSunElevationOption = TEXT("--sun-elevation=");
         constexpr const TCHAR *kSunAzimuthOption = TEXT("--sun-azimuth=");
@@ -1533,9 +1533,9 @@ namespace Game
             String sunElevationValue;
             if (TryStripPrefix(args[i], kSunElevationOption, sunElevationValue))
             {
-                if (!TryParseBoundedFloat(sunElevationValue, 0.0f, 90.0f, s_Rendering3DTestSunElevation))
+                if (!TryParseBoundedFloat(sunElevationValue, -20.0f, 90.0f, s_Rendering3DTestSunElevation))
                 {
-                    LOG_ERROR("Rendering3DTest command line parse failed: --sun-elevation は 0〜90 の度で指定する");
+                    LOG_ERROR("Rendering3DTest command line parse failed: --sun-elevation は -20〜90 の度で指定する");
                     return false;
                 }
                 s_bRendering3DTestHasSunElevation = true;

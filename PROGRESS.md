@@ -12091,3 +12091,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 空のパスをキーフレームの窓で回し、SKY_SWEEP を出す: 着地(直し 0 回)
 - U1 空の sanitize を −20〜90° に広げ、負の高度の直達を 0 にし、月明かりと露出の上書きの欄を足す: 着地(直し 0 回)
 - U3 空のキーフレームの表に負の高度を足し、太陽が地平線の下のとき円盤を消す: 着地(直し 0 回)
+- U6 Game の引数・Rendering3DTest の太陽操作・撮影の台本の太陽高度の範囲を −20〜90 へ広げる: 着地(直し 0 回)
