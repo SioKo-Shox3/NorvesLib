@@ -74,9 +74,24 @@
                     "Response": "ReturnToCameraBoxTop"
                 },
                 {
+                    "type": "CollisionHeightField",
+                    "Response": "SpawnChild",
+                    "ChildEmitter": "Splash",
+                    "ChildProbability": 0,
+                    "SecondChildEmitter": "Droplet",
+                    "ChildMinNormalY": 0.5,
+                    "ShelterChildEmitter": "Droplet",
+                    "ShelterChildProbability": 0,
+                    "ShelterMinClearance": 3
+                },
+                {
                     "type": "CollisionDepth",
                     "Thickness": 0.5,
-                    "Response": "ReturnToCameraBoxTop"
+                    "Response": "SpawnChild",
+                    "ChildEmitter": "Splash",
+                    "ChildProbability": 0,
+                    "SecondChildEmitter": "Droplet",
+                    "ChildMinNormalY": 0.5
                 },
                 {
                     "type": "GpuSpriteRenderer",
@@ -89,6 +104,107 @@
                     "StreakShutterSeconds": 0.0208333,
                     "SubPixelCompensation": true,
                     "NearFadeDistance": 1.5,
+                    "Texture": ""
+                }
+            ]
+        },
+        {
+            "name": "Splash",
+            "properties": {
+                "MaxParticles": 2000,
+                "Space": "World",
+                "Seed": 1397771347,
+                "Executor": "Gpu",
+                "RandomStream": "Counter",
+                "Capacity": 2000,
+                "TimeChannel": "Particle",
+                "WrapPolicy": "Die"
+            },
+            "modules": [
+                {
+                    "type": "InitLifetime",
+                    "Lifetime": 0.32
+                },
+                {
+                    "type": "InitVelocityBox",
+                    "Min": [0, 0, 0],
+                    "Max": [0, 0, 0]
+                },
+                {
+                    "type": "InitColor",
+                    "Color": [1, 1, 1, 0.5]
+                },
+                {
+                    "type": "InitSize",
+                    "Size": [0.15, 0.15]
+                },
+                {
+                    "type": "CurveOverLife",
+                    "Target": "Size",
+                    "KeyCount": 2,
+                    "Key0": [0, 0.3333],
+                    "Key1": [1, 1]
+                },
+                {
+                    "type": "GpuSpriteRenderer",
+                    "Orientation": "SurfaceAligned",
+                    "Blend": "PremultipliedAlpha",
+                    "Pass": "PostTAA",
+                    "SoftDistance": 0.05,
+                    "Lighting": "AmbientTinted",
+                    "FogInfluence": 1,
+                    "SubPixelCompensation": false,
+                    "NearFadeDistance": 0.3,
+                    "Texture": "",
+                    "FlipbookFrames": 16
+                }
+            ]
+        },
+        {
+            "name": "Droplet",
+            "properties": {
+                "MaxParticles": 4096,
+                "Space": "World",
+                "Seed": 1146244944,
+                "Executor": "Gpu",
+                "RandomStream": "Counter",
+                "Capacity": 4096,
+                "TimeChannel": "Particle",
+                "WrapPolicy": "Die"
+            },
+            "modules": [
+                {
+                    "type": "InitLifetime",
+                    "Lifetime": 0.3
+                },
+                {
+                    "type": "InitVelocityBox",
+                    "Min": [-0.5, 1, -0.5],
+                    "Max": [0.5, 2, 0.5]
+                },
+                {
+                    "type": "Acceleration",
+                    "Acceleration": [0, -9.8, 0]
+                },
+                {
+                    "type": "InitColor",
+                    "Color": [1, 1, 1, 0.5]
+                },
+                {
+                    "type": "InitSize",
+                    "Size": [0.004, 0.004]
+                },
+                {
+                    "type": "GpuSpriteRenderer",
+                    "Orientation": "VelocityStretch",
+                    "Blend": "PremultipliedAlpha",
+                    "Pass": "PostTAA",
+                    "SoftDistance": 0.05,
+                    "Lighting": "AmbientTinted",
+                    "FogInfluence": 1,
+                    "StreakShutterSeconds": 0.0208333,
+                    "SubPixelCompensation": true,
+                    "NearFadeDistance": 0.3,
                     "Texture": ""
                 }
             ]

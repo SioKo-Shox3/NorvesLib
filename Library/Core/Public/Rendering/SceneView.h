@@ -4,6 +4,7 @@
 #include "Viewport.h"
 #include "ViewportSnapshot.h"
 #include "SceneProxy.h"
+#include "Rendering/ImpostorBatch.h"
 #include "DrawCommand.h"
 #include "PathTracingTransportScope.h"
 #include "RasterDirectBrdf.h"
@@ -547,6 +548,9 @@ namespace NorvesLib::Core::Rendering
          */
         const Container::VariableArray<GPUSceneInstanceData> &GetInstanceData() const { return m_InstanceData; }
 
+        /** @brief 可視インポスターの束を取得 */
+        const Container::VariableArray<ImpostorBatch> &GetImpostorBatches() const { return m_ImpostorBatches; }
+
         // ========================================
         // 設定
         // ========================================
@@ -687,6 +691,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<DrawCommand> m_OpaqueCommands;
         Container::VariableArray<DrawCommand> m_TransparentCommands;
         Container::VariableArray<GPUSceneInstanceData> m_InstanceData;
+        Container::VariableArray<ImpostorBatch> m_ImpostorBatches;
 
         // 設定
         bool m_bEnableFrustumCulling = true;

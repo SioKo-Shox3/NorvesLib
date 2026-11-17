@@ -82,7 +82,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved;
     };
 
-    /// 更新・生成・詰めの定数。std140 の一様バッファとして読む。256 バイト。
+    /// 更新・生成・詰めの定数。std140 の一様バッファとして読む。272 バイト。
     struct alignas(16) GpuParticleSimulationConstants
     {
         float ViewProjection[16];         // 今のフレームの GBuffer と同じジッタつきの ViewProjection（GBuffer のシェーダーが受け取る並び）。
@@ -94,7 +94,8 @@ namespace NorvesLib::Core::Rendering
         float ScreenSize[2]; float InvScreenSize[2]; // GBuffer の解像度とその逆数。
         float WindA[4]; // 風の向き xz（WindDirectionXZ）・BaseSpeed・GustStrength（風が無効なら全部 0）。
         float WindB[4]; // GustFrequencyHz・GustScaleMeters・Turbulence・風の時刻（WindClockSeconds）。
-        float HeightFieldWorldMin[2]; float HeightFieldWorldSize[2]; // 高さのテクスチャが覆う XZ の範囲。
+        float HeightFieldWindow[4]; // 遮蔽マップの原点 XZ・範囲・テクセル幅。
+        float HeightFieldDepth[4]; // 遮蔽マップの上端 Y・深度の範囲・解像度・有効フラグ。
     };
 
     static_assert(sizeof(GpuParticleBurst) == 64u);
@@ -117,7 +118,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuEmitterFrameExtra, Flags) == 8u);
     static_assert(offsetof(GpuEmitterFrameExtra, Reserved) == 12u);
 
-    static_assert(sizeof(GpuParticleSimulationConstants) == 256u);
+    static_assert(sizeof(GpuParticleSimulationConstants) == 272u);
     static_assert(alignof(GpuParticleSimulationConstants) == 16u);
     static_assert(offsetof(GpuParticleSimulationConstants, ViewProjection) == 0u);
     static_assert(offsetof(GpuParticleSimulationConstants, InverseViewProjection) == 64u);
@@ -139,8 +140,8 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuParticleSimulationConstants, InvScreenSize) == 200u);
     static_assert(offsetof(GpuParticleSimulationConstants, WindA) == 208u);
     static_assert(offsetof(GpuParticleSimulationConstants, WindB) == 224u);
-    static_assert(offsetof(GpuParticleSimulationConstants, HeightFieldWorldMin) == 240u);
-    static_assert(offsetof(GpuParticleSimulationConstants, HeightFieldWorldSize) == 248u);
+    static_assert(offsetof(GpuParticleSimulationConstants, HeightFieldWindow) == 240u);
+    static_assert(offsetof(GpuParticleSimulationConstants, HeightFieldDepth) == 256u);
 
     /// エミッタ 1 つの 1 フレームの写し。
     struct GpuParticleEmitterFrame

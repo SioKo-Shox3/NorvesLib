@@ -46,7 +46,7 @@ namespace NorvesLib::Core::Rendering
         // 環境の UBO の binding。空の放射輝度 LUT 18 の次。forward_transparent.frag の NORVES_DECLARE_ENVIRONMENT_UBO と同じ。
         constexpr uint32_t EnvironmentBindingIndex = 19;
 
-        // 板・インポスターの空の放射輝度 LUT の binding。world_board.frag・impostor.frag と同じ。
+        // 板の空の放射輝度 LUT の binding。world_board.frag と同じ。
         constexpr uint32_t WorldBoardHeightFogSkyBindingIndex = 2;
 
         static void AddSkyOcclusionBindings(RHI::DescriptorSetDesc& descriptorSetDesc)
@@ -262,22 +262,6 @@ namespace NorvesLib::Core::Rendering
             if (!m_WorldBoardFragmentShader)
             {
                 NORVES_LOG_ERROR("ForwardPass", "Failed to load world-board fragment shader");
-                return false;
-            }
-
-            m_ImpostorVertexShader = context.ShaderMgr->LoadShader("impostor.vert",
-                                                                   RHI::ShaderStage::Vertex);
-            if (!m_ImpostorVertexShader)
-            {
-                NORVES_LOG_ERROR("ForwardPass", "Failed to load impostor vertex shader");
-                return false;
-            }
-
-            m_ImpostorFragmentShader = context.ShaderMgr->LoadShader("impostor.frag",
-                                                                     RHI::ShaderStage::Pixel);
-            if (!m_ImpostorFragmentShader)
-            {
-                NORVES_LOG_ERROR("ForwardPass", "Failed to load impostor fragment shader");
                 return false;
             }
 
@@ -528,13 +512,10 @@ namespace NorvesLib::Core::Rendering
         m_TransparentPipeline.reset();
         m_WorldBoardPipeline.reset();
         m_RibbonTrailRenderer.Shutdown();
-        m_ImpostorPipeline.reset();
         m_TransparentVertexShader.reset();
         m_TransparentFragmentShader.reset();
         m_WorldBoardVertexShader.reset();
         m_WorldBoardFragmentShader.reset();
-        m_ImpostorVertexShader.reset();
-        m_ImpostorFragmentShader.reset();
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
@@ -877,9 +858,7 @@ namespace NorvesLib::Core::Rendering
             !m_TransparentVertexShader ||
             !m_TransparentFragmentShader ||
             !m_WorldBoardVertexShader ||
-            !m_WorldBoardFragmentShader ||
-            !m_ImpostorVertexShader ||
-            !m_ImpostorFragmentShader)
+            !m_WorldBoardFragmentShader)
         {
             return false;
         }
@@ -892,7 +871,6 @@ namespace NorvesLib::Core::Rendering
         m_TransparentPipeline.reset();
         m_WorldBoardPipeline.reset();
         m_RibbonTrailRenderer.Shutdown();
-        m_ImpostorPipeline.reset();
         m_ForwardRenderPass.reset();
         m_RibbonTrailRenderPass.reset();
         m_TransparentRenderPassSignature = {};
@@ -1137,17 +1115,6 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::GraphicsPipelineDesc impostorPipelineDesc = boardPipelineDesc;
-        impostorPipelineDesc.vertexShader = m_ImpostorVertexShader;
-        impostorPipelineDesc.pixelShader = m_ImpostorFragmentShader;
-
-        m_ImpostorPipeline = m_Device->CreateGraphicsPipeline(impostorPipelineDesc);
-        if (!m_ImpostorPipeline)
-        {
-            NORVES_LOG_ERROR("ForwardPass", "Failed to create impostor forward pipeline");
-            return false;
-        }
-
         m_TransparentRenderPassSignature = signature;
         return true;
     }
@@ -1229,8 +1196,7 @@ namespace NorvesLib::Core::Rendering
             !m_TransparentPipeline ||
             !m_WorldBoardPipeline ||
             !m_RibbonTrailRenderPass ||
-            !m_RibbonTrailRenderer.IsInitialized() ||
-            !m_ImpostorPipeline;
+            !m_RibbonTrailRenderer.IsInitialized();
 
         if (!bResourcesChanged)
         {
@@ -1274,7 +1240,6 @@ namespace NorvesLib::Core::Rendering
             !m_TransparentPipeline ||
             !m_WorldBoardPipeline ||
             (bHasRibbonTrails && (!m_RibbonTrailRenderPass || !m_RibbonTrailRenderer.IsInitialized())) ||
-            !m_ImpostorPipeline ||
             (!context.InstanceDataBuffer && !activeTransparentCommands.empty()))
         {
             if (bUseRenderGraphManagedStates)
@@ -1526,6 +1491,12 @@ namespace NorvesLib::Core::Rendering
         {
             if (cmd.Draw.PayloadKind == DrawPayloadKind::Board)
             {
+                // インポスターは ImpostorGBufferPass が GBuffer へ書く。
+                if (cmd.Draw.BoardSubtype == BoardRenderSubtype::Impostor)
+                {
+                    continue;
+                }
+
                 auto allocation = m_WorldBoardUniformAllocator.Allocate(context.FrameResources);
                 if (!allocation.UniformBuffer)
                 {
@@ -1557,9 +1528,7 @@ namespace NorvesLib::Core::Rendering
                 allocation.DescriptorSet->Update();
 
                 DrawCommand drawCommand = cmd;
-                drawCommand.Pipeline = cmd.Draw.BoardSubtype == BoardRenderSubtype::Impostor
-                                           ? m_ImpostorPipeline
-                                           : m_WorldBoardPipeline;
+                drawCommand.Pipeline = m_WorldBoardPipeline;
                 drawCommand.DescriptorSet = allocation.DescriptorSet;
                 drawCommand.DescriptorSetSlot = 0;
                 transparentCommands->push_back(drawCommand);

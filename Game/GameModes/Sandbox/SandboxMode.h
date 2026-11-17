@@ -13,6 +13,7 @@
 
 #include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Container/String.h"
+#include "Core/Public/Container/VariableArray.h"
 #include "Core/Public/GameMode/GameModeContext.h"
 #include "Core/Public/GameMode/IGameMode.h"
 #include "Core/Public/GameMode/TGameMode.h"
@@ -33,6 +34,8 @@ namespace Game::GameModes
 
     struct SandboxData
     {
+        /// 起動時に指定順で World へ加算するシーン・Prefab の論理パス（空なら格子の地面を作る）
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::String> m_LoadScenePaths;
         /// 起動時の視点の名前（--scene-view。空ならシーンの既定の視点）
         NorvesLib::Core::Container::String m_ViewName;
         /// 入力の台本のパス（--camera-script。空なら流さない）

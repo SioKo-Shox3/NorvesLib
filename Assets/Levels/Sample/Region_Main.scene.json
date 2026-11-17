@@ -1,0 +1,245 @@
+{
+    "formatVersion": 3,
+    "module": "NorvesLib",
+    "assets": [
+        {
+            "path": "Models/Cottage_Clean/Cottage_Clean.gltf",
+            "kind": "Model",
+            "variant": ""
+        },
+        {
+            "path": "Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
+            "kind": "Model",
+            "variant": ""
+        }
+    ],
+    "roots": [
+        {
+            "formatVersion": 3,
+            "rootAlias": "1",
+            "rootPath": "",
+            "root": {
+                "alias": "1",
+                "parentAlias": "0",
+                "object": {
+                    "class": "Entity",
+                    "classId": "9870931318906104068",
+                    "path": "",
+                    "properties": [
+                        {
+                            "name": "Name",
+                            "propertyId": "10400685020428484054",
+                            "type": "String",
+                            "typeId": "17566637221897219116",
+                            "value": "領域のルート"
+                        },
+                        {
+                            "name": "Position",
+                            "propertyId": "4550760019185634618",
+                            "type": "Math::Vector3",
+                            "typeId": "260422798914813857",
+                            "value": "Vector3(0,0,0)"
+                        },
+                        {
+                            "name": "Rotation",
+                            "propertyId": "3220636562819463055",
+                            "type": "Math::Quaternion",
+                            "typeId": "11494068471474583211",
+                            "value": "Quaternion(0,0,0,1)"
+                        },
+                        {
+                            "name": "Scale",
+                            "propertyId": "17326973134608184993",
+                            "type": "Math::Vector3",
+                            "typeId": "260422798914813857",
+                            "value": "Vector3(1,1,1)"
+                        }
+                    ]
+                },
+                "components": [],
+                "children": [
+                    {
+                        "alias": "2",
+                        "parentAlias": "1",
+                        "object": {
+                            "class": "Entity",
+                            "classId": "9870931318906104068",
+                            "path": "",
+                            "properties": [
+                                {
+                                    "name": "Name",
+                                    "propertyId": "10400685020428484054",
+                                    "type": "String",
+                                    "typeId": "17566637221897219116",
+                                    "value": "地面"
+                                },
+                                {
+                                    "name": "Position",
+                                    "propertyId": "4550760019185634618",
+                                    "type": "Math::Vector3",
+                                    "typeId": "260422798914813857",
+                                    "value": "Vector3(0,0,0)"
+                                },
+                                {
+                                    "name": "Rotation",
+                                    "propertyId": "3220636562819463055",
+                                    "type": "Math::Quaternion",
+                                    "typeId": "11494068471474583211",
+                                    "value": "Quaternion(0,0,0,1)"
+                                },
+                                {
+                                    "name": "Scale",
+                                    "propertyId": "17326973134608184993",
+                                    "type": "Math::Vector3",
+                                    "typeId": "260422798914813857",
+                                    "value": "Vector3(1,1,1)"
+                                }
+                            ]
+                        },
+                        "components": [
+                            {
+                                "alias": "3",
+                                "ownerAlias": "2",
+                                "object": {
+                                    "class": "MeshComponent",
+                                    "classId": "17296616898058098445",
+                                    "path": "",
+                                    "properties": [
+                                        {
+                                            "name": "ProceduralMesh",
+                                            "propertyId": "3593573703611727746",
+                                            "type": "ProceduralMeshSpec",
+                                            "typeId": "17255136591424879096",
+                                            "value": "2 200 0 200 1 1"
+                                        }
+                                    ]
+                                }
+                            }
+                        ],
+                        "children": []
+                    },
+                    {
+                        "alias": "4",
+                        "parentAlias": "1",
+                        "object": {
+                            "class": "Entity",
+                            "classId": "9870931318906104068",
+                            "path": "",
+                            "properties": [
+                                {
+                                    "name": "Name",
+                                    "propertyId": "10400685020428484054",
+                                    "type": "String",
+                                    "typeId": "17566637221897219116",
+                                    "value": "岩"
+                                },
+                                {
+                                    "name": "Position",
+                                    "propertyId": "4550760019185634618",
+                                    "type": "Math::Vector3",
+                                    "typeId": "260422798914813857",
+                                    "value": "Vector3(-3.5,0.074,2)"
+                                },
+                                {
+                                    "name": "Rotation",
+                                    "propertyId": "3220636562819463055",
+                                    "type": "Math::Quaternion",
+                                    "typeId": "11494068471474583211",
+                                    "value": "Quaternion(0,0,0,1)"
+                                },
+                                {
+                                    "name": "Scale",
+                                    "propertyId": "17326973134608184993",
+                                    "type": "Math::Vector3",
+                                    "typeId": "260422798914813857",
+                                    "value": "Vector3(1,1,1)"
+                                }
+                            ]
+                        },
+                        "components": [
+                            {
+                                "alias": "5",
+                                "ownerAlias": "4",
+                                "object": {
+                                    "class": "MegaGeometryComponent",
+                                    "classId": "7748019001181790028",
+                                    "path": "",
+                                    "properties": [
+                                        {
+                                            "name": "ModelAsset",
+                                            "propertyId": "360737363048004388",
+                                            "type": "ModelAssetRef",
+                                            "typeId": "1864638809152790491",
+                                            "value": "Models/boulder_01_4k.gltf/boulder_01_4k.gltf"
+                                        }
+                                    ]
+                                }
+                            }
+                        ],
+                        "children": []
+                    },
+                    {
+                        "alias": "6",
+                        "parentAlias": "1",
+                        "object": {
+                            "class": "Entity",
+                            "classId": "9870931318906104068",
+                            "path": "",
+                            "properties": [
+                                {
+                                    "name": "Name",
+                                    "propertyId": "10400685020428484054",
+                                    "type": "String",
+                                    "typeId": "17566637221897219116",
+                                    "value": "小屋"
+                                },
+                                {
+                                    "name": "Position",
+                                    "propertyId": "4550760019185634618",
+                                    "type": "Math::Vector3",
+                                    "typeId": "260422798914813857",
+                                    "value": "Vector3(1.5,0.016,18)"
+                                },
+                                {
+                                    "name": "Rotation",
+                                    "propertyId": "3220636562819463055",
+                                    "type": "Math::Quaternion",
+                                    "typeId": "11494068471474583211",
+                                    "value": "Quaternion(0,0,0,1)"
+                                },
+                                {
+                                    "name": "Scale",
+                                    "propertyId": "17326973134608184993",
+                                    "type": "Math::Vector3",
+                                    "typeId": "260422798914813857",
+                                    "value": "Vector3(1,1,1)"
+                                }
+                            ]
+                        },
+                        "components": [
+                            {
+                                "alias": "7",
+                                "ownerAlias": "6",
+                                "object": {
+                                    "class": "MegaGeometryComponent",
+                                    "classId": "7748019001181790028",
+                                    "path": "",
+                                    "properties": [
+                                        {
+                                            "name": "ModelAsset",
+                                            "propertyId": "360737363048004388",
+                                            "type": "ModelAssetRef",
+                                            "typeId": "1864638809152790491",
+                                            "value": "Models/Cottage_Clean/Cottage_Clean.gltf"
+                                        }
+                                    ]
+                                }
+                            }
+                        ],
+                        "children": []
+                    }
+                ]
+            }
+        }
+    ]
+}

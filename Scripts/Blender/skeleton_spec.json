@@ -1,0 +1,52 @@
+﻿{
+  "spec_version": 1,
+  "name": "quadruped_common_v1",
+  "vocabulary": "quadruped_v1",
+  "roles": {
+    "root": ["root"],
+    "pelvis": ["pelvis"],
+    "spine": ["spine_01", "spine_02", "spine_03"],
+    "neck": ["neck_01", "neck_02"],
+    "head": ["head"],
+    "jaw": ["jaw"],
+    "tail": ["tail_01", "tail_02", "tail_03", "tail_04"],
+    "front_L_clavicle": ["front_L_clavicle"],
+    "front_L_upper": ["front_L_upper"],
+    "front_L_lower": ["front_L_lower"],
+    "front_L_paw": ["front_L_paw"],
+    "front_R_clavicle": ["front_R_clavicle"],
+    "front_R_upper": ["front_R_upper"],
+    "front_R_lower": ["front_R_lower"],
+    "front_R_paw": ["front_R_paw"],
+    "hind_L_thigh": ["hind_L_thigh"],
+    "hind_L_shin": ["hind_L_shin"],
+    "hind_L_hock": ["hind_L_hock"],
+    "hind_L_paw": ["hind_L_paw"],
+    "hind_R_thigh": ["hind_R_thigh"],
+    "hind_R_shin": ["hind_R_shin"],
+    "hind_R_hock": ["hind_R_hock"],
+    "hind_R_paw": ["hind_R_paw"]
+  },
+  "required_roles": [
+    "root", "pelvis", "spine", "neck", "head", "tail",
+    "front_L_upper", "front_L_lower", "front_L_paw",
+    "front_R_upper", "front_R_lower", "front_R_paw",
+    "hind_L_thigh", "hind_L_shin", "hind_L_hock", "hind_L_paw",
+    "hind_R_thigh", "hind_R_shin", "hind_R_hock", "hind_R_paw"
+  ],
+  "limits": {
+    "max_joints": 128,
+    "max_influences": 4,
+    "weight_sum_tolerance": 0.001
+  },
+  "naming": {
+    "joint_pattern": "^[a-z]+(_([a-z]+|[LR]|[0-9]{2}))*$"
+  },
+  "uv": {
+    "sets": ["TEXCOORD_0"],
+    "min": 0.0,
+    "max": 1.0
+  },
+  "morph_targets": false,
+  "interpolations": ["LINEAR", "STEP"]
+}

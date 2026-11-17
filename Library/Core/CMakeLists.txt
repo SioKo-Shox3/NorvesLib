@@ -82,6 +82,7 @@ set(PRIVATE_SOURCES
     Private/Particle/DecalPool.cpp
     Private/Particle/VfxSchema.cpp
     Private/Particle/VfxEffectSerialization.cpp
+    Private/Particle/FootSplashPlanner.cpp
     Private/Particle/HitEffectEmitter.cpp
     Private/Particle/VfxEffectSystem.cpp
     Private/Particle/DefeatBloodSequence.cpp
@@ -283,6 +284,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/ImpostorGBufferPass.cpp
     Private/Rendering/GBufferOverlayTargets.cpp
     Private/Rendering/GrassPass.cpp
     Private/Rendering/GrassBladeMesh.cpp
@@ -352,6 +354,7 @@ set(PRIVATE_SOURCES
     Private/Environment/EnvironmentSystem.cpp
     Private/Environment/EnvironmentDataFile.h
     Private/Environment/EnvironmentDataFile.cpp
+    Private/Environment/RainSplashBudget.cpp
     Private/Environment/SunPath.cpp
     Private/Environment/WeatherSchedule.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
@@ -515,6 +518,7 @@ set(PRIVATE_SOURCES
     Private/Component/TerrainComponent.cpp
     Private/Component/GrassFieldComponent.cpp
     Private/Component/WitherSourceComponent.cpp
+    Private/Component/FootSplashComponent.cpp
     Private/Component/ParticleEmitterComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
@@ -687,6 +691,7 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxEffectTypes.h
     Public/Particle/VfxSchema.h
     Public/Particle/VfxEffectSerialization.h
+    Public/Particle/FootSplashPlanner.h
     Public/Particle/HitEffectEmitter.h
     Public/Particle/VfxEffectSystem.h
     Public/Particle/VfxSimulationMath.h
@@ -788,6 +793,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/EnvironmentParameters.h
     Public/Environment/EnvironmentState.h
     Public/Environment/EnvironmentSystem.h
+    Public/Environment/RainSplashBudget.h
     Public/Environment/SunPath.h
     Public/Environment/WeatherSchedule.h
     Public/Rendering/EnvironmentGpuParams.h
@@ -831,6 +837,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
+    Public/Rendering/ImpostorGBufferPass.h
+    Public/Rendering/ImpostorBatch.h
     Public/Rendering/GrassPass.h
     Public/Rendering/WorldFieldPass.h
     Public/Rendering/WorldFieldTypes.h
@@ -965,6 +973,7 @@ set(PUBLIC_HEADERS
     Public/Component/MegaGeometryComponent.h
     Public/Component/GrassFieldComponent.h
     Public/Component/WitherSourceComponent.h
+    Public/Component/FootSplashComponent.h
     Public/Component/ParticleEmitterComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h

@@ -9,7 +9,7 @@ struct InstanceData
     mat4 previousWorld;
     vec4 normalRows[3];
     vec4 objectColor;
-    // impostor.vert ではアトラス、board2d.vert ではビューポートの大きさなどを格納する。
+    // impostor_gbuffer.vert ではアトラス、board2d.vert ではビューポートの大きさなどを格納する。
     vec4 customData;
     // x = P0、y = P1、z = 予約、w = 被覆率の乗数。負は未指定で材質の値を使う。
     vec4 shadingParams;

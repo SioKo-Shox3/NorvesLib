@@ -6,6 +6,7 @@
 #include "Rendering/GpuParticle/GpuSkinEmitter.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FrameResourceOwner.h"
+#include "Rendering/PuddleSurfaceParams.h"
 #include "Rendering/RenderExtension/RenderExtension.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/SceneProxy.h"
@@ -308,6 +309,7 @@ namespace NorvesLib::Core::Rendering
         m_CompactShader.reset();
         m_DepthHandle = {};
         m_NormalHandle = {};
+        m_OverheadHeightMapHandle = {};
         m_PoolHandle = {};
         m_HeadsHandle = {};
         m_DrawListHandle = {};
@@ -383,6 +385,7 @@ namespace NorvesLib::Core::Rendering
         }
         m_DepthHandle = {};
         m_NormalHandle = {};
+        m_OverheadHeightMapHandle = {};
         m_PoolHandle = {};
         m_HeadsHandle = {};
         m_DrawListHandle = {};
@@ -400,6 +403,8 @@ namespace NorvesLib::Core::Rendering
 
         builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth, m_DepthHandle, RHI::ResourceState::ShaderResource);
         builder.TryReadTexture(RenderGraphResourceNames::GBufferNormal, m_NormalHandle, RHI::ResourceState::ShaderResource);
+        builder.TryReadTexture(RenderGraphResourceNames::OverheadHeightMap, m_OverheadHeightMapHandle,
+            RHI::ResourceState::ShaderResource);
         m_PoolHandle = builder.ImportBuffer(view->Pool, RHI::ResourceState::UnorderedAccess, "GpuParticleSimulation.Pool");
         m_HeadsHandle = builder.ImportBuffer(view->Heads, RHI::ResourceState::UnorderedAccess, "GpuParticleSimulation.Heads");
         if (m_PoolHandle.IsValid() && m_HeadsHandle.IsValid())
@@ -534,6 +539,10 @@ namespace NorvesLib::Core::Rendering
 
         RHI::TexturePtr depth = m_DepthHandle.IsValid() ? resources.GetTexture(m_DepthHandle) : nullptr;
         RHI::TexturePtr normal = m_NormalHandle.IsValid() ? resources.GetTexture(m_NormalHandle) : nullptr;
+        const RHI::TexturePtr overhead = m_OverheadHeightMapHandle.IsValid() ?
+            resources.GetTexture(m_OverheadHeightMapHandle) : nullptr;
+        const bool bOverheadUsable = overhead && IsOverheadHeightMapUsable(context) &&
+            overhead == context.OverheadHeightMap.Texture;
         const CameraProxy* camera = context.GetActiveCamera();
         const bool bDepthCollision = depth && normal && camera && depth->GetWidth() != 0 && depth->GetHeight() != 0 &&
             depth->GetWidth() == normal->GetWidth() && depth->GetHeight() == normal->GetHeight();
@@ -556,6 +565,19 @@ namespace NorvesLib::Core::Rendering
         constants.BurstCount = static_cast<uint32_t>(scene.Bursts.Bursts.size());
         constants.TotalSpawnCount = scene.TotalSpawnCount;
         constants.DepthCollisionEnabled = bDepthCollision ? 1u : 0u;
+        if (bOverheadUsable)
+        {
+            const OverheadHeightMapResources& heightMap = context.OverheadHeightMap;
+            constants.HeightFieldBound = 1u;
+            constants.HeightFieldWindow[0] = heightMap.OriginX;
+            constants.HeightFieldWindow[1] = heightMap.OriginZ;
+            constants.HeightFieldWindow[2] = heightMap.CoverageMeters;
+            constants.HeightFieldWindow[3] = heightMap.TexelMeters;
+            constants.HeightFieldDepth[0] = heightMap.TopY;
+            constants.HeightFieldDepth[1] = heightMap.RangeMeters;
+            constants.HeightFieldDepth[2] = static_cast<float>(heightMap.Resolution);
+            constants.HeightFieldDepth[3] = 1.0f;
+        }
         if (depth && depth->GetWidth() != 0 && depth->GetHeight() != 0)
         {
             constants.ScreenSize[0] = static_cast<float>(depth->GetWidth());
@@ -619,7 +641,7 @@ namespace NorvesLib::Core::Rendering
             set.BindStorageBuffer(6, heads, 0, HeadBytes);
             set.BindTexture(7, bDepthCollision ? depth : m_EmptyTexture);
             set.BindTexture(8, bDepthCollision ? normal : m_EmptyTexture);
-            set.BindTexture(9, m_EmptyHeightTexture);
+            set.BindTexture(9, bOverheadUsable ? context.OverheadHeightMap.Texture : m_EmptyHeightTexture);
             set.BindSampler(7, m_Sampler);
             set.BindSampler(8, m_Sampler);
             set.BindSampler(9, m_Sampler);

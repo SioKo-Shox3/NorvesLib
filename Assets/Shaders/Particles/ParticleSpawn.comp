@@ -255,5 +255,7 @@ void main()
         particles[slot] = deadParticle;
         return;
     }
-    particles[slot] = InitParticle(emitter, emitterExtras[emitterIndex], serial, basePosition, normal, addVelocity);
+    GpuParticle particle = InitParticle(emitter, emitterExtras[emitterIndex], serial, basePosition, normal, addVelocity);
+    ClassifyParticleAtPlacement(emitter, particle);
+    particles[slot] = particle;
 }

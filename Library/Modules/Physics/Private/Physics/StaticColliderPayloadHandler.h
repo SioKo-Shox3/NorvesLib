@@ -1,10 +1,13 @@
 ﻿// セルの静的コライダーを準備し、物理への登録・休眠・解放を管理する。
+// 散布のチャンクの当たりを物理へ登録・解除する。
 // JSON は format: "norves.static-colliders.v1" と、省略可能な colliders / scatter の配列を持つ。
 // colliders は形状と変換、scatter は散布名・種名と球またはカプセルの寸法を指定する。
 #pragma once
 
 #include "Container/UnorderedMap.h"
+#include "Container/UnorderedSet.h"
 #include "Physics/IPhysicsModule.h"
+#include "Scatter/ScatterSystem.h"
 #include "Streaming/IStreamingPayloadHandler.h"
 #include "Thread/Mutex.h"
 
@@ -16,6 +19,21 @@ namespace NorvesLib::Core::Scatter
 namespace NorvesLib::Modules::Physics
 {
     inline constexpr uint64_t kStreamingColliderKeyTag = 0x01;
+    inline constexpr uint64_t kScatterColliderKeyTag = 0x02;
+
+    class ScatterColliderBinding final : public Core::Scatter::IScatterColliderListener
+    {
+    public:
+        explicit ScatterColliderBinding(IPhysicsModule& physics);
+        static bool MakeChunkKey(Core::Scatter::ScatterHandle scatter, uint32_t chunk, StaticColliderChunkKey& outKey);
+        void OnScatterColliderChunk(const Core::Scatter::ScatterColliderChunkEvent& event) override;
+        void Reset();
+
+    private:
+        IPhysicsModule& m_Physics;
+        Core::Container::UnorderedSet<uint64_t> m_RegisteredKeys;
+        Core::Container::VariableArray<StaticColliderDesc> m_Colliders;
+    };
 
     /// Assets/ からの論理パスにある次の JSON を読む（各配列は省略可能）。
     /// {"format":"norves.static-colliders.v1","colliders":[
@@ -33,7 +51,7 @@ namespace NorvesLib::Modules::Physics
         /// 読み込み先の試験用設定。空なら既定の Assets/ を使う。
         void SetAssetRoot(Core::Container::AnsiString root);
         /// 上位 8 ビットは鍵の出どころ。0x01 はセルのストリーミング。
-        /// 散布のチャンクの当たり（G12-GR47）は別の値を使う。
+        /// 0x02 は散布のチャンクの当たり。
         static StaticColliderChunkKey MakeChunkKey(Core::Streaming::StreamingCellId cell, uint32_t payloadIndex);
 
         const char* GetKind() const override;

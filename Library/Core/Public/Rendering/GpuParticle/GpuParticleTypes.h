@@ -14,6 +14,8 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t kGpuParticleFlagStuck = 1u << 1u;
     /// 粒が有効化されている旗。
     inline constexpr uint32_t kGpuParticleFlagActive = 1u << 2u;
+    /// 屋根の下に居る粒。描かず、深度の命中で通常の子を生まない。
+    inline constexpr uint32_t kGpuParticleFlagSheltered = 1u << 3u;
     /// 子エミッタが無いことを示す配列添字。
     inline constexpr uint32_t kGpuParticleInvalidEmitter = 0xFFFFFFFFu;
     /// 初期位置の形を使う旗。
@@ -94,6 +96,10 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t kGpuEmitterRenderSlotOrderShift = 6u;
     /// シフト前のスロットの順に描く設定のマスク。
     inline constexpr uint32_t kGpuEmitterRenderSlotOrderMask = 0x1u;
+    /// RenderFlags 内の手続きのフリップブックのコマ数の開始ビット。
+    inline constexpr uint32_t kGpuEmitterRenderFlipbookFramesShift = 8u;
+    /// シフト前のコマ数のマスク。0 はなし、1 以上は寿命をコマ数で区切って描く。
+    inline constexpr uint32_t kGpuEmitterRenderFlipbookFramesMask = 0xFFu;
     /// CurveKeyCounts 内の Size のキー数の開始ビット。
     inline constexpr uint32_t kGpuCurveKeyCountSizeShift = 0u;
     /// CurveKeyCounts 内の Color のキー数の開始ビット。
@@ -123,10 +129,22 @@ namespace NorvesLib::Core::Rendering
         float ChildProbability;
     };
 
-    /// エミッタの GPU 定数。std430 の 16 バイト行を 19 行で構成する。
+    /// GPU 専用の衝突の子の設定。CPU の衝突では読まない。
+    /// SpawnChild は ChildEmitter を命中の法線の y が ChildMinNormalY 以上のときだけ生む。
+    /// SecondChildEmitter は面の向きを問わず生み、両方とも ChildProbability による同じ確率の引きを使う。
+    /// SecondChildEmitter は GpuEmitterParams の配列添字で、無しは kGpuParticleInvalidEmitter。
+    struct GpuCollisionChildParams
+    {
+        uint32_t SecondChildEmitter;
+        float ChildMinNormalY;
+        uint32_t Reserved0;
+        uint32_t Reserved1;
+    };
+
+    /// エミッタの GPU 定数。std430 の 16 バイト行を 23 行で構成する。
     /// CurveKeyCounts は Size・Color・Opacity・Stretch のキー数を下位から各 8 ビットに詰める（0 は曲線なし）。
     /// 別バッファのキーは CurveKeyOffset から同じ Target 順に連続して置く。
-    /// RenderFlags は bit 0〜1 が向き、2 が合成、3 が描画段階、4 が照明、5 が幅 1px 未満の補償、6 がスロットの順に描く設定。
+    /// RenderFlags は bit 0〜1 が向き、2 が合成、3 が描画段階、4 が照明、5 が幅 1px 未満の補償、6 がスロットの順に描く設定、8〜15 が手続きのフリップブックのコマ数（0 はなし）。
     struct alignas(16) GpuEmitterParams
     {
         uint32_t PoolOffset, Capacity, Seed, Flags;
@@ -146,13 +164,23 @@ namespace NorvesLib::Core::Rendering
         uint32_t RenderFlags;
         float SoftDistance, FogInfluence, StreakShutterSeconds;
         float CurveColor[4]; // CurveOverLife の Target が Color のときの到達色。
-        float SkinBindPosition[3]; // Bone のバインド姿勢での位置（メッシュ空間）。
-        uint32_t SkinBoneIndex; // 骨の番号。kGpuSkinNoBone なら組から粒ごとに一様に選ぶ。
-        float SkinNormalSpeed; // 法線の向きの初速。
-        float SkinVelocityInheritance; // 体の速度を継承する係数。
-        uint32_t SkinAcceptMode; // 表面の標本を受け入れる方式。
-        uint32_t SkinSourceIndex; // パスが毎フレーム書く源の行の番号。無しは kGpuSkinSourceNone。
-        uint32_t SkinBoneMask[4]; // 表面の受け入れと Bone の選択に使う骨の組（128 bit）。
+        GpuCollisionChildParams PlaneChild;       // 256: 平面の衝突の 2 つ目の子と法線の下限。
+        GpuCollisionChildParams HeightFieldChild; // 272: 高さ場の衝突の 2 つ目の子と法線の下限。
+        GpuCollisionChildParams DepthChild;       // 288: 深度の衝突の 2 つ目の子と法線の下限。
+        // GPU 専用。雨の遮蔽マップの下の粒が深度の面に命中し、屋根と命中点の高さの差が
+        // ShelterMinClearance（m）を超えたとき、ShelterChildProbability で樹冠の下の滴りを生む。
+        // ShelterChildEmitter はエミッタの配列添字で、無しは kGpuParticleInvalidEmitter。
+        uint32_t ShelterChildEmitter; // 304: 屋根の下の子。
+        float ShelterChildProbability;
+        float ShelterMinClearance;
+        uint32_t ShelterReserved;
+        float SkinBindPosition[3]; // 320: Bone のバインド姿勢での位置（メッシュ空間）。
+        uint32_t SkinBoneIndex; // 332: 骨の番号。kGpuSkinNoBone なら組から粒ごとに一様に選ぶ。
+        float SkinNormalSpeed; // 336: 法線の向きの初速。
+        float SkinVelocityInheritance; // 340: 体の速度を継承する係数。
+        uint32_t SkinAcceptMode; // 344: 表面の標本を受け入れる方式。
+        uint32_t SkinSourceIndex; // 348: パスが毎フレーム書く源の行の番号。無しは kGpuSkinSourceNone。
+        uint32_t SkinBoneMask[4]; // 352: 表面の受け入れと Bone の選択に使う骨の組（128 bit）。
     };
 
     /// 正規化した年齢と値を組にした寿命曲線のキー。
@@ -185,7 +213,12 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuCollisionParams, Restitution) == 4u);
     static_assert(offsetof(GpuCollisionParams, ChildEmitter) == 8u);
     static_assert(offsetof(GpuCollisionParams, ChildProbability) == 12u);
-    static_assert(sizeof(GpuEmitterParams) == 304u);
+    static_assert(sizeof(GpuCollisionChildParams) == 16u);
+    static_assert(offsetof(GpuCollisionChildParams, SecondChildEmitter) == 0u);
+    static_assert(offsetof(GpuCollisionChildParams, ChildMinNormalY) == 4u);
+    static_assert(offsetof(GpuCollisionChildParams, Reserved0) == 8u);
+    static_assert(offsetof(GpuCollisionChildParams, Reserved1) == 12u);
+    static_assert(sizeof(GpuEmitterParams) == 368u);
     static_assert(alignof(GpuEmitterParams) == 16u);
     static_assert(offsetof(GpuEmitterParams, PoolOffset) == 0u);
     static_assert(offsetof(GpuEmitterParams, Capacity) == 4u);
@@ -225,13 +258,20 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuEmitterParams, FogInfluence) == 232u);
     static_assert(offsetof(GpuEmitterParams, StreakShutterSeconds) == 236u);
     static_assert(offsetof(GpuEmitterParams, CurveColor) == 240u);
-    static_assert(offsetof(GpuEmitterParams, SkinBindPosition) == 256u);
-    static_assert(offsetof(GpuEmitterParams, SkinBoneIndex) == 268u);
-    static_assert(offsetof(GpuEmitterParams, SkinNormalSpeed) == 272u);
-    static_assert(offsetof(GpuEmitterParams, SkinVelocityInheritance) == 276u);
-    static_assert(offsetof(GpuEmitterParams, SkinAcceptMode) == 280u);
-    static_assert(offsetof(GpuEmitterParams, SkinSourceIndex) == 284u);
-    static_assert(offsetof(GpuEmitterParams, SkinBoneMask) == 288u);
+    static_assert(offsetof(GpuEmitterParams, PlaneChild) == 256u);
+    static_assert(offsetof(GpuEmitterParams, HeightFieldChild) == 272u);
+    static_assert(offsetof(GpuEmitterParams, DepthChild) == 288u);
+    static_assert(offsetof(GpuEmitterParams, ShelterChildEmitter) == 304u);
+    static_assert(offsetof(GpuEmitterParams, ShelterChildProbability) == 308u);
+    static_assert(offsetof(GpuEmitterParams, ShelterMinClearance) == 312u);
+    static_assert(offsetof(GpuEmitterParams, ShelterReserved) == 316u);
+    static_assert(offsetof(GpuEmitterParams, SkinBindPosition) == 320u);
+    static_assert(offsetof(GpuEmitterParams, SkinBoneIndex) == 332u);
+    static_assert(offsetof(GpuEmitterParams, SkinNormalSpeed) == 336u);
+    static_assert(offsetof(GpuEmitterParams, SkinVelocityInheritance) == 340u);
+    static_assert(offsetof(GpuEmitterParams, SkinAcceptMode) == 344u);
+    static_assert(offsetof(GpuEmitterParams, SkinSourceIndex) == 348u);
+    static_assert(offsetof(GpuEmitterParams, SkinBoneMask) == 352u);
     static_assert(sizeof(GpuCurveKey) == 8u);
     static_assert(offsetof(GpuCurveKey, Time) == 0u);
     static_assert(offsetof(GpuCurveKey, Value) == 4u);
