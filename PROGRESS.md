@@ -12157,3 +12157,23 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 体積の霧のパスの定数に局所霧を詰め、局所霧だけでもパスを回す: 着地(直し 0 回)
 - U6 半透明とワールドの板の前向きの描画に局所霧を掛ける: 着地(直し 0 回)
 - U3 Entity に付けて動かせる LocalFogVolumeComponent を足し、全体のビルドとシェーダーの検査で仕上げる: 着地(直し 1 回)
+
+## G11-GR55-NIGHT 太陽が地平線の下（−20° まで）でも空・照明が壊れず暗くなり、月明かりの方向光と夜の露出の下限で夜が見えるようにする（2026-11-17、run 20261117-185438 の反復 1〜2）
+- Done: `SanitizeSkyAtmosphereParameters` の太陽高度を −20〜90 度に広げた（`SkySunMinAltitudeDegrees`）。高度が負のときはモデルの地表の太陽の透過率・`ComputeSunGroundTransmittance`・`ComputeSunGroundIlluminance` を 0 にする。正の高度の式・演算の順は変えていない。`SkyAtmosphereParameters` に月明かり（`MoonIlluminanceLux`・`MoonAltitudeDegrees`・`MoonAzimuthDegrees`・`MoonColor`・`bMoonCastShadows`）と自動露出の下限の上書き（`bOverrideAutoExposureMinEV100`・`AutoExposureMinEV100`）の欄を足した（等価判定・晴天の鍵・SceneRevision には入れない）。
+- Done: 空のキーフレームの既定の表の先頭に −20〜−0.5 度の高度を足した。太陽高度が負のときは放射輝度 LUT の円盤の印と太陽の円盤のテクスチャを 0 にする。
+- Done: `Assets/Data/Environment/NightLight.json`（形式 1。月の照度 0.2 lux・色 0.75/0.85/1.0・影なし・強さを上げる太陽高度 0〜−6 度・月の最低の高度 30 度・夜の MinEV100 −1）と `SunPath.{h,cpp}` の `NightLightSettings`・`LoadNightLight`・`EvaluateNightLight` を足した。重みは smoothstep、月の向きは太陽の方位の反対で、高度は「太陽高度の符号を反転した値」を最低の高度〜90 度に収めたもの。露出の下限は既定の −4 から夜の値へ同じ重みで寄せる。`EnvironmentSystem` は Enable で読み、`Resolve` で上書き後の太陽から月明かりと露出の上書きを空へ書く。
+- Done: `AutoExposureSettings` に `bOverrideMinEV100`・`MinEV100Override` を足し、`ComputeAutoExposureFromHistogram` は上書きがあれば下限をその値（上限以下）にする。`AutoExposurePass::Execute` が毎フレーム空のスナップショットから写す。
+- Done: `MakeSkySunLightProxy` は太陽高度が負なら false。`SkyMoonLightId`・`IsSkyMoonLight`・`MakeSkyMoonLightProxy`・`MakeSkyDirectionalLightProxy`（太陽を優先し、無ければ月）を足し、`ReplaceSkySunLight` と `RenderingCoordinator::UpdatePacketLights` は空の方向光（太陽か月の 1 灯）を置く。影を落とす方向光が無いフレームでは、VSM（`VirtualShadowMapClipmap.cpp` が無効なクリップマップを返す）・CSM（`CascadedShadowLightMatrices.cpp` が無効な結果を返す）とも影を描かず、`lighting.frag`・`forward_transparent.frag` は選ばれた方向光だけに影を掛ける（読んで確かめた）。
+- Done: `--sun-elevation` の受け付け・`ConvertLightControllerAnglesToSkySun` の丸め・`CaptureStartupScene.ps1` の `-SunElevations` を −20〜90 度へ、Rendering3DTest の毎フレームの丸め（ピッチ 20 度まで）と仰角のスライダーも −20〜90 度へ広げた。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた版。`Core.lib` と `Game.exe` まで）。編集したファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。
+- Next: ランナーの評価者の反証（危険地帯: 空の Sanitize は全シーンに効く・光源表）。夜の露出の下限の値（仮の −1）は G11-GR55-NIGHT-CHECK で決めてデータへ書く。撮影・計測の確かめは回さない決まり。人が見るときの見どころ: `--scene=rendering3dtest --clock --time-of-day=0`、Rendering3DTest で矢印キーか ImGui の仰角のスライダーで太陽を地平線の下へ、`--sun-elevation=-10 --rain=0`。空が黒や白の点・縞を出さずに暗くなること、太陽の円盤が地平線の下で消えること、0〜−6 度で地面に青白い弱い方向光が増えること、夜でも昼のように明るく持ち上がらず暗いまま形が見えること。`--sun-elevation` を付けない起動画面が前と同じに見えること。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyAtmosphereModelTest`・`EnvironmentClockSkipTest`・`AutoExposureMathTest` のケースは足していない。`RenderingGolden*`・`R2SkyGoldenCurrentModelTest`・`PathTracingOutdoorVulkanTest` も回していない。変えた API の既存の呼び出しは引数の形を変えていない（足した欄は既定値つき、位置指定の初期化は無い）。
+- Notes: 判断: paths の外を最小に触った。`RenderingCoordinator.cpp` は `UpdatePacketLights` の呼び出し 1 行とコメント、`SkySunLight.h` は月の宣言、Rendering3DTest の `Rendering3DTestRoutine.cpp`・`DirectionalLightEditSubRoutine.cpp` は太陽の操作の範囲（`--sun-elevation`・矢印キーの範囲が Rendering3DTest で効くため）。月明かりと露出の下限は空のパラメータの欄で FramePacket 越しに運ぶ。月の LightId は `SkySunLightId - 1`。
+- Notes: 既知の限界: 月の影を有効にしても、影を落とせる方向光がほかにあると影の選び方（`DirectionalShadowLightMatrices.cpp`）は月を選ばない。パストレーサーは月を普通の方向光として数える。`NORVES_STARTUP_SUN_STEP`（Rendering3DTestRoutine.cpp）は今も負の高度を拒む。`CaptureStartupScene.ps1` の露出の表は負の高度で 0〜3 度の区間から外挿する（−20 度で約 EV100 7.67）。`IblGeneration.cpp` の 505 行付近は、ごく暗い一様の入力で FP16 の丸めが相対誤差の許容を超えて IBL の生成が失敗する見込みがある（夜の空で起きるかは未確認）。`sky_atmosphere.frag` へ渡る円盤の輝度の均一変数の経路は読み切っていない（背景とパストレーサーは 0 にした円盤のテクスチャを引く）。
+- U1 空の sanitize を −20〜90° に広げ、負の高度の直達を 0 にし、月明かりと露出の上書きの欄を足す: 着地(直し 0 回)
+- U3 空のキーフレームの表に負の高度を足し、太陽が地平線の下のとき円盤を消す: 着地(直し 0 回)
+- U6 Game の引数・Rendering3DTest の太陽操作・撮影の台本の太陽高度の範囲を −20〜90 へ広げる: 着地(直し 0 回)
+- U4 夜の光のデータ（NightLight.json）と月明かりの規則を足し、EnvironmentSystem の解決で空へ書く: 着地(直し 1 回)
+- U5 自動露出の MinEV100 を上書きする口を足し、パスが空のスナップショットから毎フレーム当てる: 着地(直し 1 回)
+- U7 Rendering3DTest の太陽の操作（毎フレームの丸めと仰角のスライダー）を −20〜90 度へ広げる: 着地(直し 1 回)
+- U2 太陽は地平線の下で方向光を作らず、月明かりの方向光を作る関数を足して描画の光源表へつなぐ（最後）: 着地(直し 0 回)
