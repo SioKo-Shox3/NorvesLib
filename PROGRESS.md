@@ -12266,3 +12266,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 描かれない（有効割合の外の）雨粒からは着水の子と樹冠の下の滴りを生まないようにした（`ParticleUpdate.comp` の `SpawnCollisionChildren`・`SpawnShelterChild` が旗 Active の無い粒で戻る）。CPU の p の見積りの入力（有効な粒の数）と GPU の当たりの数が揃い、弱い雨で着水が秒あたりの上限を超えることと、滴りが雨量に比例しないことを直した。地面に当たって箱の上面へ戻した粒は、その位置で屋根の下かを判定し直して隠す。`VfxSchema` の検証で、応答が SpawnChild の衝突の `ChildEmitter` が空なら前と同じく `unknown_child_emitter` で失敗する（2 つ目の子と屋根の下の子の空は許す）。
 - 証拠: `.harness/runs/20261118-013229/G11-GR59-RAIN-HIT-U6-verify.txt`。粒のシェーダー 5 本の glslc が失敗 0、AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が終了コード 0（エミッタ 3、1074 バイト）、`cmake --build build --config Debug --target Game -- /m:1` が終了コード 0 で Game.exe までリンク（error C・error LNK 0 件）、numstat の 2 通りが一致。
 - Notes: 旗 Active は前の刻みの終わりの値なので、雨量が変わる間は子の生成と描画の有効が最大 1 刻みずれる。
+
+- U1 ScatterSystem にチャンクの当たりの出し入れの通知と当たりの半径を足す: 着地(直し 0 回)
+- U2 Physics モジュールが散布の当たりの通知を受けて detached のチャンクを登録・解除する: 着地(直し 0 回)
+
+## 2026-11-18 G12-GR47-SCATTER-COLLIDERS（run 20261118-013234 の反復 2）
+- Done: `ScatterSystem` に当たりの通知（`IScatterColliderListener` / `ScatterColliderChunkEvent`。チャンクの鍵・種ごとの NVSCT の衝突の形・常駐の個体の変換と番号、隠した個体を除く）と、描画の常駐とは別の当たりの半径（`SetColliderRadius`、既定 `kDefaultScatterColliderRadiusMeters` = 150 m）を足した。焦点から半径に入った常駐のチャンクを登録、出たチャンク・解放・Unload・Clear・受け手の付け替えで解除を通知し、1 本の非表示の切り替えと非表示の集合の復元ではそのチャンクだけ登録し直す。Core の散布は Physics を参照しない。
+- Done: Physics モジュールの `ScatterColliderBinding`（`StaticColliderPayloadHandler.h/.cpp`）が Install で受け手になり、通知のたびに形をワールドの `StaticColliderDesc`（カプセルは両端から中点・半分の長さ・Y 軸からの回転、球、箱。拡大は寸法へ畳んで 1）にして `RegisterStaticColliderChunk` / `UnregisterStaticColliderChunk` を呼ぶ。鍵は上位 8 ビットの出どころ 0x02（セルの static-colliders は 0x01）＋散布のハンドル（24 ビット）＋チャンクで、ぶつからない。物理の Initialize で常駐中のチャンクを登録し直し、ResetTransientState で鍵の集合も捨て、Uninstall では自分が受け手のときだけ外す。
+- 証拠: 最後の単位の確かめ（`cmake --build build --config Debug --target Game -- /m:1`）はエラー 0・EXIT=0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりなので `ScatterColliderTest` は作っていない（verify の ctest の行は回していない）。
+- Next: ランナーの評価者の反証（物理・Object の寿命の危険地帯）。人が見るときの見どころ: ランチャーから grassland に入り、手で置いた森（`Assets/Scatter/grassland.forest.placement.json` の幹のカプセル 0.3〜1.8 m・半径 0.25 m、岩の球 半径 1.25 m）へ歩いて、幹と岩に阻まれること・150 m より遠くへ離れて戻っても当たりが戻ること・1 本を隠すとその木を素通りできること。
+- Notes: 形が不正（非有限・0 以下の寸法）な記述はチャンク全体を落とさずに除き、件数を `SCATTER_COLLIDERS_INVALID_SHAPES` で 1 回警告する。物理の Initialize の前に常駐している当たりは登録に失敗して `SCATTER_COLLIDERS_REGISTER_FAILED` を出すが、Initialize で登録し直す。foliage の種は種の表に形が無いので当たりは付かない。
