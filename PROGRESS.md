@@ -12332,3 +12332,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: UniRig の 14 関節ほどの骨格では四肢の先と顔の流れが足りないので、領域の表・頂点の塗り・補正マスクで補う前提。頭の先・耳・尾の付け根では骨の向きが法線に近く、近傍の平均でも埋まらない頂点が残りうる。`fur_flow.py` はポーズや modifier を適用する前の元のメッシュを読む。頂点カラーの CORNER は頂点ごとの平均になる。
 - U1 SDK に依らない資産の編集の変換と状態(BridgeAssetEditProtocol)を作る: 着地(直し 1 回)
 - U2 NorvesLibBridgeAdapter に asset.getProperties・setProperty・save をつなぎ、asset.edit を広告する: 着地(直し 0 回)
+
+## GAME-GR137-ASSET-EDIT-WIRE NorvesLibBridgeAdapter に資産のプロパティの一覧・設定・保存をつなぎ、能力 asset.edit を広告する（2026-11-18、run 20261118-080412 の反復 1〜2、完了）
+
+- Done: `Game/Bridge/BridgeAssetEditProtocol.{h,cpp}` に SDK の型を使わない `BridgeAssetEditService` を足した。params の JSON 文字列を受け、asset.getProperties・asset.setProperty・asset.save の結果の JSON か拒否（method・reason・path・英語の固定文の message）を返す。logicalPath ごとに文書を開いて保持し（開く処理は線に出さない）、未保存の編集は次の一覧に出る。setProperty は設定前の値を `previousValue` に必ず入れ、拒否のときは値を変えない。`BridgeAssetProperty` に `Description` を足し、VfxSchema の説明を一覧の `description` に出す。
+- Done: `NorvesLibBridgeAdapter` に `assetGetProperties`・`assetSetProperty`・`assetSave` を override し、`params.dump()` をサービスへ渡して、成功は result、拒否は `ENGINE_ASSET_EDIT_REJECTED` と `data {method, reason, path?}` で返す。サービスは最初の asset.* の呼び出しで `NORVES_SOURCE_ASSET_DIR`（`<repo>/Assets`）を根に作る。`bridge.getCapabilities` の末尾に `asset.edit` を足した（既存の能力の並びは変えていない）。
+- 確かめ: このマシンの SDK（`C:/Users/oreor/Documents/NorvesEditor`、7537f47 を含む）の `adapter.hpp` に `assetGetProperties` があること（終了コード 0）。`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp` で構成した Debug で `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`NorvesLibBridgeAdapter.cpp` のコンパイルと `Game.exe` のリンクあり、error の行 0）。証拠は `.harness/runs/20261118-080412/GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`。
+- Next: ランナーの評価者の反証（Bridge のプロトコルの境界）。人が見るときは、SDK 入りの Game に NorvesEditor をつなぎ、`Vfx/FootSplash.vfx.json` で一覧 → 設定 → 保存 → 一覧で値が一致すること、`previousValue` が設定前の値であること、型違い・範囲外・未知の場所・未知の資産をそれぞれの reason で拒否して前の値を保つことを見る。
+- Notes: verify の 1 行目は別マシンのパス（`C:/Users/KINGkawamura/...`。このマシンには無い）を見ているので、同じ中身をこのマシンのパスで確かめた（上の確かめ）。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `BridgeAssetPropertyEditTest` は作っていない。verify のビルドの行は試験のターゲットを外した `--target Game` で回した。アプリは起動していない。
+- Notes: 判断: logicalPath は Game の資産の根（`NORVES_SOURCE_ASSET_DIR`）からの相対の道（例 `Vfx/FootSplash.vfx.json`）。必須の欄の欠落・型違いも `ENGINE_ASSET_EDIT_REJECTED` で返す（logicalPath → unknown_asset、path → unknown_property、value → type_mismatch）。この枠の `build` は SDK なしの構成のまま置いている。
