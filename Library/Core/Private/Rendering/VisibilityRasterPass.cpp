@@ -1116,8 +1116,8 @@ namespace NorvesLib::Core::Rendering
                 (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
                     ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                     : nullptr;
-            // 重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）は ID のラスタに載せず、解決後に重ねる。
-            if (RequiresGBufferOverlayDraw(materialData))
+            // 重ね描きの材質と段の遷移の描画は ID のラスタに載せず、解決後に重ねる。
+            if (command.Draw.bLodCrossfade || RequiresGBufferOverlayDraw(materialData))
             {
                 continue;
             }

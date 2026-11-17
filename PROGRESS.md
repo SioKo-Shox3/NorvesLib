@@ -12247,3 +12247,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: Rendering3DTest で F11 のインポスターの見本（`Rendering3DTestRoutine.cpp` の `m_F11ImpostorComponents`。既定では出ない）を出し、遠景の木の板が太陽の向きで陰影を持ち、霧へ色が寄り、影を受けること。既定の起動画面は変わらない。
 - Next: ランナーの評価者の反証（GBuffer・RenderThread・RHI の使い方 = 危険地帯）。
 - U1 遷移の契約（係数の進め方・符号つきの値・色味の A の詰め方・GLSL のディザ）を足す: 着地(直し 1 回)
+- U7 静的・スキン・インポスターの GBuffer の経路の遷移のディザ（レビュー済みの U3・U4 のパッチ）を当て直す: 着地(直し 0 回)
