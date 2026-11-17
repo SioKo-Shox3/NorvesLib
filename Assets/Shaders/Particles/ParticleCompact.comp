@@ -55,7 +55,8 @@ void main()
     uint slot = emitter.poolCapacitySeedFlags.x + localIndex;
     uvec4 meta = particles[slot].meta;
     uint slotOrder = (emitter.renderFlags >> kGpuEmitterRenderSlotOrderShift) & kGpuEmitterRenderSlotOrderMask;
-    if ((meta.z & kGpuParticleFlagAlive) == 0u || meta.y != emitterExtras[emitterIndex].poolSlot || slotOrder != 0u)
+    if ((meta.z & kGpuParticleFlagAlive) == 0u || (meta.z & kGpuParticleFlagSheltered) != 0u ||
+        meta.y != emitterExtras[emitterIndex].poolSlot || slotOrder != 0u)
     {
         return;
     }

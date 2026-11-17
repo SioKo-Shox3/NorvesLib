@@ -57,6 +57,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<ViewResources> m_ViewResources;
         RGTextureHandle m_DepthHandle;
         RGTextureHandle m_NormalHandle;
+        RGTextureHandle m_OverheadHeightMapHandle;
         RGResourceHandle m_PoolHandle;
         RGResourceHandle m_HeadsHandle;
         RGResourceHandle m_DrawListHandle;
