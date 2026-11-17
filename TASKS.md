@@ -7576,7 +7576,7 @@
 - notes: GR59 の P3（要件 5995 行）。今あるもの: 窓のイベント（Begin・End）とイベントの列（G3-GR11 done）、ソケット（G3-GR13 done、`SocketTypes.h`）。接地のイベントの名前を出すのは todo の G3-GR11-FOOT-CONTACT-SOURCE（needs-gr の GR11 でつながる）。UniRig の 14 関節には足先が無い（ロードマップ 2011 行）ので、足先の骨が無いときは足首＋データのずれで代える（GR103 の共通の骨格が入れば骨を使う）。要件の暫定（GR05 の歩様の位相から歩幅ごとに出す）は、接地のイベントが G3 で入るので作らない。放出の列 `GpuParticleBurstQueue`（位置・法線・速度・個数・エミッタ）は G7-GR57-GPU-SIMULATION の名前と欄に合わせた。足が水たまりを踏んだときの波紋は G11-GR59-PUDDLES の手続きの波紋の範囲外（雨の波紋だけ）。試験を足す理由: 反証する契約は「乾いた地面では出ない・接地の点から出る」。ずれは足の下でなく横から出るしぶきとして動いているときだけ見え、黙って起きる。ロードマップ 1990・2001 行。
 
 ## G11-GR59-PUDDLES: 雨の量と乾きで水位が上下する水たまり（被覆・暗化・つや・手続きの波紋・空の見え方を掛けた反射）と、屋根の下は濡れない雨の遮蔽を地面と一般のメッシュに入れる
-- status: todo
+- status: done
 - after: G11-GR59-OVERHEAD-MAP, G11-GR59-PUDDLE-MASK, G11-GR56-SKY-OCC-SPECULAR, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR44-WORLD-FIELD, G5-GR44-TRAMPLE, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR53-WET-MODEL, G7-GR53-WET-WRITERS
 - gr: GR59
 - needs-gr: GR37, GR44, GR49, GR53
