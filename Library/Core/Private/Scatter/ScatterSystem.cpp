@@ -124,6 +124,57 @@ namespace NorvesLib::Core::Scatter
         return m_Budget;
     }
 
+    void ScatterSystem::SetColliderListener(IScatterColliderListener* listener)
+    {
+        for (const auto& scatter : m_Scatters)
+        {
+            for (uint32_t chunk = 0; chunk < scatter.Chunks.size(); ++chunk)
+            {
+                if (scatter.Chunks[chunk].bColliderRegistered)
+                {
+                    NotifyColliderChunk(scatter, chunk, false);
+                }
+            }
+        }
+        m_ColliderListener = listener;
+        for (const auto& scatter : m_Scatters)
+        {
+            for (uint32_t chunk = 0; chunk < scatter.Chunks.size(); ++chunk)
+            {
+                if (scatter.Chunks[chunk].bColliderRegistered)
+                {
+                    NotifyColliderChunk(scatter, chunk, true);
+                }
+            }
+        }
+    }
+
+    IScatterColliderListener* ScatterSystem::GetColliderListener() const
+    {
+        return m_ColliderListener;
+    }
+
+    bool ScatterSystem::SetColliderRadius(float meters)
+    {
+        if (meters < 0.0f || !std::isfinite(meters))
+        {
+            return false;
+        }
+        m_ColliderRadius = meters;
+        return true;
+    }
+
+    float ScatterSystem::GetColliderRadius() const
+    {
+        return m_ColliderRadius;
+    }
+
+    bool ScatterSystem::IsChunkColliderRegistered(ScatterHandle handle, uint32_t chunk) const
+    {
+        const auto* scatter = Find(handle);
+        return scatter != nullptr && chunk < scatter->Chunks.size() && scatter->Chunks[chunk].bColliderRegistered;
+    }
+
     ScatterHandle ScatterSystem::Load(World& world, Container::TSharedPtr<const Asset::CookedScatterData> data,
                                        Container::Span<const ScatterSpeciesBinding> bindings)
     {
@@ -180,6 +231,10 @@ namespace NorvesLib::Core::Scatter
         {
             const auto& source = scatter.Data->Species[speciesIndex];
             auto& species = scatter.Species[speciesIndex];
+            if (speciesIndex < 64 && !scatter.Data->GetCollisionShapes(speciesIndex).empty())
+            {
+                scatter.ColliderSpeciesMask |= uint64_t{1} << speciesIndex;
+            }
             species.RenderPath = source.RenderPath;
             const ScatterSpeciesBinding* binding = nullptr;
             for (const auto& candidate : bindings)
@@ -428,6 +483,10 @@ namespace NorvesLib::Core::Scatter
         {
             if (it->Handle == handle)
             {
+                for (uint32_t chunk = 0; chunk < it->Chunks.size(); ++chunk)
+                {
+                    UnregisterColliderChunk(*it, chunk);
+                }
                 ReleaseEntities(*it);
                 m_bSkyOccludersDirty |= !it->SkyOccluderChunks.empty();
                 m_Scatters.erase(it);
@@ -451,9 +510,139 @@ namespace NorvesLib::Core::Scatter
         }
     }
 
+    void ScatterSystem::NotifyColliderChunk(const ScatterState& scatter, uint32_t chunk, bool bRegister)
+    {
+        if (m_ColliderListener == nullptr)
+        {
+            return;
+        }
+        if (!bRegister)
+        {
+            m_ColliderListener->OnScatterColliderChunk({scatter.Handle, chunk, false, {}});
+            return;
+        }
+
+        m_ColliderSpecies.clear();
+        m_ColliderInstances.clear();
+        m_ColliderInstanceOffsets.clear();
+        const auto& data = *scatter.Data;
+        const auto& hidden = scatter.HiddenInstances[chunk];
+        const uint64_t mask = scatter.Chunks[chunk].ColliderSpeciesMask;
+        uint64_t firstIndex = 0;
+        for (uint32_t speciesIndex = 0; speciesIndex < scatter.Species.size(); ++speciesIndex)
+        {
+            const auto bytes = data.GetInstances(chunk, speciesIndex);
+            const size_t count = bytes.size() / sizeof(Asset::InstanceRecord16);
+            const uint64_t speciesFirst = firstIndex;
+            firstIndex += count;
+            if (speciesIndex >= 64 || (mask & (uint64_t{1} << speciesIndex)) == 0)
+            {
+                continue;
+            }
+            m_ColliderInstanceOffsets.push_back(m_ColliderInstances.size());
+            m_ColliderSpecies.push_back({speciesIndex, data.GetCollisionShapes(speciesIndex), {}});
+            auto hiddenIt = std::lower_bound(hidden.begin(), hidden.end(), speciesFirst);
+            for (size_t index = 0; index < count; ++index)
+            {
+                const uint64_t instanceIndex = speciesFirst + index;
+                if (hiddenIt != hidden.end() && *hiddenIt == instanceIndex)
+                {
+                    ++hiddenIt;
+                    continue;
+                }
+                if (instanceIndex > std::numeric_limits<uint32_t>::max())
+                {
+                    continue;
+                }
+                Asset::InstanceRecord16 record;
+                Asset::ScatterInstanceValue value;
+                if (!Asset::ReadScatterInstance(bytes.subspan(index * sizeof(record), sizeof(record)), record) ||
+                    !Asset::DecodeScatterInstance(record, data.Chunks[chunk], data.Species[speciesIndex],
+                                                  data.ChunkSizeMeters, data.OriginX, data.OriginZ, value))
+                {
+                    continue;
+                }
+                const Math::Vector3 position(static_cast<float>(value.PositionX), static_cast<float>(value.PositionY),
+                                             static_cast<float>(value.PositionZ));
+                const Math::Vector3 scale(value.Scale, value.Scale, value.Scale);
+                m_ColliderInstances.push_back({
+                    Math::Transform(position, InstanceRotation(value, data.Species[speciesIndex].SlopeFollow), scale),
+                    static_cast<uint32_t>(instanceIndex)});
+            }
+        }
+        // 個体配列の拡張が終わってからビューを作り、途中の再確保で無効にならないようにする。
+        for (size_t index = 0; index < m_ColliderSpecies.size(); ++index)
+        {
+            const size_t first = m_ColliderInstanceOffsets[index];
+            const size_t end = index + 1 < m_ColliderInstanceOffsets.size()
+                ? m_ColliderInstanceOffsets[index + 1] : m_ColliderInstances.size();
+            if (end != first)
+            {
+                m_ColliderSpecies[index].Instances = {m_ColliderInstances.data() + first, end - first};
+            }
+        }
+        m_ColliderListener->OnScatterColliderChunk({
+            scatter.Handle, chunk, true, {m_ColliderSpecies.data(), m_ColliderSpecies.size()}});
+    }
+
+    void ScatterSystem::UnregisterColliderChunk(ScatterState& scatter, uint32_t chunk)
+    {
+        auto& state = scatter.Chunks[chunk];
+        if (!state.bColliderRegistered)
+        {
+            return;
+        }
+        NotifyColliderChunk(scatter, chunk, false);
+        state.bColliderRegistered = false;
+        state.ColliderSpeciesMask = 0;
+    }
+
+    void ScatterSystem::ReconcileColliderChunk(ScatterState& scatter, uint32_t chunk)
+    {
+        auto& state = scatter.Chunks[chunk];
+        uint64_t mask = 0;
+        const float distanceLimit = m_ColliderRadius +
+            (state.bColliderRegistered ? m_Budget.ReleaseHysteresisMeters : 0.0f);
+        if (m_bHasColliderFocus && m_ColliderRadius > 0.0f &&
+            DistanceToChunk(m_ColliderFocus, scatter.Data->Chunks[chunk]) <= distanceLimit)
+        {
+            for (uint32_t species = 0; species < scatter.Species.size() && species < 64; ++species)
+            {
+                const auto& speciesState = scatter.Species[species];
+                if ((scatter.ColliderSpeciesMask & (uint64_t{1} << species)) != 0 &&
+                    chunk < speciesState.Chunks.size() && speciesState.Chunks[chunk].Bytes > 0 &&
+                    speciesState.Chunks[chunk].bResident)
+                {
+                    mask |= uint64_t{1} << species;
+                }
+            }
+        }
+        if (state.bColliderRegistered && state.ColliderSpeciesMask == mask)
+        {
+            return;
+        }
+        UnregisterColliderChunk(scatter, chunk);
+        if (mask != 0)
+        {
+            state.bColliderRegistered = true;
+            state.ColliderSpeciesMask = mask;
+            NotifyColliderChunk(scatter, chunk, true);
+        }
+    }
+
+    void ScatterSystem::RefreshColliderChunk(const ScatterState& scatter, uint32_t chunk)
+    {
+        if (scatter.Chunks[chunk].bColliderRegistered)
+        {
+            NotifyColliderChunk(scatter, chunk, false);
+            NotifyColliderChunk(scatter, chunk, true);
+        }
+    }
+
     bool ScatterSystem::ReleaseChunkUnits(ScatterState& scatter, uint32_t chunk)
     {
         bool bFoliageChanged = false;
+        uint64_t releasedMask = 0;
         for (uint32_t speciesIndex = 0; speciesIndex < scatter.Species.size(); ++speciesIndex)
         {
             auto& species = scatter.Species[speciesIndex];
@@ -479,7 +668,15 @@ namespace NorvesLib::Core::Scatter
                 bFoliageChanged = true;
             }
             unit.bResident = false;
+            if (speciesIndex < 64)
+            {
+                releasedMask |= uint64_t{1} << speciesIndex;
+            }
             RecordEvent(scatter, chunk, speciesIndex, false);
+        }
+        if ((scatter.Chunks[chunk].ColliderSpeciesMask & releasedMask) != 0)
+        {
+            ReconcileColliderChunk(scatter, chunk);
         }
         return bFoliageChanged;
     }
@@ -627,6 +824,10 @@ namespace NorvesLib::Core::Scatter
         if (bFoliageChanged)
         {
             RebuildFoliageScene();
+        }
+        if (scatter->ColliderSpeciesMask != 0)
+        {
+            ReconcileColliderChunk(*scatter, chunk);
         }
         return true;
     }
@@ -781,6 +982,8 @@ namespace NorvesLib::Core::Scatter
 
     void ScatterSystem::Update(const Math::Vector3& cameraPosition)
     {
+        m_ColliderFocus = cameraPosition;
+        m_bHasColliderFocus = true;
         ++m_Frame;
         m_Stats = {};
         bool bFoliageChanged = false;
@@ -910,6 +1113,17 @@ namespace NorvesLib::Core::Scatter
             RebuildFoliageScene();
         }
         PublishSkyOccluders();
+        for (auto& scatter : m_Scatters)
+        {
+            if (scatter.ColliderSpeciesMask == 0)
+            {
+                continue;
+            }
+            for (uint32_t chunk = 0; chunk < scatter.Chunks.size(); ++chunk)
+            {
+                ReconcileColliderChunk(scatter, chunk);
+            }
+        }
     }
 
     void ScatterSystem::RebuildSkyOccluderChunk(ScatterState& scatter, uint32_t chunkIndex)
@@ -1511,6 +1725,10 @@ namespace NorvesLib::Core::Scatter
             RebuildSkyOccluderChunk(*scatter, id.Chunk);
             PublishSkyOccluders();
         }
+        if (speciesIndex < 64 && (scatter->Chunks[id.Chunk].ColliderSpeciesMask & (uint64_t{1} << speciesIndex)) != 0)
+        {
+            RefreshColliderChunk(*scatter, id.Chunk);
+        }
         return true;
     }
 
@@ -1693,6 +1911,15 @@ namespace NorvesLib::Core::Scatter
             RebuildFoliageScene();
         }
         PublishSkyOccluders();
+        for (uint32_t chunk = 0; chunk < previous.size(); ++chunk)
+        {
+            const auto& hidden = scatter->HiddenInstances[chunk];
+            if (scatter->Chunks[chunk].bColliderRegistered &&
+                !std::equal(previous[chunk].begin(), previous[chunk].end(), hidden.begin(), hidden.end()))
+            {
+                RefreshColliderChunk(*scatter, chunk);
+            }
+        }
         return true;
     }
 
@@ -1700,6 +1927,10 @@ namespace NorvesLib::Core::Scatter
     {
         for (auto& scatter : m_Scatters)
         {
+            for (uint32_t chunk = 0; chunk < scatter.Chunks.size(); ++chunk)
+            {
+                UnregisterColliderChunk(scatter, chunk);
+            }
             ReleaseEntities(scatter);
             m_bSkyOccludersDirty |= !scatter.SkyOccluderChunks.empty();
         }
