@@ -547,13 +547,15 @@ namespace NorvesLib::Core::Component
 
         const auto layout = heightField.GetGridLayout();
         const auto weights = heightField.GetSplatWeights();
+        const auto puddlePotential = heightField.GetPuddlePotential();
         const uint64_t vertexCount64 = static_cast<uint64_t>(layout.Columns) * layout.Rows;
         const uint32_t layerCount = static_cast<uint32_t>(
             std::min(desc.Layers.size(), static_cast<size_t>(Rendering::MegaGeometry::MegaTerrainSplatMaxLayers)));
         if (layout.Columns == 0 || layout.Rows == 0 || sourceLayerCount > Rendering::MegaGeometry::MegaTerrainSplatMaxLayers ||
             layerCount == 0 || vertexCount64 > std::numeric_limits<uint32_t>::max() / 4u ||
-            vertexCount64 > std::numeric_limits<size_t>::max() / 8u ||
-            weights.size() != vertexCount64 * sourceLayerCount)
+            vertexCount64 > std::numeric_limits<size_t>::max() / 12u ||
+            weights.size() != vertexCount64 * sourceLayerCount ||
+            (!puddlePotential.empty() && puddlePotential.size() != vertexCount64))
         {
             LOG_WARNING("TERRAIN_COMPONENT_LAYERS_SKIPPED path=%s スプラットの格子または層が不正です", tablePath.c_str());
             return;
@@ -563,7 +565,7 @@ namespace NorvesLib::Core::Component
         {
             const size_t vertexCount = static_cast<size_t>(vertexCount64);
             auto splatBytes = Container::MakeShared<TextureBytes>();
-            splatBytes->resize(vertexCount * 8u);
+            splatBytes->resize(vertexCount * 12u);
             std::memset(splatBytes->data(), 0, splatBytes->size());
             for (size_t vertex = 0; vertex < vertexCount; ++vertex)
             {
@@ -572,6 +574,12 @@ namespace NorvesLib::Core::Component
                     const size_t target = static_cast<size_t>(layer / 4u) * vertexCount * 4u + vertex * 4u + layer % 4u;
                     (*splatBytes)[target] = weights[vertex * sourceLayerCount + layer];
                 }
+            }
+
+            // 3 枚目の R に頂点ごとの凹み度を置き、他の成分は 0 のままにする。
+            for (size_t vertex = 0; vertex < puddlePotential.size(); ++vertex)
+            {
+                (*splatBytes)[vertexCount * 8u + vertex * 4u] = puddlePotential[vertex];
             }
 
             constexpr uint32_t textureSide = 4u;
@@ -602,7 +610,7 @@ namespace NorvesLib::Core::Component
 
             auto& textures = m_RenderResources->Textures();
             m_Splat.SplatArrayTexture = UploadTerrainTexture(device.get(), textures, splatBytes,
-                layout.Columns, layout.Rows, 2u, "TerrainSplatWeights");
+                layout.Columns, layout.Rows, 3u, "TerrainSplatWeights");
             if (m_Splat.SplatArrayTexture.IsValid())
             {
                 m_Splat.AlbedoArrayTexture = UploadTerrainTexture(device.get(), textures, albedoBytes,
