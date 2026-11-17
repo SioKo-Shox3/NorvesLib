@@ -158,6 +158,13 @@ SkyOcclusionResult EvaluateSkyOcclusion(vec3 P, vec3 N)
         params.skyOcclusionWindowOrigin, params.skyOcclusionTexelMeters);
 }
 
+float EvaluateSkyCanopyVisibility(vec3 P, vec3 N)
+{
+    return EvaluateSkyCanopyVisibility(P, N, skyOcclusionVisibility, skyOcclusionAux,
+        params.skyOcclusionInfo, params.skyOcclusionParams,
+        params.skyOcclusionWindowOrigin, params.skyOcclusionTexelMeters);
+}
+
 float EvaluateSkySpecularOcclusion(vec3 P, vec3 N, vec3 R, float roughness)
 {
     return EvaluateSkySpecularOcclusion(P, N, R, roughness, skyOcclusionVisibility, skyOcclusionAux,
@@ -1488,6 +1495,15 @@ void main()
                 rtgiDiffuseRadiance = min(max(rtgiDiffuseRadiance, vec3(0.0)),
                                           vec3(65504.0));
             }
+        }
+
+        // RTGI・DDGI の光線は樹冠（instance mask 0x04）に当たらないので、樹冠だけの空の遮蔽で拡散を補う。
+        // 地形・岩・小屋は光線が解くので全種別の組は使わない。鏡面は円錐のまま。
+        if (params.skyOcclusionInfo.x != 0u && (bRTGIAvailable || bDDGIAvailable))
+        {
+            float canopyVisibility = EvaluateSkyCanopyVisibility(worldPos, N);
+            rtgiDiffuseRadiance *= canopyVisibility;
+            ddgiIrradiance *= canopyVisibility;
         }
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
