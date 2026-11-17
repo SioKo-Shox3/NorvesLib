@@ -275,6 +275,7 @@ namespace NorvesLib::Core::Rendering
         m_OpaqueCommands.clear();
         m_TransparentCommands.clear();
         m_InstanceData.clear();
+        m_ImpostorBatches.clear();
 
         // Batcherをクリア
         m_Batcher.Clear();
@@ -1970,10 +1971,20 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::AppendWorldBoardDrawCommands()
     {
+        Container::VariableArray<const BoardProxy *> impostorProxies;
         for (const BoardProxy *proxy : m_VisibleBoardProxies)
         {
             if (!proxy || !proxy->IsValid() || proxy->Space != BoardSpace::WorldSpace)
             {
+                continue;
+            }
+
+            if (proxy->RenderSubtype == BoardRenderSubtype::Impostor)
+            {
+                if (proxy->Texture.IsValid())
+                {
+                    impostorProxies.push_back(proxy);
+                }
                 continue;
             }
 
@@ -1999,6 +2010,54 @@ namespace NorvesLib::Core::Rendering
             command.SortKey = proxy->SortKey;
             m_DrawCommands.push_back(command);
         }
+
+        // 同じアトラスの組を隣接させ、同じ組の中では可視一覧の順序を保つ。
+        std::stable_sort(impostorProxies.begin(), impostorProxies.end(),
+                         [](const BoardProxy *lhs, const BoardProxy *rhs)
+                         {
+                             if (lhs->Texture != rhs->Texture)
+                             {
+                                 return lhs->Texture < rhs->Texture;
+                             }
+                             if (lhs->ImpostorNormalTexture != rhs->ImpostorNormalTexture)
+                             {
+                                 return lhs->ImpostorNormalTexture < rhs->ImpostorNormalTexture;
+                             }
+                             if (lhs->ImpostorOrmTexture != rhs->ImpostorOrmTexture)
+                             {
+                                 return lhs->ImpostorOrmTexture < rhs->ImpostorOrmTexture;
+                             }
+                             if (lhs->ImpostorDepthTexture != rhs->ImpostorDepthTexture)
+                             {
+                                 return lhs->ImpostorDepthTexture < rhs->ImpostorDepthTexture;
+                             }
+                             return lhs->ImpostorLayout < rhs->ImpostorLayout;
+                         });
+
+        for (const BoardProxy *proxy : impostorProxies)
+        {
+            if (m_ImpostorBatches.empty() ||
+                m_ImpostorBatches.back().AlbedoAtlas != proxy->Texture ||
+                m_ImpostorBatches.back().NormalAtlas != proxy->ImpostorNormalTexture ||
+                m_ImpostorBatches.back().OrmAtlas != proxy->ImpostorOrmTexture ||
+                m_ImpostorBatches.back().DepthAtlas != proxy->ImpostorDepthTexture ||
+                m_ImpostorBatches.back().Layout != proxy->ImpostorLayout)
+            {
+                ImpostorBatch batch;
+                batch.AlbedoAtlas = proxy->Texture;
+                batch.NormalAtlas = proxy->ImpostorNormalTexture;
+                batch.OrmAtlas = proxy->ImpostorOrmTexture;
+                batch.DepthAtlas = proxy->ImpostorDepthTexture;
+                batch.Layout = proxy->ImpostorLayout;
+                batch.InstanceDataOffset = static_cast<uint32_t>(m_InstanceData.size());
+                m_ImpostorBatches.push_back(batch);
+            }
+
+            GPUSceneInstanceData instanceData;
+            FillWorldBoardInstanceData(*proxy, instanceData);
+            m_InstanceData.push_back(instanceData);
+            ++m_ImpostorBatches.back().InstanceCount;
+        }
     }
 
     void SceneView::GenerateCommands()
@@ -2007,6 +2066,7 @@ namespace NorvesLib::Core::Rendering
         m_OpaqueCommands.clear();
         m_TransparentCommands.clear();
         m_InstanceData.clear();
+        m_ImpostorBatches.clear();
 
         // バッチャーからDrawCommandを生成
         m_Batcher.GenerateDrawCommands(m_DrawCommands,

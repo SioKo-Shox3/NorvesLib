@@ -828,6 +828,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
+    Public/Rendering/ImpostorBatch.h
     Public/Rendering/GrassPass.h
     Public/Rendering/WorldFieldPass.h
     Public/Rendering/WorldFieldTypes.h

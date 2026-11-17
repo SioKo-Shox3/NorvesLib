@@ -3,6 +3,7 @@
 #include "RHI/RHITypes.h"
 #include "RHI/DeviceCapabilities.h"
 #include "DrawCommand.h"
+#include "Rendering/ImpostorBatch.h"
 #include "Rendering/DebugDrawQueue.h"
 #include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/RenderResourceContexts.h"
@@ -838,8 +839,14 @@ namespace NorvesLib::Core::Rendering
 
         const Container::VariableArray<MeshProxy>* SnapshotMeshProxies = nullptr;
 
-        /** @brief FramePacket::InstanceData（InstanceDataBuffer へ上げた値の CPU 側。DrawCommand のインスタンスの範囲が指す） */
+        /** @brief FramePacket::InstanceData（DrawCommand とインポスターの束が参照する CPU 側の値） */
         const Container::VariableArray<GPUSceneInstanceData>* SnapshotInstanceData = nullptr;
+
+        /** @brief FramePacket が所有するインポスターの束 */
+        const Container::VariableArray<ImpostorBatch>* SnapshotImpostorBatches = nullptr;
+
+        /** @brief 互換経路で使う主ビューのインポスターの束の範囲 */
+        CommandRange SnapshotImpostorBatchRange;
 
         /** @brief FramePacket::Scene.SkinnedMeshProxies のanimated boundsスナップショット */
         const Container::VariableArray<SkinnedMeshProxy>* SnapshotSkinnedMeshProxies = nullptr;
@@ -936,6 +943,25 @@ namespace NorvesLib::Core::Rendering
         DrawCommandView GetActiveTransparentCommands() const
         {
             return CurrentViewport ? CurrentTransparentCommands : SnapshotTransparentCommands;
+        }
+
+        /** @brief 現在のビューに属するインポスターの束を取得する */
+        Container::Span<const ImpostorBatch> GetActiveImpostorBatches() const
+        {
+            if (!SnapshotImpostorBatches)
+            {
+                return {};
+            }
+
+            const CommandRange &range = CurrentViewport ? CurrentViewport->ImpostorBatchRange
+                                                        : SnapshotImpostorBatchRange;
+            const auto &batches = *SnapshotImpostorBatches;
+            if (range.Count == 0 || range.First > batches.size() ||
+                range.Count > batches.size() - range.First)
+            {
+                return {};
+            }
+            return {batches.data() + range.First, range.Count};
         }
 
         DebugViewMode GetActiveDebugMode() const

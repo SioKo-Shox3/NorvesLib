@@ -3,6 +3,7 @@
 #include "RenderTypes.h"
 #include "SceneProxy.h"
 #include "DrawCommand.h"
+#include "Rendering/ImpostorBatch.h"
 #include "Rendering/DebugDrawQueue.h"
 #include "ViewportSnapshot.h"
 #include "Rendering/FrameCaptureTypes.h"
@@ -397,7 +398,6 @@ namespace NorvesLib::Core::Rendering
         /** @brief DrawCommands内の半透明DrawCommand範囲 */
         CommandRange TransparentCommandRange;
 
-        /** @brief DrawCommandから参照するGPUシーンインスタンスデータ */
         /** @brief skinned drawが参照するFramePacket所有のmesh asset lease */
         Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedMeshFrameLeases;
 
@@ -416,7 +416,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief 手置きの水たまりの源（最大 WorldFieldPuddleMaxSources 件の値の配列）。SceneRevision に入れない。 */
         Container::VariableArray<WorldFieldPuddleSource> WorldFieldPuddleSources;
 
+        /** @brief DrawCommand とインポスターの束が参照する GPU シーンインスタンスデータ */
         Container::VariableArray<GPUSceneInstanceData> InstanceData;
+
+        /** @brief 各ビューのインポスターの束を連結したスナップショット */
+        Container::VariableArray<ImpostorBatch> ImpostorBatches;
+
+        /** @brief 互換経路で使う主ビューのインポスターの束の範囲 */
+        CommandRange ImpostorBatchRange;
 
         /** @brief デバッグライン頂点スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
         Container::VariableArray<DebugLineVertex> DebugLineVertices;
@@ -496,6 +503,8 @@ namespace NorvesLib::Core::Rendering
             WorldFieldPuddleSources.clear();
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
+            ImpostorBatches.clear();
+            ImpostorBatchRange = CommandRange{};
             DebugLineVertices.clear();
             Stats = FrameStatsSnapshot{};
             GeneratedDrawCommandCount = 0;
