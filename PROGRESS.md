@@ -12315,3 +12315,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 コアの前半（設定の検査・入力の型・頂点ごとの流れと量と領域・PNG の読み書き）: 着地(直し 0 回)
 - U2 コアの後半（UV のヤコビアン・texel への焼き・16px の膨張・補正マスク・4 枚と fur_maps.json・npz と CLI）: 着地(直し 0 回)
 - U3 Blender 側の入出力 fur_flow.py: 着地(直し 0 回)
+- U4 流れの線画 fur_preview.py: 着地(直し 0 回)
