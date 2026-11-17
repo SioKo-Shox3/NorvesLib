@@ -3,8 +3,11 @@
 // 空の環境光を積分し、雲までの区間の大気の空気遠近（地面と同じ高度ごとの表）を掛ける。定数の並び・式を変えたら、書き出しの契約（Docs/RenderingValidation/WastelandCloudDump.md）と
 // Scripts/Terrain/CloudDumpCheck.py の再計算も合わせて直す。
 
+// 雲の影のマスクの compute は密度の式だけを使うため、画面用の束縛と関数を除く。
+#ifndef CLOUD_LAYER_DENSITY_ONLY
 layout(set = 0, binding = 0) uniform sampler2D sceneDepthTexture;
 layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance;
+#endif
 
 // 空気遠近の高度ごとの表の段の数（SkyAerialProfileSize。VolumetricsCommon.glsl の kAerialProfileSize と同じ）
 const uint kCloudAerialProfileSize = 128u;
@@ -95,6 +98,7 @@ bool IsFiniteFloat(float value)
     return !isnan(value) && !isinf(value);
 }
 
+#ifndef CLOUD_LAYER_DENSITY_ONLY
 vec2 EquirectangularUV(vec3 direction)
 {
     vec2 uv = vec2(atan(direction.z, direction.x),
@@ -108,6 +112,7 @@ vec3 SampleSky(vec3 direction)
 {
     return max(texture(skyAtmosphereRadiance, EquirectangularUV(direction)).rgb, vec3(0.0));
 }
+#endif
 
 float Remap(float value, float low, float high, float newLow, float newHigh)
 {
@@ -219,6 +224,7 @@ float SampleCloudDensity(vec3 position, float heightFraction, float detailWeight
     return clamp(Remap(base, detailModifier * 0.35 * detailWeight, 1.0, 0.0, 1.0), 0.0, 1.0);
 }
 
+#ifndef CLOUD_LAYER_DENSITY_ONLY
 // 1 本の視線を雲の層で進めた結果
 struct CloudRayResult
 {
@@ -544,3 +550,4 @@ vec3 ComposeCloudRadiance(CloudRayResult ray, vec3 rayDirection, float opacity,
 {
     return ComposeCloudRadianceWithDiagnostics(ray, rayDirection, opacity, 0u, aerialVisibility, fade);
 }
+#endif
