@@ -12101,3 +12101,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: Rendering3DTest で F11 のインポスターの見本（既定では出ない）を出すと、板が前方描画の半透明でなく GBuffer に入り、太陽・IBL の照明と影を受け、遠いほど霧へ寄り、雨のときは濡れる。見本のアトラスは色だけ（手続きの画像）なので、法線は視線へ向く形・材質は既定の粗さで描かれる。焼いたアトラス（`Tools/ImpostorBaker` の 4 枚）を `SetBakedAtlases` で渡すと法線・ORM・深度を引く。束の数が変わると `IMPOSTOR_GBUFFER_DRAW batches=… instances=…` がログに 1 行出る。
 - Next: ランナーの評価者の反証（GBuffer・RenderThread・RHI の使い方 = 危険地帯）。個体の回転を使ったセルの選択は G12-GR48-IMPOSTOR-GBUFFER-P1、遷移のディザは G12-GR48-CROSSFADE、影の投影と配置の層は G12-GR48-LAYER-SHADOW。
 - Notes: 採った判断: (1) 束の鍵は色・法線・ORM・深度のアトラスと配置で、同じ組の中は可視一覧の順を保つ。(2) 色のアトラスが無効な板は描かない。(3) 範囲がパケットの InstanceData か GPU の InstanceDataBuffer の大きさを超える束は飛ばす。(4) 全部の束の定数・記述子を借りて書いてから記録を始める（FoliagePass と同じ）。既知の限界: インポスターは TLAS に入らないので、DDGI・RTGI・RT の影・パストレーサーでは遠景のインポスターが無いものとして扱われる。描画結果は確かめていない（アプリの起動・撮影は回さない決まり）。
+
+### G12-GR48-IMPOSTOR-GBUFFER 再仕上げ（2026-11-18、run 20261118-013233・反復 1）
+- Done: 前回の反復で全単位（部品とプロキシのアトラス・GBuffer のシェーダー・前方描画からの撤去・束の受け渡し・`ImpostorGBufferPass`）が着地済み。評価が枠切れで行われず `doing` に戻っていたので、コードは変えずに `done` へ戻した。
+- 証拠: この枠の `ImpostorGBufferPass.h/.cpp`・`SceneView.cpp`・`CMakeLists.txt`・`impostor_gbuffer.vert/.frag`・`FramePacket.h`・`RenderingCoordinator.cpp`・`ForwardPass.cpp`・`ImpostorComponent.cpp` が、`cmake --build build --config Debug --target Game -- /m:1` を終了コード 0 で通した作業ツリーの中身とバイト単位で一致することを確かめた。verify の ctest の行は回さない決まりで回していない。
+- 人が見るときの見どころ: Rendering3DTest で F11 のインポスターの見本（`Rendering3DTestRoutine.cpp` の `m_F11ImpostorComponents`。既定では出ない）を出し、遠景の木の板が太陽の向きで陰影を持ち、霧へ色が寄り、影を受けること。既定の起動画面は変わらない。
+- Next: ランナーの評価者の反証（GBuffer・RenderThread・RHI の使い方 = 危険地帯）。
