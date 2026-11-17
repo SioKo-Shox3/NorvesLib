@@ -18,6 +18,8 @@
 #include "Rendering/SparseResidencyShading.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VolumetricFog.h"
+#include "Rendering/Wind.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/IDevice.h"
@@ -106,6 +108,7 @@ namespace NorvesLib::Core::Rendering
             int32_t skyOcclusionWindowOrigin[4][4];
             float skyOcclusionTexelMeters[4];
             GPUHeightFogParams heightFog; // 高さフォグ（Common/HeightFog.glsl の HeightFogParams）
+            GPULocalFogParams localFog; // 局所霧（Common/HeightFog.glsl の LocalFogParams）
         };
 
         static_assert(alignof(TransparentForwardUBO) == 16);
@@ -136,7 +139,8 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(TransparentForwardUBO, skyOcclusionWindowOrigin) == 832);
         static_assert(offsetof(TransparentForwardUBO, skyOcclusionTexelMeters) == 896);
         static_assert(offsetof(TransparentForwardUBO, heightFog) == 912);
-        static_assert(sizeof(TransparentForwardUBO) == 1008);
+        static_assert(offsetof(TransparentForwardUBO, localFog) == 1008);
+        static_assert(sizeof(TransparentForwardUBO) == 1696);
         static_assert(PhysicalLightingShadowCascadeCount >= 2u);
 
         static void InitializeSafeTransparentShadowParams(TransparentForwardUBO& ubo)
@@ -179,11 +183,13 @@ namespace NorvesLib::Core::Rendering
             float cameraUp[4];
             float sceneColorParams[4];
             GPUHeightFogParams heightFog; // 高さフォグ（Common/HeightFog.glsl の HeightFogParams）
+            GPULocalFogParams localFog; // 局所霧（Common/HeightFog.glsl の LocalFogParams）
         };
 
         static_assert(offsetof(WorldBoardForwardUBO, sceneColorParams) == 176);
         static_assert(offsetof(WorldBoardForwardUBO, heightFog) == 192);
-        static_assert(sizeof(WorldBoardForwardUBO) == 288);
+        static_assert(offsetof(WorldBoardForwardUBO, localFog) == 288);
+        static_assert(sizeof(WorldBoardForwardUBO) == 976);
     } // namespace
 
     ForwardPass::ForwardPass(SceneView* sceneView, SceneRenderer* sceneRenderer)
@@ -1403,6 +1409,15 @@ namespace NorvesLib::Core::Rendering
             heightFogParams = BuildHeightFogGpuParams(context, *activeCamera, bHeightFogSkyRadianceAvailable);
         }
 
+        GPULocalFogParams localFogParams{};
+        if (context.SnapshotScene && !context.SnapshotScene->LocalFogVolumes.empty())
+        {
+            localFogParams = BuildLocalFogGpuParams(
+                context.SnapshotScene->LocalFogVolumes.data(),
+                static_cast<uint32_t>(context.SnapshotScene->LocalFogVolumes.size()),
+                context.Wind, WindClockSeconds(context.ExtensionFrame.GameTotalTime));
+        }
+
         WorldBoardForwardUBO worldBoardFrameUBO{};
         std::memcpy(worldBoardFrameUBO.view, viewData, sizeof(viewData));
         std::memcpy(worldBoardFrameUBO.projection, projectionData, sizeof(projectionData));
@@ -1411,6 +1426,7 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(worldBoardFrameUBO.cameraUp, cameraUp, sizeof(cameraUp));
         worldBoardFrameUBO.sceneColorParams[0] = sceneColorPreExposure;
         worldBoardFrameUBO.heightFog = heightFogParams;
+        worldBoardFrameUBO.localFog = localFogParams;
 
         TransparentForwardUBO transparentFrameTemplate{};
         InitializeSafeTransparentShadowParams(transparentFrameTemplate);
@@ -1421,6 +1437,7 @@ namespace NorvesLib::Core::Rendering
         transparentFrameTemplate.sceneColorParams[0] = sceneColorPreExposure;
         transparentFrameTemplate.sceneColorParams[2] = -1.0f;
         transparentFrameTemplate.heightFog = heightFogParams;
+        transparentFrameTemplate.localFog = localFogParams;
         std::memcpy(transparentFrameTemplate.lightView,
                     physicalLighting.CascadedShadow.View,
                     sizeof(transparentFrameTemplate.lightView));

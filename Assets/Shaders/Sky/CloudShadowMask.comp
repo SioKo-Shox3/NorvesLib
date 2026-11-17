@@ -1,0 +1,62 @@
+﻿// 雲の底から太陽へ向かう雲の密度を積分し、地上の照明に使う透過率のマスクを書く。
+#version 450
+
+#define CLOUD_LAYER_DENSITY_ONLY
+#include "Common/CloudLayerCommon.glsl"
+#include "Common/CloudShadowMaskSample.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 5, r32f) uniform writeonly image2D cloudShadowMask;
+layout(std140, set = 0, binding = 6) uniform CloudShadowMaskParams
+{
+    vec4 centerAndExtent;          // x=中心X(m), y=中心Z(m), z=一辺(m), w=一辺の texel 数
+    vec4 sunDirectionAndGapCount;  // xyz=正規化済みの太陽の方向, w=切れ間の数(0〜4)
+    vec4 sunGaps[4];               // x=中心X, y=中心Z, z=半径(m), w=柔らかさ(m)
+    vec4 sunGapStrengths;          // 4 つの切れ間の強さ(0〜1)
+} mask;
+
+void main()
+{
+    uvec2 texel = gl_GlobalInvocationID.xy;
+    uint size = uint(mask.centerAndExtent.w);
+    if (any(greaterThanEqual(texel, uvec2(size))))
+    {
+        return;
+    }
+
+    vec3 sunDirection = mask.sunDirectionAndGapCount.xyz;
+    if (sunDirection.y < kCloudShadowMinSunHeight)
+    {
+        imageStore(cloudShadowMask, ivec2(texel), vec4(1.0, 0.0, 0.0, 0.0));
+        return;
+    }
+
+    vec2 uv = (vec2(texel) + vec2(0.5)) / mask.centerAndExtent.w;
+    vec2 planeXZ = mask.centerAndExtent.xy + (uv - vec2(0.5)) * mask.centerAndExtent.z;
+    float bottom = params.layerAltitudesAndCoverage.y;
+    float top = params.layerAltitudesAndCoverage.z;
+    float stepLength = (top - bottom) / sunDirection.y / 24.0;
+    float densitySum = 0.0;
+
+    // カメラの近く数 km では球殻の曲がりは 1 m ほどなので、雲の層を平面として数える。
+    // ノイズの位置は空に描く雲と同じ (X, 高度, Z) とし、風のずれも共通の密度関数で与える。
+    for (int k = 0; k < 24; ++k)
+    {
+        float distanceAlongSun = (float(k) + 0.5) * stepLength;
+        vec3 position = vec3(planeXZ.x, bottom, planeXZ.y) + sunDirection * distanceAlongSun;
+        float heightFraction = (position.y - bottom) / (top - bottom);
+        densitySum += SampleCloudDensity(position, heightFraction, 1.0);
+    }
+
+    float opticalDepth = densitySum * stepLength * params.extinctionAndInverseScales.x;
+    float transmittance = exp(-opticalDepth);
+    float opening = 0.0;
+    int gapCount = clamp(int(mask.sunDirectionAndGapCount.w), 0, 4);
+    for (int g = 0; g < gapCount; ++g)
+    {
+        opening = max(opening, CloudSunGapWeight(planeXZ, mask.sunGaps[g]) * mask.sunGapStrengths[g]);
+    }
+    transmittance = mix(transmittance, 1.0, clamp(opening, 0.0, 1.0));
+    imageStore(cloudShadowMask, ivec2(texel), vec4(transmittance, 0.0, 0.0, 0.0));
+}

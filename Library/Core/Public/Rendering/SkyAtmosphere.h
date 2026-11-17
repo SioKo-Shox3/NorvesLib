@@ -13,6 +13,10 @@ namespace NorvesLib::Core::Rendering
     // Keep this shared by the CPU reference and the later LUT generation path.
     inline constexpr float SolarDiskSolidAngleSteradians = 6.87e-5f;
 
+    // 太陽高度の受け付ける範囲（度）。負の高度では地表の直達光を 0 とする。
+    inline constexpr float SkySunMinAltitudeDegrees = -20.0f;
+    inline constexpr float SkySunMaxAltitudeDegrees = 90.0f;
+
     /**
      * @brief FramePacketで渡す空と太陽のパラメータ
      *
@@ -20,10 +24,12 @@ namespace NorvesLib::Core::Rendering
      * 表す方向光（SkySunLight.h）を光源表へ加えるので、シーンに太陽の方向光を
      * 別に置かない。ここでの太陽方向は観測点から太陽へ向かう方向で、
      * LightProxy/LightDataのDirection（光の進行方向）にはその逆ベクトルを設定する。
+     * 月明かりと露出の欄は空の LUT・IBL の鍵に含めず、方向光と自動露出だけが読む。
      */
     struct SkyAtmosphereParameters
     {
         bool bEnabled = false;
+        // 太陽の高度（度、[-20, 90]）。
         float SunAltitudeDegrees = 45.0f;
         float SunAzimuthDegrees = 0.0f;
         float SunLuminanceNits = 1.6e9f;
@@ -63,6 +69,21 @@ namespace NorvesLib::Core::Rendering
         // 開発用の診断の印。真のとき空のパスが太陽の掃引の行（SKY_SWEEP）を出す。
         // 作り直しの鍵・等価・ハッシュには入れない。
         bool bDebugLogSunSweep = false;
+
+        // 月明かりの方向光の、光に垂直な面の照度（lux、[0, 10]）。0 で灯さない。
+        float MoonIlluminanceLux = 0.0f;
+        // 月明かりの来る向きの高度（度、[0, 90]）。
+        float MoonAltitudeDegrees = 45.0f;
+        // 月明かりの来る向きの方位（度、[-360, 360]）。太陽の方位と同じ規約。
+        float MoonAzimuthDegrees = 0.0f;
+        // 月明かりの色（線形 RGB、各 [0, 4]）。輝度 1 への正規化は光源を作る側が行う。
+        Math::Vector3 MoonColor = Math::Vector3(1.0f, 1.0f, 1.0f);
+        // true なら月明かりが影を落とす。
+        bool bMoonCastShadows = false;
+        // true なら自動露出の目標の EV100 の下限を上書きする。
+        bool bOverrideAutoExposureMinEV100 = false;
+        // 上書きする自動露出の下限（EV100、[-10, 20]）。
+        float AutoExposureMinEV100 = -4.0f;
     };
 
     /**
@@ -182,7 +203,7 @@ namespace NorvesLib::Core::Rendering
                                                        float azimuthDegrees);
 
     /**
-     * @brief 2組の空のパラメータが全項目で等しいか
+     * @brief 2組の空のパラメータのうち、空の生成に使う項目が等しいか
      *
      * LUT・空由来のIBLを作り直すかどうかの判定に使う（sanitize済みの値どうしで比べる）。
      */
@@ -271,7 +292,7 @@ namespace NorvesLib::Core::Rendering
         SkyRadianceSample SampleUnitOvercastSkyView(const Math::Vector3& viewDirection,
                                                     float zenithToHorizonRatio) const;
 
-        /** 地表（GroundAltitudeMeters）での太陽の透過率（RGB）。ComputeSunGroundTransmittanceと同じ値。 */
+        /** 地表（GroundAltitudeMeters）での太陽の透過率（RGB）。太陽高度が負なら 0。ComputeSunGroundTransmittance と同じ値。 */
         const Math::Vector3& GetSunGroundTransmittance() const
         {
             return m_SunGroundTransmittance;
@@ -475,7 +496,7 @@ namespace NorvesLib::Core::Rendering
         float cosine);
 
     /**
-     * @brief 地表（GroundAltitudeMeters）から見た太陽の透過率（RGB）。空が無効なら0。
+     * @brief 地表（GroundAltitudeMeters）から見た太陽の透過率（RGB）。空が無効か太陽高度が負なら 0。
      */
     Math::Vector3 ComputeSunGroundTransmittance(
         const SkyAtmosphereParameters& parameters);
@@ -523,7 +544,7 @@ namespace NorvesLib::Core::Rendering
      *
      * 雲の直達の係数（ComputeCloudDirectFactor）を掛けた値。ラスタの空の太陽の方向光・CSM・PT の太陽・
      * 雲の層の照りはこの値を共有する。
-     * 空が無効なら0。
+     * 空が無効か太陽高度が負なら 0。
      */
     Math::Vector3 ComputeSunGroundIlluminance(
         const SkyAtmosphereParameters& parameters);

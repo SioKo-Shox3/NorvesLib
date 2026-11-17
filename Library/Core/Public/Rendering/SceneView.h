@@ -173,6 +173,12 @@ namespace NorvesLib::Core::Rendering
          */
         void AddMegaGeometryProxy(const MegaGeometryProxy &proxy);
 
+        /** @brief ComponentId ごとの TLAS への参加を設定し、保持中の proxy にも反映する。除外の印は proxy の全消去後も保持する。 */
+        void SetMegaGeometryRayTracing(uint64_t componentId, bool bRayTracing);
+
+        /** @brief ComponentId が TLAS の除外対象でなければ true を返す（既定は参加）。 */
+        bool IsMegaGeometryRayTracing(uint64_t componentId) const;
+
         /**
          * @brief LightProxyを削除
          * @param lightId 削除するLightId（LightComponentId）
@@ -657,6 +663,8 @@ namespace NorvesLib::Core::Rendering
         Container::UnorderedMap<uint64_t, uint32_t> m_BoardProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_LightProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_MegaGeometryProxyIndex;
+        // TLAS から外す ComponentId。proxy の有無とは独立し、所有元が設定を解除する。
+        Container::UnorderedSet<uint64_t> m_RayTracingExcludedMegaComponentIds;
         // 散布を除く ComponentId から ObjectId への索引。
         Container::UnorderedMap<uint64_t, uint64_t> m_MegaComponentObjectIds;
         // 散布以外の追加・削除・ComponentId の変更で立ち、索引の作り直しで下ろす印。

@@ -30,7 +30,21 @@ void main()
     vOrientation = 0u;
     vStreakAspect = 0.0;
 
-    uint slot = uint(gl_InstanceIndex);
+    uint instanceIndex = uint(gl_InstanceIndex);
+    uint slot = instanceIndex;
+    if (drawConstants.flags.w != kGpuParticleDrawSourceDirect)
+    {
+        uint bucket = drawConstants.flags.w - 1u;
+        if (bucket >= kGpuParticleDrawBucketCount || instanceIndex >= kGpuParticlePoolCapacity)
+        {
+            return;
+        }
+        slot = drawList.slots[bucket * kGpuParticlePoolCapacity + instanceIndex];
+    }
+    if (slot >= kGpuParticlePoolCapacity)
+    {
+        return;
+    }
     GpuParticle p = drawPool.particles[slot];
     if ((p.meta.z & kGpuParticleFlagAlive) == 0u || p.meta.y >= 1024u ||
         any(isnan(p.posAge.xyz)) || any(isinf(p.posAge.xyz)) ||

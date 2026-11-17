@@ -286,7 +286,7 @@ namespace NorvesLib::Core::Particle
         static void UpdateFlipbook(const InstanceSlot& slot, const EmitterState& emitter, VfxParticleState& particle);
         static void UpdateOverLife(const EmitterState& emitter, VfxParticleState& particle);
         static bool ResolveCollisions(const EmitterState& emitter, VfxParticleState& particle,
-            const VfxHeightFieldView& heightField, VariableArray<ChildSpawn>& children);
+            const Math::Vector3& cameraPosition, const VfxHeightFieldView& heightField, VariableArray<ChildSpawn>& children);
         static void SpawnParticles(InstanceSlot& slot, EmitterState& emitter, uint32_t count,
             const Math::Vector3& position, double birthTime, float age, const VfxTickContext& context,
             const Math::Vector3* orientationNormal = nullptr, bool bUsePositionForCameraBox = false);

@@ -185,6 +185,7 @@ namespace NorvesLib::Core::Rendering
         h.Add(p.WorldBounds);
         h.Add(p.bVisible);
         h.Add(p.bCastShadow);
+        h.Add(p.bRayTracing);
         h.Add(p.bSkyMapProxy);
         h.Add(p.LayerMask);
         h.Add(p.Tint);

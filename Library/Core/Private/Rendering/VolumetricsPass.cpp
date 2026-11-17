@@ -9,13 +9,16 @@
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SkySunLight.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/Wind.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
 #include "RHI/ICommandList.h"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -58,9 +61,25 @@ namespace NorvesLib::Core::Rendering
             float FogSteps[4];
             // x=画素ごとのずらしが有効なら 1、y=TAA が掛かるフレームで時間方向のずらしが有効なら 1、z=時間の位相（フレーム番号を 64 で割った余り）、w=未使用
             float FogJitter[4];
+            // x=中心 X（m）、y=中心 Z（m）、z=一辺（m）、w=マスクを使うなら 1
+            float CloudShadowCenterAndExtent[4];
+            // xyz=太陽へ向かう向き、w=雲の底の高度（m）
+            float CloudShadowSunAndBottom[4];
+            // x=マスクの外の透過率（一様の直達の係数）、yzw=未使用
+            float CloudShadowOutside[4];
+            GPULocalFogParams LocalFog; // 局所霧（Common/HeightFog.glsl の LocalFogParams）
         };
 
-        static_assert(sizeof(GPUVolumetricsParams) == 864u + 2u * SkyAerialProfileSize * 16u);
+        static_assert(sizeof(GPUVolumetricsParams) ==
+                      912u + 2u * SkyAerialProfileSize * 16u + sizeof(GPULocalFogParams));
+        static_assert(offsetof(GPUVolumetricsParams, LocalFog) == 912u + 2u * SkyAerialProfileSize * 16u);
+
+        uint32_t GetLocalFogVolumeCount(const ViewRenderContext* context)
+        {
+            return context && context->SnapshotScene
+                       ? static_cast<uint32_t>(context->SnapshotScene->LocalFogVolumes.size())
+                       : 0u;
+        }
 
         RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc(bool bUseVsm)
         {
@@ -109,6 +128,11 @@ namespace NorvesLib::Core::Rendering
                     desc.bindings.push_back(vsmBinding);
                 }
             }
+            RHI::DescriptorBinding cloudShadowBinding;
+            cloudShadowBinding.binding = 10u;
+            cloudShadowBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            cloudShadowBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(cloudShadowBinding);
             return desc;
         }
 
@@ -177,8 +201,10 @@ namespace NorvesLib::Core::Rendering
 
         bool TryBuildDirectionalScatteringLight(const ViewRenderContext& context,
                                                 float (&outDirectionAndAnisotropy)[4],
-                                                float (&outRadianceAndEnabled)[4])
+                                                float (&outRadianceAndEnabled)[4],
+                                                bool& outIsSkySun)
         {
+            outIsSkySun = false;
             if (!context.SnapshotLightProxies || !HasValidCascadedShadowValues(context.PhysicalLighting))
             {
                 return false;
@@ -229,6 +255,7 @@ namespace NorvesLib::Core::Rendering
                 outRadianceAndEnabled[1] = static_cast<float>(std::min(radiance[1], 1.0e8));
                 outRadianceAndEnabled[2] = static_cast<float>(std::min(radiance[2], 1.0e8));
                 outRadianceAndEnabled[3] = 1.0f;
+                outIsSkySun = IsSkySunLight(light);
                 return true;
             }
             return false;
@@ -243,6 +270,7 @@ namespace NorvesLib::Core::Rendering
 
         // volumetrics.frag（と同じ式を使う volumetrics_probe.frag）の定数を詰める。VolumetricsPass と AtmosphereProbePass が
         // 同じ値で評価するよう、ここ 1 か所で作る
+        // 大気の書き出しでは雲の影を使わない（bAllowCloudShadow が偽）。
         void BuildVolumetricsParams(const ViewRenderContext& context,
                                     const CameraProxy& camera,
                                     const VolumetricFogParameters& fog,
@@ -252,6 +280,7 @@ namespace NorvesLib::Core::Rendering
                                     const RHI::TexturePtr& skyTransmittanceTexture,
                                     bool bActualShadowMapAvailable,
                                     bool bReferenceSteps,
+                                    bool bAllowCloudShadow,
                                     GPUVolumetricsParams& outParams,
                                     VolumetricsParamsState& outState)
         {
@@ -285,7 +314,7 @@ namespace NorvesLib::Core::Rendering
                 outParams.CameraForwardAndScatteringEnabled[2] =
                     static_cast<float>(camera.ForwardZ * inverseForwardLength);
             }
-            // 霧が無効で空気遠近だけ掛けるときは、霧の密度を 0 にして霧の分を消す
+            // 高さフォグが無効なら密度を 0 にし、空気遠近や局所霧だけを掛ける
             outParams.FogParameters[0] = heightFog.DensityBaseHeightFalloffSkyAvailable[0];
             outParams.FogParameters[1] = heightFog.DensityBaseHeightFalloffSkyAvailable[1];
             outParams.FogParameters[2] = heightFog.DensityBaseHeightFalloffSkyAvailable[2];
@@ -367,13 +396,35 @@ namespace NorvesLib::Core::Rendering
                 bCameraForwardValid && bPhysicalLightingMatches && bActualShadowMapAvailable &&
                 physicalLighting.HasCompleteCascadedShadow() &&
                 HasValidCascadedShadowValues(physicalLighting);
+            bool bIsSkySun = false;
             outState.bDirectionalAvailable = bCascadedShadowAvailable &&
                 TryBuildDirectionalScatteringLight(context,
                                                    outParams.DirectionalLightDirectionAndAnisotropy,
-                                                   outParams.DirectionalLightRadianceAndEnabled);
+                                                   outParams.DirectionalLightRadianceAndEnabled,
+                                                   bIsSkySun);
             if (outState.bDirectionalAvailable)
             {
                 outParams.CameraForwardAndScatteringEnabled[3] = 1.0f;
+                if (bAllowCloudShadow && bIsSkySun && context.CloudShadow.bValid &&
+                    context.CloudShadow.MaskTexture && context.CloudShadow.Sampler)
+                {
+                    const float directFactor = ComputeCloudDirectFactor(sky);
+                    for (uint32_t component = 0u; component < 3u; ++component)
+                    {
+                        outParams.DirectionalLightRadianceAndEnabled[component] = std::min(
+                            outParams.DirectionalLightRadianceAndEnabled[component] / directFactor, 1.0e8f);
+                    }
+                    const CloudShadowRenderResources& cloud = context.CloudShadow;
+                    outParams.CloudShadowCenterAndExtent[0] = cloud.CenterX;
+                    outParams.CloudShadowCenterAndExtent[1] = cloud.CenterZ;
+                    outParams.CloudShadowCenterAndExtent[2] = cloud.ExtentMeters;
+                    outParams.CloudShadowCenterAndExtent[3] = 1.0f;
+                    outParams.CloudShadowSunAndBottom[0] = cloud.SunDirection.x;
+                    outParams.CloudShadowSunAndBottom[1] = cloud.SunDirection.y;
+                    outParams.CloudShadowSunAndBottom[2] = cloud.SunDirection.z;
+                    outParams.CloudShadowSunAndBottom[3] = cloud.BottomAltitudeMeters;
+                    outParams.CloudShadowOutside[0] = directFactor;
+                }
                 std::memcpy(outParams.CascadeView,
                             physicalLighting.CascadedShadow.View,
                             sizeof(outParams.CascadeView));
@@ -534,7 +585,8 @@ namespace NorvesLib::Core::Rendering
                                   : AerialPerspectiveParameters{};
         // 空気遠近は空の LUT から求めるので、空が無効なら掛けない
         m_AerialPerspective.bEnabled = m_AerialPerspective.bEnabled && m_SkyParameters.bEnabled;
-        if (!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled)
+        if (!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled &&
+            GetLocalFogVolumeCount(context) == 0u)
         {
             return;
         }
@@ -572,6 +624,12 @@ namespace NorvesLib::Core::Rendering
         {
             m_CascadedShadowMapHandle = cascadedShadowMapHandle.ToResourceHandle();
         }
+
+        // 雲の影のマスクは名前が出たフレームだけ読みを宣言する。マスクのパスは名前を出したフレームの Execute でだけ
+        // context.CloudShadow を有効にするので、Execute では bValid を見れば読みの宣言が済んでいる。
+        RGTextureHandle cloudShadowHandle;
+        (void)builder.TryReadTexture(RenderGraphResourceNames::CloudShadowMask,
+                                     cloudShadowHandle, RHI::ResourceState::ShaderResource);
 
         // VSM が公開されたフレームだけ読み、グラフに書き込み後の可視性を保証させる。
         if (builder.HasBuffer(RenderGraphResourceNames::VsmPageTable) &&
@@ -620,7 +678,8 @@ namespace NorvesLib::Core::Rendering
     void VolumetricsPass::Execute(RenderGraphResources& resources,
                                   ViewRenderContext& context)
     {
-        if ((!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled) ||
+        if ((!m_FogParameters.bEnabled && !m_AerialPerspective.bEnabled &&
+             GetLocalFogVolumeCount(&context) == 0u) ||
             !m_SceneColorHandle.IsValid() ||
             !m_SceneDepthHandle.IsValid())
         {
@@ -639,6 +698,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr cascadedShadowMapTexture = m_CascadedShadowMapHandle.IsValid()
                                                        ? resources.GetTexture(m_CascadedShadowMapHandle)
                                                        : RHI::TexturePtr{};
+        const bool bCloudShadowAvailable = context.CloudShadow.bValid &&
+                                           context.CloudShadow.MaskTexture && context.CloudShadow.Sampler;
         const PhysicalLightingResources& physicalLighting = context.PhysicalLighting;
         const bool bActualShadowMapAvailable =
             IsValidCascadedShadowMapTexture(cascadedShadowMapTexture) &&
@@ -688,8 +749,17 @@ namespace NorvesLib::Core::Rendering
                                skyTransmittanceTexture,
                                bActualShadowMapAvailable,
                                m_bReferenceSteps,
+                               bCloudShadowAvailable,
                                params,
                                paramsState);
+        const uint32_t localFogCount = GetLocalFogVolumeCount(&context);
+        if (localFogCount > 0u)
+        {
+            params.LocalFog = BuildLocalFogGpuParams(context.SnapshotScene->LocalFogVolumes.data(),
+                                                    localFogCount,
+                                                    context.Wind,
+                                                    WindClockSeconds(context.ExtensionFrame.GameTotalTime));
+        }
         const bool bAerialPerspectiveAvailable = paramsState.bAerialAvailable;
 
         // 定数と記述子セットはこの Execute の分をフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を
@@ -838,6 +908,9 @@ namespace NorvesLib::Core::Rendering
                                    bAerialPerspectiveAvailable ? skyTransmittanceTexture : sceneDepthTexture);
         descriptorSet->BindSampler(4u,
                                    bAerialPerspectiveAvailable ? m_SkyTransmittanceSampler : m_SceneDepthSampler);
+        const bool bUseCloudShadow = params.CloudShadowCenterAndExtent[3] > 0.5f;
+        descriptorSet->BindTexture(10u, bUseCloudShadow ? context.CloudShadow.MaskTexture : sceneDepthTexture);
+        descriptorSet->BindSampler(10u, bUseCloudShadow ? context.CloudShadow.Sampler : m_SceneDepthSampler);
         descriptorSet->Update();
 
         context.EnqueueFullscreenPass(m_RenderPass,
@@ -1385,6 +1458,7 @@ namespace NorvesLib::Core::Rendering
                                    skyTransmittanceTexture,
                                    bActualShadowMapAvailable,
                                    false,
+                                   false,
                                    mediumParams[medium],
                                    mediumParamsState[medium]);
         }
@@ -1429,6 +1503,8 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindSampler(3u, shadowMapSamplerForSampling);
             descriptorSet->BindTexture(4u, bAerialAvailable ? skyTransmittanceTexture : sceneDepthTexture);
             descriptorSet->BindSampler(4u, bAerialAvailable ? m_SkyTransmittanceSampler : m_PointSampler);
+            descriptorSet->BindTexture(10u, sceneDepthTexture);
+            descriptorSet->BindSampler(10u, m_PointSampler);
             descriptorSet->Update();
             descriptorSets[medium] = descriptorSet;
         }

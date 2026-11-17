@@ -28,6 +28,7 @@
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "GameModes/CombatSlice/CombatSliceMode.h"
 #if NORVES_BUILD_DEVELOPMENT
+#include "Core/Public/Rendering/GpuParticle/GpuParticleFrame.h"
 #include "GameModes/AssetPreview/AssetPreviewMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseMode.h"
 #include "GameModes/ShishaShowcase/ShishaShowcaseScenes.h"
@@ -238,6 +239,10 @@ namespace Game
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
         // mega-stress では、指定したときだけ同じ配置のバナナ n 本を個別の Entity と同時に置く（混在の負荷）。
         constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
+#if NORVES_BUILD_DEVELOPMENT
+        // --gpu-particle-stress=<n>: Rendering3DTest のカメラ前に置く GPU の粒の数（1〜262144）。
+        constexpr const TCHAR *kGpuParticleStressOption = TEXT("--gpu-particle-stress=");
+#endif
         // --stress-entities=<n>: mega-stress の Entity の数（1〜kMaxStressEntityCount。既定 kDefaultStressEntityCount）。
         constexpr const TCHAR *kStressEntitiesOption = TEXT("--stress-entities=");
         // --stress-moving-percent=<p>: mega-stress で毎フレーム動かす Entity の割合[%]（0〜100。既定 0）。
@@ -653,7 +658,7 @@ namespace Game
                      resolved.Fog.DensityAtBaseHeight, resolved.Environment.DiscontinuityId);
         }
 
-        // --sun-elevation=<deg> / --sun-azimuth=<deg>: 起動時の空の太陽の仰角（0〜90）と方位（-180〜180）。
+        // --sun-elevation=<deg> / --sun-azimuth=<deg>: 起動時の空の太陽の仰角（-20〜90）と方位（-180〜180）。
         // --exposure-ev100=<ev>: 起動時の手動露出（EV100、-6〜24）。
         constexpr const TCHAR *kSunElevationOption = TEXT("--sun-elevation=");
         constexpr const TCHAR *kSunAzimuthOption = TEXT("--sun-azimuth=");
@@ -1173,6 +1178,8 @@ namespace Game
         m_ParallelPoseMinCount = 0;
         m_ParallelPoseGrain = 0;
         m_GrasslandScatterStressCount = 0;
+        m_bGrasslandForest = true;
+        m_bGrasslandForestSet = false;
         m_bGrasslandStreaming = false;
         m_bStreamingSnapTest = false;
         m_StreamingSnapTestX = 0.0f;
@@ -1186,6 +1193,7 @@ namespace Game
         m_CameraPathCapture = {};
         m_CameraPathCapturePngPath = {};
         m_CameraPathCaptureWaitedFrames = 0;
+        m_GpuParticleStressCount = 0;
 #endif
         m_BananaCount = Game::GameModes::kDefaultBananaCount;
         m_bBananaCountSet = false;
@@ -1533,9 +1541,9 @@ namespace Game
             String sunElevationValue;
             if (TryStripPrefix(args[i], kSunElevationOption, sunElevationValue))
             {
-                if (!TryParseBoundedFloat(sunElevationValue, 0.0f, 90.0f, s_Rendering3DTestSunElevation))
+                if (!TryParseBoundedFloat(sunElevationValue, -20.0f, 90.0f, s_Rendering3DTestSunElevation))
                 {
-                    LOG_ERROR("Rendering3DTest command line parse failed: --sun-elevation は 0〜90 の度で指定する");
+                    LOG_ERROR("Rendering3DTest command line parse failed: --sun-elevation は -20〜90 の度で指定する");
                     return false;
                 }
                 s_bRendering3DTestHasSunElevation = true;
@@ -2219,6 +2227,26 @@ namespace Game
 #endif
                 continue;
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], kGpuParticleStressOption, sceneValue))
+            {
+                uint32_t particleCount = 0;
+                if (m_GpuParticleStressCount != 0)
+                {
+                    LOG_ERROR_F("%s が重複しています", "--gpu-particle-stress");
+                    return false;
+                }
+                if (!TryParseUInt32(sceneValue, particleCount) || particleCount == 0 ||
+                    particleCount > NorvesLib::Core::Rendering::kGpuParticlePoolCapacity)
+                {
+                    LOG_ERROR_F("--gpu-particle-stress は 1〜%u の整数で指定してください",
+                                NorvesLib::Core::Rendering::kGpuParticlePoolCapacity);
+                    return false;
+                }
+                m_GpuParticleStressCount = particleCount;
+                continue;
+            }
+#endif
             if (TryStripPrefix(args[i], kBananaCountOption, sceneValue))
             {
                 uint32_t bananaCount = 0;
@@ -2396,6 +2424,22 @@ namespace Game
                     return false;
                 }
                 m_bGrasslandWitherRoundtrip = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], TEXT("--grassland-forest="), sceneValue))
+            {
+                if (m_bGrasslandForestSet)
+                {
+                    LOG_ERROR("--grassland-forest が重複しています");
+                    return false;
+                }
+                if (sceneValue != TEXT("on") && sceneValue != TEXT("off"))
+                {
+                    LOG_ERROR("--grassland-forest は on または off で指定してください");
+                    return false;
+                }
+                m_bGrasslandForest = sceneValue == TEXT("on");
+                m_bGrasslandForestSet = true;
                 continue;
             }
             if (TryStripPrefix(args[i], TEXT("--grassland-scatter-stress="), sceneValue))
@@ -5934,6 +5978,9 @@ namespace Game
                 mode->GetData().m_LateCameraSlot = lateCameraSlot;
                 // カメラの台本（--camera-script。開発ビルドだけ）は軌道カメラへ流す
                 mode->GetData().m_CameraScriptPath = m_CameraScriptPath;
+#if NORVES_BUILD_DEVELOPMENT
+                mode->GetData().m_GpuParticleStressCount = m_GpuParticleStressCount;
+#endif
                 mode->GetData().m_pScriptCapture = &m_CameraScriptCapture;
                 mode->GetData().m_ModelPath = params.ModelPath;
                 mode->GetData().m_bUseCookedModel = bUseCookedModel;
@@ -6178,7 +6225,8 @@ namespace Game
             [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
              pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
-             scatterStressCount = m_GrasslandScatterStressCount, bStreaming = m_bGrasslandStreaming,
+             scatterStressCount = m_GrasslandScatterStressCount, bForestPlacement = m_bGrasslandForest,
+             bStreaming = m_bGrasslandStreaming,
              bSnapTest = m_bStreamingSnapTest, snapTestX = m_StreamingSnapTestX, snapTestZ = m_StreamingSnapTestZ,
              bWither = m_bGrasslandWither, witherX = m_GrasslandWitherX, witherZ = m_GrasslandWitherZ,
              witherRadius = m_GrasslandWitherRadius, bWitherRoundtrip = m_bGrasslandWitherRoundtrip,
@@ -6187,6 +6235,7 @@ namespace Game
                 auto mode = MakeUnique<GrasslandMode>();
                 mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ScatterStressCount = scatterStressCount;
+                mode->GetData().m_bForestPlacement = bForestPlacement;
                 mode->GetData().m_bStreaming = bStreaming || bSnapTest;
                 mode->GetData().m_bStreamingSnapTest = bSnapTest;
                 mode->GetData().m_StreamingSnapTestX = snapTestX;

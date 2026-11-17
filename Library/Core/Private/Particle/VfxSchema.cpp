@@ -57,7 +57,8 @@ namespace NorvesLib::Core::Particle
         constexpr const char* kWrapPolicyNames[] = {"Die", "WrapInCameraBox"};
         constexpr const char* kSpawnShapeNames[] = {"Point", "Sphere", "Cone", "Box", "CameraBox"};
         constexpr const char* kCurveTargetNames[] = {"Size", "Color", "Opacity", "Stretch"};
-        constexpr const char* kCollisionResponseNames[] = {"Kill", "Stick", "Bounce", "SpawnChild"};
+        constexpr const char* kCollisionResponseNames[] = {
+            "Kill", "Stick", "Bounce", "SpawnChild", "ReturnToCameraBoxTop"};
         constexpr const char* kGpuSpriteOrientationNames[] = {"Billboard", "VelocityStretch", "SurfaceAligned"};
         constexpr const char* kGpuSpriteBlendNames[] = {"PremultipliedAlpha", "Additive"};
         constexpr const char* kGpuSpritePassNames[] = {"PreTAA", "PostTAA"};
@@ -195,7 +196,8 @@ namespace NorvesLib::Core::Particle
             VectorParameter("StreakShutterSeconds", VfxValueType::Float, 0.0, 1.0, "s", 0.0208333f, 0.0f, 0.0f, 0.0f, "伸びのシャッター時間"),
             BoolParameter("SubPixelCompensation", true, "幅 1px 未満の補償"),
             VectorParameter("NearFadeDistance", VfxValueType::Float, 0.0, 100.0, "space", 0.5f, 0.0f, 0.0f, 0.0f, "近距離のフェード"),
-            NameParameter("Texture", 0u, 63u, "", "テクスチャの資産名")
+            NameParameter("Texture", 0u, 63u, "", "テクスチャの資産名"),
+            BoolParameter("DrawInSlotOrder", false, "スロットの順に描く（詰めずに描き、重なりの順を毎フレーム保つ）")
         };
 
         constexpr VfxObjectSchema kEmitterSchema = {

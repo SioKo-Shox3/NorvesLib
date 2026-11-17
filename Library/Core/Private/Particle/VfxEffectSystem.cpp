@@ -162,7 +162,7 @@ namespace NorvesLib::Core::Particle
             case VfxModuleType::GpuSpriteRenderer:
             {
                 constexpr const char* names[] = {"Orientation", "Blend", "Pass", "SoftDistance", "Lighting", "FogInfluence",
-                    "StreakShutterSeconds", "SubPixelCompensation", "NearFadeDistance", "Texture"};
+                    "StreakShutterSeconds", "SubPixelCompensation", "NearFadeDistance", "Texture", "DrawInSlotOrder"};
                 return ArgumentAt(names, index);
             }
             default:
@@ -655,7 +655,8 @@ namespace NorvesLib::Core::Particle
                         }
                         particle.Velocity += acceleration * emitterDeltaTime;
                         particle.Position += particle.Velocity * emitterDeltaTime;
-                        if (!emitter.Collisions.empty() && !ResolveCollisions(emitter, particle, context.HeightField, children))
+                        if (!emitter.Collisions.empty() &&
+                            !ResolveCollisions(emitter, particle, context.CameraPosition, context.HeightField, children))
                         {
                             continue;
                         }
@@ -923,6 +924,8 @@ namespace NorvesLib::Core::Particle
                 {
                     params.Flags |= Rendering::kGpuEmitterFlagCollisionHeightField;
                 }
+                static_assert(static_cast<uint32_t>(VfxCollisionResponse::ReturnToCameraBoxTop) == 4u,
+                    "衝突応答の値は ParticleSimulation.glsl と一致させる");
                 collision.Response = value(responseIndex).UInt;
                 collision.Restitution = value(responseIndex + 1u).Vector.x;
                 collision.ChildProbability = value(responseIndex + 3u).Vector.x;
@@ -945,7 +948,8 @@ namespace NorvesLib::Core::Particle
                         ((value(1u).UInt & Rendering::kGpuEmitterRenderBlendMask) << Rendering::kGpuEmitterRenderBlendShift) |
                         ((value(2u).UInt & Rendering::kGpuEmitterRenderPassMask) << Rendering::kGpuEmitterRenderPassShift) |
                         ((value(4u).UInt & Rendering::kGpuEmitterRenderLightingMask) << Rendering::kGpuEmitterRenderLightingShift) |
-                        ((value(7u).UInt & Rendering::kGpuEmitterRenderSubPixelCompensationMask) << Rendering::kGpuEmitterRenderSubPixelCompensationShift);
+                        ((value(7u).UInt & Rendering::kGpuEmitterRenderSubPixelCompensationMask) << Rendering::kGpuEmitterRenderSubPixelCompensationShift) |
+                        ((value(10u).UInt & Rendering::kGpuEmitterRenderSlotOrderMask) << Rendering::kGpuEmitterRenderSlotOrderShift);
                     params.SoftDistance = value(3u).Vector.x;
                     params.FogInfluence = value(5u).Vector.x;
                     params.StreakShutterSeconds = value(6u).Vector.x;
@@ -1643,7 +1647,7 @@ namespace NorvesLib::Core::Particle
     }
 
     bool VfxEffectSystem::ResolveCollisions(const EmitterState& emitter, VfxParticleState& particle,
-        const VfxHeightFieldView& heightField, VariableArray<ChildSpawn>& children)
+        const Math::Vector3& cameraPosition, const VfxHeightFieldView& heightField, VariableArray<ChildSpawn>& children)
     {
         for (const CollisionState& collision : emitter.Collisions)
         {
@@ -1691,6 +1695,20 @@ namespace NorvesLib::Core::Particle
                     children.push_back(child);
                 }
                 return false;
+            case VfxCollisionResponse::ReturnToCameraBoxTop:
+            {
+                if (emitter.Shape != VfxSpawnShape::CameraBox)
+                {
+                    return false;
+                }
+                const float top = cameraPosition.y + emitter.CameraBoxHeight * 0.5f;
+                if (surface < top)
+                {
+                    particle.Position.y = top;
+                    return true;
+                }
+                continue;
+            }
             }
         }
         return true;

@@ -27,6 +27,7 @@ namespace Game::GameModes
     namespace
     {
         constexpr const char* kScatterPath = "Assets/Terrain/Grassland/GrasslandScatter.nvsct";
+        constexpr const char* kForestPath = "Assets/Terrain/Grassland/GrasslandForest.nvsct";
 
         // 株の形と色は仮の値。草原の撮影で見え方を確かめて調整する。
         TSharedPtr<const FoliageMeshData> MakePlantMesh(float height, float halfWidth)
@@ -332,6 +333,71 @@ namespace Game::GameModes
         {
             LOG_WARNING("GRASSLAND_SCATTER 散布を登録できませんでした");
         }
+        return handle;
+    }
+
+    Scatter::ScatterHandle LoadGrasslandForest(GameMode::GameModeContext& ctx)
+    {
+        const auto assetSystem = ctx.EngineRef.GetTerrainSystem().GetAssetSystem();
+        if (!assetSystem)
+        {
+            LOG_WARNING_F("GRASSLAND_FOREST path=%s 資産システムがないため森を置きません", kForestPath);
+            return Scatter::kInvalidScatterHandle;
+        }
+        const auto resolved = assetSystem->ResolveAsset(String(kForestPath), Asset::AssetKind::World);
+        if (!resolved.UsedCooked())
+        {
+            LOG_WARNING_F("GRASSLAND_FOREST path=%s status=%u 森の配置を読めません", kForestPath,
+                          static_cast<uint32_t>(resolved.Status));
+            return Scatter::kInvalidScatterHandle;
+        }
+        auto parsed = Asset::ParseCookedScatter(resolved.Blob);
+        if (!parsed.Succeeded())
+        {
+            LOG_WARNING_F("GRASSLAND_FOREST path=%s status=%s 森の配置を解析できません", kForestPath,
+                          Asset::GetCookedScatterParseStatusName(parsed.Status));
+            return Scatter::kInvalidScatterHandle;
+        }
+
+        VariableArray<Scatter::ScatterSpeciesBinding> bindings;
+        for (const auto& species : parsed.Scatter.Species)
+        {
+            if (species.RenderPath != Asset::ScatterRenderPath::Mega)
+            {
+                continue;
+            }
+            Scatter::ScatterSpeciesBinding binding;
+            binding.Name = species.Name;
+            binding.MegaMesh = LoadMegaMesh(ctx, *assetSystem, species);
+            if (!binding.MegaMesh.IsValid())
+            {
+                LOG_WARNING_F("GRASSLAND_FOREST path=%s species=%s メッシュを読めません",
+                              kForestPath, species.Name.c_str());
+                return Scatter::kInvalidScatterHandle;
+            }
+            const bool bRock = species.Name == "forest_rock";
+            binding.bCastShadow = true;
+            binding.ResidencyDistance = bRock ? 256.0f : 384.0f;
+            binding.Priority = bRock ? 2u : 1u;
+            bindings.push_back(std::move(binding));
+        }
+
+        auto scatter = MakeShared<Asset::CookedScatterData>(std::move(parsed.Scatter));
+        auto& system = ctx.EngineRef.GetScatterSystem();
+        const auto handle = system.Load(ctx.WorldRef, scatter, {bindings.data(), bindings.size()});
+        if (handle == Scatter::kInvalidScatterHandle)
+        {
+            LOG_WARNING_F("GRASSLAND_FOREST path=%s 森の配置を登録できませんでした", kForestPath);
+            return Scatter::kInvalidScatterHandle;
+        }
+        if (!system.SetScatterName(handle, "grassland_forest"))
+        {
+            system.Unload(handle);
+            LOG_WARNING_F("GRASSLAND_FOREST path=%s 森の配置に名前を付けられませんでした", kForestPath);
+            return Scatter::kInvalidScatterHandle;
+        }
+        LOG_INFO_F("GRASSLAND_FOREST handle=%u species=%u 森の配置を置きました", handle,
+                   static_cast<uint32_t>(scatter->Species.size()));
         return handle;
     }
 } // namespace Game::GameModes
