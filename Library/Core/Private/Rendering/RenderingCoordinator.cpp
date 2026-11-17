@@ -4763,11 +4763,11 @@ namespace NorvesLib::Core::Rendering
 
     void RenderingCoordinator::UpdatePacketLights(const Container::VariableArray<LightProxy>& sceneLights, bool bRebuild)
     {
-        // パケットの光源表は SceneView の光源と同じ位置に同じ光源を置き、その後に空の太陽を 1 つ置く
+        // パケットの光源表は SceneView の光源と同じ位置に同じ光源を置き、その後に空の方向光（太陽か月）を 1 つ置く
         // （空の太陽の LightId は Component の通し番号と重ならないので、SceneView の光源には含まれない）
         m_PacketLightChanged.clear();
         LightProxy sun;
-        const bool bHasSun = MakeSkySunLightProxy(m_SkyAtmosphere, sun);
+        const bool bHasSun = MakeSkyDirectionalLightProxy(m_SkyAtmosphere, sun);
         const size_t oldSize = m_PacketLights.size();
         const size_t oldSceneCount = m_PacketSceneLightCount;
         const size_t sceneCount = sceneLights.size();
