@@ -12103,3 +12103,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 Game の開発用の起動の引数 --gpu-particle-stress=<粒の数>: 着地(直し 1 回)
 - U3 ParticleCompact.comp で生きている粒をバケットごとに詰め、間接の引数を書く: 着地(直し 0 回)
 - U4 描画のパスを詰めた列の間接の描画へ切り替え、能力が無ければ直の描画へ落とす: 着地(直し 0 回)
+- U2 足のしぶきの効果のデータと、効果のファイルの読み込みの関数: 着地(直し 0 回)
