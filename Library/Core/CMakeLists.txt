@@ -751,6 +751,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/GpuParticle/GpuParticleTypes.h
     Public/Rendering/GpuParticle/GpuParticleFrame.h
     Public/Rendering/GpuParticle/GpuParticleSimulationPass.h
+    Public/Rendering/GpuParticle/GpuParticleDraw.h
     Public/Rendering/TextureAssetTypes.h
     Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h
