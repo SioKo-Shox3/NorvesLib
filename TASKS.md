@@ -7470,7 +7470,7 @@
 - notes: 要件 `#### GR54` の受け入れ確認のうち、計測（P0 の所要時間、P1 の 120 フレームの雲量の変化、P2 の 60 秒の掃引）をここに分けた。Release でなく RelWithDebInfo（AGENTS.md の絶対規則 8）。`-GpuTimingFrames` の値は掃引の長さ（60 秒 × 60 fps）に合わせた目安で、根拠は掃引の秒数だけ。R7 の参照比較は参照比較の段（`NORVES_REFERENCE_TESTS`、数分〜1 時間）なので GPU を占有する。輝度の不連続の閾値 1% はロードマップ 1998 行の初期目標で、実測の根拠を記録して確定する。コードは変えない（直す必要が出たら、分かったことを書いて新しい項目を提案する）。
 
 ## G11-GR55-SUN-WEATHER: 太陽の軌道（時刻・日付・緯度から高度と方位）と、種と時刻だけで決まる天候の予定表を純関数とデータで作る
-- status: todo
+- status: done
 - after: G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES
 - gr: GR55
 - needs-gr: GR49
