@@ -12316,3 +12316,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 資産の根の中のパスの検査を共有の部品へ切り出す: 着地(直し 0 回)
 - U3 BridgeSceneDocumentService を作る: 着地(直し 1 回)
 - U4 Adapter の 3 か所を部品へつなぐ（SDK 入りの構成でビルド）: 着地(直し 1 回)
+
+## G12-GR92-BRIDGE-SCENE Bridge の向こうのエンジンの側に、シーンの保存・読み込み、クラスを指定した Entity の生成、Component の追加、全 Component のプロパティの取得と設定を置く（2026-11-18、run 20261118-063221・反復 1）
+- Done: `World::SpawnEntityOfClass(const IClass&, Entity* parent)`・`World::CreateComponentOfClass(Entity* owner, const IClass&)`。`SpawnEntity<T>`・`CreateComponent<T>` と同じ所有（Entity は World、Component は owner）と失敗時の後始末（Finalize と delete）で、Entity・Component の派生でないクラスは nullptr。
+- Done: `Game/Bridge/BridgeAssetPath.{h,cpp}`: 資産エディタの根の中のパスの検査（相対パスの検査・最終パス・根の中の判定・パスの変換など）を振る舞いを変えずに切り出し、`BridgeAssetPropertyEditor` と新しい部品で共有する。
+- Done: `Game/Bridge/BridgeSceneDocumentService.{h,cpp}`（Bridge SDK に依存せず、SDK 無しの構成でもコンパイルされる）: `SaveScene`・`LoadScene`（資産の根の下の `.scene.json` の論理パスだけ。絶対パス・`..`・根の外（リンクで外へ出るものを含む）は `invalid_path`。`SceneSerializer::SaveToFile`・`LoadIntoWorld` につなぐだけ）、`CreateEntity`（ClassRegistry の FindClass → SpawnEntityOfClass）、`AddComponent`（CreateComponentOfClass）、`ListProperties`・`FindProperty`・`SetProperty`（Entity と全 Component。内部表記で設定し、Component なら適用の後に `OnPropertyApplied` を呼ぶ。読み取り専用は `read_only`、スキーマ投影に無いプロパティは何も書かずに `unknown_property`）。失敗は英語のコードと日本語の説明で返す。
+- Done: `NorvesLibBridgeAdapter`: `scene.createObject` の `kind` をクラス名として扱う（省略時は今までどおり基底の Entity）。`object.getSnapshot`・`object.setProperty` の Component を ScriptComponent 限定から全 Component へ広げ（ScriptComponent 専用の関数は消した）、`WireJsonToSerialized` は enum を JSON の整数で受け、スナップショットの enum は JSON の数で出す。
+- 確かめ: 全単位を載せた版（1d788ff と同じ中身）で、build を `NORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp` で構成して `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`NorvesLibBridgeAdapter.cpp`・`BridgeSceneDocumentService.cpp` をコンパイルし Game.exe を生成。`.harness/runs/20261118-063221/G12-GR92-BRIDGE-SCENE-U4-sdk-build.txt`）。SDK 無しの構成でも部品を足した版の同じビルドが終了コード 0。編集した既存ファイルは numstat を 2 通りで比べて一致。
+- Next: ランナーの評価者の反証（危険地帯: Object の寿命。実行時のクラスでの生成と失敗時の delete）。人が見るときの見どころ: NorvesEditor から Bridge でつなぎ、シーンのツリーで ScriptComponent 以外の Component（資産の参照を持つ MeshComponent など）を選んでプロパティの一覧が出て、値を変えると反映されること（資産の参照は OnPropertyApplied で作り直される）、`createObject` に kind（クラス名）を付けるとそのクラスの Entity ができること。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when (3) の `BridgeAssetPropertyEditTest` へのケースの追加はしていない（`Test/` は既に無い）。verify の ctest の行は回していない。
+- Notes: 判断: scene.save・scene.load・object.addComponent の線の上の口と getCapabilities への掲載は足していない（SDK に口が無く、SDK は NorvesEditor のリポジトリにある。項目の notes の決定どおり）。`SaveScene`・`LoadScene`・`AddComponent` は今は Game の中から呼ばれず、SDK に口ができたらこの部品へつなぐ。
+- Notes: 判断: `kind` に未知の名前（SDK の見本の `"object"` のような汎用の分類を含む）や Entity でないクラスが来たら、基底の Entity に落とさず accepted:false にした。保存先の親ディレクトリは作らない（無ければ save_failed）。
+- Notes: 既知の限界: スナップショットの enum が文字列から JSON の数に変わったので、受け取り側が文字列を前提にしていれば合わせる必要がある。`LoadScene` は途中で失敗しても生成できたルートが World に残る（`SceneSerializer::LoadIntoWorld` と同じ）。
