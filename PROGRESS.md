@@ -12228,3 +12228,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 接地のイベントから放出を積む FootSplashComponent: 着地(直し 1 回)
 - Notes: 2026-11-18（run 20261118-013230 の反復 1）: 前回の評価が枠切れ（429）で回らず status が doing に戻ったため、実装は変えずに done に戻した。最後の単位の確かめ（`cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・エラー 0）以降、Library・Assets の変更は無い。評価者の反証はランナーが回す。
 - U1 共通の道具 common.py: 着地(直し 0 回)
+- U2 共通骨格の仕様 skeleton_spec.json と skeleton_spec.py: 着地(直し 0 回)
