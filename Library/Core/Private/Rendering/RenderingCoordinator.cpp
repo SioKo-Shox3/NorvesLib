@@ -183,6 +183,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, proxy.bHasMaterialOverrides);
             hash = HashRevisionValue(hash, proxy.bVisible);
             hash = HashRevisionValue(hash, proxy.bCastShadow);
+            hash = HashRevisionValue(hash, proxy.bSkyMapProxy);
             hash = HashRevisionValue(hash, proxy.bReceiveShadow);
             hash = HashRevisionValue(hash, proxy.bAffectDynamicIndirectLighting);
             hash = HashRevisionValue(hash, proxy.bAffectDistanceFieldLighting);
@@ -1255,7 +1256,7 @@ namespace NorvesLib::Core::Rendering
         {
             const DrawParams& draw = command.Draw;
             // 影を落とさない物体もパストレーサーの主光線・散乱光線には見えるため含める。
-            // 影・DDGI・RTGIはinstance maskで影を落とす物体だけを調べる。
+            // RTの影は0x01と樹冠の0x04を調べ、DDGI・RTGIの光線は樹冠の0x04を調べない。
             if (!meshResources ||
                 (command.Type != DrawCommandType::DrawIndexed &&
                  command.Type != DrawCommandType::DrawIndexedInstanced) ||
@@ -1388,8 +1389,8 @@ namespace NorvesLib::Core::Rendering
                 }
                 instance.Instance.customIndex =
                     static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
-                instance.Instance.mask = draw.bCastShadow ? RayTracingInstanceMaskShadowCaster
-                                                          : RayTracingInstanceMaskNonShadowCaster;
+                instance.Instance.mask = !draw.bCastShadow ? RayTracingInstanceMaskNonShadowCaster
+                    : (draw.bSkyMapProxy ? RayTracingInstanceMaskSkyMapProxy : RayTracingInstanceMaskShadowCaster);
                 CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
                 if (IsFiniteRayTracingTransform(previousWorldTransform))
                 {
@@ -1645,7 +1646,8 @@ namespace NorvesLib::Core::Rendering
         }
         entry.ObjectId = proxy->ObjectId;
         entry.MegaMeshHandle = proxy->MegaMeshHandle;
-        entry.Mask = proxy->bCastShadow ? RayTracingInstanceMaskShadowCaster : RayTracingInstanceMaskNonShadowCaster;
+        entry.Mask = !proxy->bCastShadow ? RayTracingInstanceMaskNonShadowCaster
+            : (proxy->bSkyMapProxy ? RayTracingInstanceMaskSkyMapProxy : RayTracingInstanceMaskShadowCaster);
         entry.bUsable = true;
     }
 

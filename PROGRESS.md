@@ -11944,3 +11944,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 既知の限界: 世界の向きに固定した近似で視差は無い。巻いた時刻が 4096 秒で戻るとき筋の位相が 1 回跳ぶ。近い物の手前に描かないのは式どおり 0.8 × 最小の層の距離（既定 14.4 m）より手前で厳密に 0 で、14.4〜18 m には最初の層がわずかに乗る
 - Next: ランナーの評価者の反証（RenderThread・パスの並び = 危険地帯）。GPU での確かめは G7-GR58-CHECK（回さない決まりで backlog）
 - U1 空の遮蔽のクリップマップに樹冠だけの組を足し、RTGI・DDGI の拡散に掛ける: 着地(直し 0 回)
+- U2 instance mask 0x04 を定義し、印を DrawParams・バッチの鍵・TLAS の mask・RT の影の光線へ通す: 着地(直し 0 回)

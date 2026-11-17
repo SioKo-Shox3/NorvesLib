@@ -119,6 +119,7 @@ namespace NorvesLib::Core::Rendering
 
         // フラグ
         bool bCastShadow = true; // シャドウを落とすか
+        bool bSkyMapProxy = false; // 空の遮蔽のマップが受け持つ樹冠か
         bool bInstanced = false; // インスタンシング描画か
 
         // カスタムデータ
@@ -376,6 +377,7 @@ namespace NorvesLib::Core::Rendering
         BlendMode MaterialBlendMode = BlendMode::Opaque;
         float SortDepth = 0.0f;
         bool bCastShadow = true;       // シャドウを落とすか
+        bool bSkyMapProxy = false;     // 空の遮蔽のマップが受け持つ樹冠か
 
         // ========================================
         // バッチキー
@@ -388,10 +390,12 @@ namespace NorvesLib::Core::Rendering
          */
         uint64_t GetBatchKey() const
         {
-            // メッシュID + マテリアルID + サブメッシュ + シャドウ有無をキーにする
+            // 上位32 bitにメッシュID、8 bit以降にマテリアルID、2〜7 bitにサブメッシュ、1 bitに樹冠、0 bitに影の有無を置く
+            static_assert(MAX_MATERIAL_SLOTS <= 64u);
             return (static_cast<uint64_t>(MeshHandle.Id) << 32) |
                    (static_cast<uint64_t>(MaterialHandle.Id) << 8) |
-                   (static_cast<uint64_t>(SubMeshIndex) << 1) |
+                   (static_cast<uint64_t>(SubMeshIndex) << 2) |
+                   (bSkyMapProxy ? 2ull : 0ull) |
                    (bCastShadow ? 1ull : 0ull);
         }
 
