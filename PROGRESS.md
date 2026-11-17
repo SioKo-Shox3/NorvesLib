@@ -12120,3 +12120,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 粒の更新に雨の遮蔽マップを高さ場として結び、屋根の下の隠し・屋根の当たり・2 つの子・滴りを入れる: 着地(直し 0 回)
 - U3 描画で Sheltered の粒を描かず、FlipbookFrames > 0 の板を手続きの王冠のコマで描く: 着地(直し 0 回)
 - U5 近距離の雨に Splash と Droplet を足し、EnvironmentSystem が毎フレーム p と滴りの確率を渡す: 着地(直し 0 回)
+## G11-GR59-RAIN-HIT 雨の着水・屋根の下の隠し・樹冠の滴り（2026-11-18、run 20261118-013229）
+- Done: GPU の粒の `CollisionHeightField` に雨の遮蔽マップ（`OverheadHeightMap`）を結んだ。`GpuParticleSimulationPass` が描画グラフから読み、このフレーム・このビューのマップのときだけ結合 9 に結んで窓と深度を定数（272 バイト）へ詰める。使えないときは空のテクスチャと `HeightFieldBound = 0` で高さ場の衝突を外して縮退する。
+- Done: 更新は屋根を最近傍で引き、上から横切った粒を roofY で当てて応答を当てる（巻き戻る雨は消さずに屋根の下を見えないまま落とす）。生まれた・巻き戻った・流された位置が屋根の下の粒は旗 Sheltered で隠し（巻き戻らないエミッタは消す）、詰めと描画で除く。地面の当たりは深度の衝突のまま。子は当たり 1 回につき確率の引き 1 回で、命中の法線 y ≥ ChildMinNormalY のとき 1 つ目（Splash）、2 つ目（Droplet）は法線を問わず生む。屋根の下の粒が地面に当たり、屋根との差が ShelterMinClearance（3 m）を超えると、別の引きで滴り（Droplet）を生む。
+- Done: `Assets/Data/Vfx/Rain_Near.vfx.json` に子のエミッタ Splash（容量 2000 = 同時に生きる数の上限・寿命 0.32 秒・寿命にわたり 0.05→0.15 m・SurfaceAligned・PostTAA・premultiplied・手続きの王冠のしぶき 16 コマ）と Droplet（容量 4096・寿命 0.3 秒・上向き 1〜2 m/s・重力・VelocityStretch）を足し、雨の CollisionHeightField と CollisionDepth を SpawnChild（ChildMinNormalY 0.5）にした。
+- Done: `RainSplashBudget`（`Library/Core/{Public,Private}/Environment/RainSplashBudget.*`、データ `Assets/Data/Vfx/RainSplashBudget.json`）が、有効な粒の数 × 落ちる速さ ÷ 箱の高さで秒あたりの当たりを見積もり、着水の秒あたりの上限（4000）と同時に生きる数の上限（2000 ÷ 寿命）を超えない p を逆算し、草の密度で最小 0.25 倍まで下げる（雨量 0 で 0）。滴りの確率も返す。`EnvironmentSystem` が毎フレーム求めて ChildProbability・ShelterChildProbability・ShelterMinClearance を値が変わったときだけ渡す。草の密度は描画の世界の草の写し（LayerA の R）をメインのカメラの XZ で最近傍に引く。
+- 証拠: `.harness/runs/20261118-013229/G11-GR59-RAIN-HIT-U5-verify.txt`。全単位を着地させた木で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0 で Game.exe までリンク。AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が終了コード 0（エミッタ 3、1074 バイト）。粒のシェーダー 5 本を glslc（vulkan1.3）で通し、更新の定数の C++ の offsetof と SPIR-V の Offset が 22 項目一致。行末は numstat の 2 通りが一致。
+- 試験は作らない決まりで、done-when の `RainSplashBudgetTest`・`GpuParticleRainCollisionVulkanTest` は作っていない。verify の ctest の行も回していない。撮影・GPU の計測・Game の起動の確かめも回さない決まり。
+- 採った判断: GPU の形式は寿命と大きさがエミッタごとに 1 値なので、Splash の寿命は要件の 0.25〜0.4 秒の中の 0.32 秒に固定し、大きさは寿命にわたる曲線で 0.05→0.15 m にした。p は 1 フレームに 1 つで、カメラの位置の草の密度で下げる（草の場の中の場所ごとには変えない）。Droplet の初速はワールドの上向き（面の法線で回さない）。
+- 既知の限界: 屋根は移動後の位置で最近傍に引くので、縁はテクセル（約 9.4 cm）単位の段になり、1 刻みに細い屋根を横に通り過ぎる速い粒は当たりを取りこぼしうる。衝突で子を書く所と子自身の更新が同じ dispatch の同じスロットに重なりうる競合は GR57 の作りから。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread のパスの読み・GPU の粒のシェーダー・EnvironmentSystem の毎フレームの経路）。人が見るときの見どころ: `--environment-preset=heavy_rain` で屋根や木のあるシーンに入り、地面の着水に王冠のしぶきと跳ねる小粒が出ること、屋根・樹冠の下で雨筋が消えること、高い樹冠の下で時々滴りが落ちること、草の多い所でしぶきが減ること。雨の無い場面の見た目は前と変わらない。
