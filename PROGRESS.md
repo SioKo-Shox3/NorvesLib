@@ -12247,12 +12247,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: Rendering3DTest で F11 のインポスターの見本（`Rendering3DTestRoutine.cpp` の `m_F11ImpostorComponents`。既定では出ない）を出し、遠景の木の板が太陽の向きで陰影を持ち、霧へ色が寄り、影を受けること。既定の起動画面は変わらない。
 - Next: ランナーの評価者の反証（GBuffer・RenderThread・RHI の使い方 = 危険地帯）。
 
-- U1 ScatterSystem にチャンクの当たりの出し入れの通知と当たりの半径を足す: 着地(直し 0 回)
-- U2 Physics モジュールが散布の当たりの通知を受けて detached のチャンクを登録・解除する: 着地(直し 0 回)
-
-## 2026-11-18 G12-GR47-SCATTER-COLLIDERS（run 20261118-013234 の反復 2）
-- Done: `ScatterSystem` に当たりの通知（`IScatterColliderListener` / `ScatterColliderChunkEvent`。チャンクの鍵・種ごとの NVSCT の衝突の形・常駐の個体の変換と番号、隠した個体を除く）と、描画の常駐とは別の当たりの半径（`SetColliderRadius`、既定 `kDefaultScatterColliderRadiusMeters` = 150 m）を足した。焦点から半径に入った常駐のチャンクを登録、出たチャンク・解放・Unload・Clear・受け手の付け替えで解除を通知し、1 本の非表示の切り替えと非表示の集合の復元ではそのチャンクだけ登録し直す。Core の散布は Physics を参照しない。
-- Done: Physics モジュールの `ScatterColliderBinding`（`StaticColliderPayloadHandler.h/.cpp`）が Install で受け手になり、通知のたびに形をワールドの `StaticColliderDesc`（カプセルは両端から中点・半分の長さ・Y 軸からの回転、球、箱。拡大は寸法へ畳んで 1）にして `RegisterStaticColliderChunk` / `UnregisterStaticColliderChunk` を呼ぶ。鍵は上位 8 ビットの出どころ 0x02（セルの static-colliders は 0x01）＋散布のハンドル（24 ビット）＋チャンクで、ぶつからない。物理の Initialize で常駐中のチャンクを登録し直し、ResetTransientState で鍵の集合も捨て、Uninstall では自分が受け手のときだけ外す。
-- 証拠: 最後の単位の確かめ（`cmake --build build --config Debug --target Game -- /m:1`）はエラー 0・EXIT=0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりなので `ScatterColliderTest` は作っていない（verify の ctest の行は回していない）。
-- Next: ランナーの評価者の反証（物理・Object の寿命の危険地帯）。人が見るときの見どころ: ランチャーから grassland に入り、手で置いた森（`Assets/Scatter/grassland.forest.placement.json` の幹のカプセル 0.3〜1.8 m・半径 0.25 m、岩の球 半径 1.25 m）へ歩いて、幹と岩に阻まれること・150 m より遠くへ離れて戻っても当たりが戻ること・1 本を隠すとその木を素通りできること。
-- Notes: 形が不正（非有限・0 以下の寸法）な記述はチャンク全体を落とさずに除き、件数を `SCATTER_COLLIDERS_INVALID_SHAPES` で 1 回警告する。物理の Initialize の前に常駐している当たりは登録に失敗して `SCATTER_COLLIDERS_REGISTER_FAILED` を出すが、Initialize で登録し直す。foliage の種は種の表に形が無いので当たりは付かない。
+- U1 衝突の 2 つ目の子・子の法線の下限・屋根の下の子・手続きのフリップブックのコマ数を GPU の定数とスキーマに足す: 着地(直し 0 回)
+- U4 着水の予算（p と滴りの確率）の純関数とデータを足す: 着地(直し 0 回)
+- U2 粒の更新に雨の遮蔽マップを高さ場として結び、屋根の下の隠し・屋根の当たり・2 つの子・滴りを入れる: 着地(直し 0 回)
+- U3 描画で Sheltered の粒を描かず、FlipbookFrames > 0 の板を手続きの王冠のコマで描く: 着地(直し 0 回)
+- U5 近距離の雨に Splash と Droplet を足し、EnvironmentSystem が毎フレーム p と滴りの確率を渡す: 着地(直し 0 回)
+## G11-GR59-RAIN-HIT 雨の着水・屋根の下の隠し・樹冠の滴り（2026-11-18、run 20261118-013229）
+- Done: GPU の粒の `CollisionHeightField` に雨の遮蔽マップ（`OverheadHeightMap`）を結んだ。`GpuParticleSimulationPass` が描画グラフから読み、このフレーム・このビューのマップのときだけ結合 9 に結んで窓と深度を定数（272 バイト）へ詰める。使えないときは空のテクスチャと `HeightFieldBound = 0` で高さ場の衝突を外して縮退する。
+- Done: 更新は屋根を最近傍で引き、上から横切った粒を roofY で当てて応答を当てる（巻き戻る雨は消さずに屋根の下を見えないまま落とす）。生まれた・巻き戻った・流された位置が屋根の下の粒は旗 Sheltered で隠し（巻き戻らないエミッタは消す）、詰めと描画で除く。地面の当たりは深度の衝突のまま。子は当たり 1 回につき確率の引き 1 回で、命中の法線 y ≥ ChildMinNormalY のとき 1 つ目（Splash）、2 つ目（Droplet）は法線を問わず生む。屋根の下の粒が地面に当たり、屋根との差が ShelterMinClearance（3 m）を超えると、別の引きで滴り（Droplet）を生む。
+- Done: `Assets/Data/Vfx/Rain_Near.vfx.json` に子のエミッタ Splash（容量 2000 = 同時に生きる数の上限・寿命 0.32 秒・寿命にわたり 0.05→0.15 m・SurfaceAligned・PostTAA・premultiplied・手続きの王冠のしぶき 16 コマ）と Droplet（容量 4096・寿命 0.3 秒・上向き 1〜2 m/s・重力・VelocityStretch）を足し、雨の CollisionHeightField と CollisionDepth を SpawnChild（ChildMinNormalY 0.5）にした。
+- Done: `RainSplashBudget`（`Library/Core/{Public,Private}/Environment/RainSplashBudget.*`、データ `Assets/Data/Vfx/RainSplashBudget.json`）が、有効な粒の数 × 落ちる速さ ÷ 箱の高さで秒あたりの当たりを見積もり、着水の秒あたりの上限（4000）と同時に生きる数の上限（2000 ÷ 寿命）を超えない p を逆算し、草の密度で最小 0.25 倍まで下げる（雨量 0 で 0）。滴りの確率も返す。`EnvironmentSystem` が毎フレーム求めて ChildProbability・ShelterChildProbability・ShelterMinClearance を値が変わったときだけ渡す。草の密度は描画の世界の草の写し（LayerA の R）をメインのカメラの XZ で最近傍に引く。
+- 証拠: `.harness/runs/20261118-013229/G11-GR59-RAIN-HIT-U5-verify.txt`。全単位を着地させた木で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0 で Game.exe までリンク。AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が終了コード 0（エミッタ 3、1074 バイト）。粒のシェーダー 5 本を glslc（vulkan1.3）で通し、更新の定数の C++ の offsetof と SPIR-V の Offset が 22 項目一致。行末は numstat の 2 通りが一致。
+- 試験は作らない決まりで、done-when の `RainSplashBudgetTest`・`GpuParticleRainCollisionVulkanTest` は作っていない。verify の ctest の行も回していない。撮影・GPU の計測・Game の起動の確かめも回さない決まり。
+- 採った判断: GPU の形式は寿命と大きさがエミッタごとに 1 値なので、Splash の寿命は要件の 0.25〜0.4 秒の中の 0.32 秒に固定し、大きさは寿命にわたる曲線で 0.05→0.15 m にした。p は 1 フレームに 1 つで、カメラの位置の草の密度で下げる（草の場の中の場所ごとには変えない）。Droplet の初速はワールドの上向き（面の法線で回さない）。
+- 既知の限界: 屋根は移動後の位置で最近傍に引くので、縁はテクセル（約 9.4 cm）単位の段になり、1 刻みに細い屋根を横に通り過ぎる速い粒は当たりを取りこぼしうる。衝突で子を書く所と子自身の更新が同じ dispatch の同じスロットに重なりうる競合は GR57 の作りから。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread のパスの読み・GPU の粒のシェーダー・EnvironmentSystem の毎フレームの経路）。人が見るときの見どころ: `--environment-preset=heavy_rain` で屋根や木のあるシーンに入り、地面の着水に王冠のしぶきと跳ねる小粒が出ること、屋根・樹冠の下で雨筋が消えること、高い樹冠の下で時々滴りが落ちること、草の多い所でしぶきが減ること。雨の無い場面の見た目は前と変わらない。
+- U6 有効でない雨粒から着水・滴りの子を生まず、箱の上面へ戻した粒の遮蔽を判定し直し、SpawnChild の空の ChildEmitter の検証を戻す: 着地(直し 0 回)
+- Done: 描かれない（有効割合の外の）雨粒からは着水の子と樹冠の下の滴りを生まないようにした（`ParticleUpdate.comp` の `SpawnCollisionChildren`・`SpawnShelterChild` が旗 Active の無い粒で戻る）。CPU の p の見積りの入力（有効な粒の数）と GPU の当たりの数が揃い、弱い雨で着水が秒あたりの上限を超えることと、滴りが雨量に比例しないことを直した。地面に当たって箱の上面へ戻した粒は、その位置で屋根の下かを判定し直して隠す。`VfxSchema` の検証で、応答が SpawnChild の衝突の `ChildEmitter` が空なら前と同じく `unknown_child_emitter` で失敗する（2 つ目の子と屋根の下の子の空は許す）。
+- 証拠: `.harness/runs/20261118-013229/G11-GR59-RAIN-HIT-U6-verify.txt`。粒のシェーダー 5 本の glslc が失敗 0、AssetCook の `--cook-vfx Assets/Data/Vfx/Rain_Near.vfx.json` が終了コード 0（エミッタ 3、1074 バイト）、`cmake --build build --config Debug --target Game -- /m:1` が終了コード 0 で Game.exe までリンク（error C・error LNK 0 件）、numstat の 2 通りが一致。
+- Notes: 旗 Active は前の刻みの終わりの値なので、雨量が変わる間は子の生成と描画の有効が最大 1 刻みずれる。

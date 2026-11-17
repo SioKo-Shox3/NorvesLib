@@ -9,6 +9,8 @@ layout(location = 2) in vec3 vWorldPos;
 layout(location = 3) flat in uint vEmitterIndex;
 layout(location = 4) flat in uint vOrientation;
 layout(location = 5) in float vStreakAspect;
+layout(location = 6) flat in float vFlipbookPhase;
+layout(location = 7) flat in float vFlipbookSeed;
 layout(location = 0) out vec4 outColor;
 
 // 前向き描画の拡散 IBL と同じ経緯度写像を使う。
@@ -25,7 +27,24 @@ void main()
     GpuEmitterParams e = drawEmitters.emitters[vEmitterIndex];
 
     float shape;
-    if (vOrientation == 1u)
+    if (vFlipbookPhase >= 0.0)
+    {
+        float r = length(vQuadUV);
+        if (r > 1.0)
+        {
+            discard;
+        }
+        float a = r > 0.0 ? atan(vQuadUV.y, vQuadUV.x) : 0.0;
+        float f = vFlipbookPhase;
+        // 広がる王冠の輪と初期の水の塊を重ねる。半径・幅・突起・減衰の値は仮。
+        float radius = mix(0.2, 0.85, sqrt(f));
+        float width = mix(0.30, 0.06, f);
+        radius *= 1.0 + 0.18 * (1.0 - f) * (0.5 + 0.5 * cos(a * 8.0 + vFlipbookSeed * 6.28));
+        float ring = 1.0 - smoothstep(0.0, width, abs(r - radius));
+        float core = (1.0 - f) * (1.0 - f) * (1.0 - smoothstep(0.0, 0.3, r));
+        shape = max(ring, core) * (1.0 - 0.7 * f);
+    }
+    else if (vOrientation == 1u)
     {
         // 筋は幅を半径とするカプセルにし、中心線からの距離で薄くする。
         float s = vQuadUV.y * vStreakAspect;

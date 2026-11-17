@@ -5,6 +5,7 @@
 #include "Particle/VfxEffectSerialization.h"
 #include "Particle/VfxSchema.h"
 #include "Platform/PlatformFile.h"
+#include "Rendering/GrassFieldRenderData.h"
 #include "Rendering/RenderWorld.h"
 
 #include <cmath>
@@ -61,6 +62,55 @@ namespace NorvesLib::Core::Environment
             const int32_t index = Particle::FindVfxParameterIndex(*schema, name);
             return index >= 0 && static_cast<uint32_t>(index) < module.Values.size()
                 ? &module.Values[static_cast<uint32_t>(index)] : nullptr;
+        }
+
+        float SampleRainNearGrassDensity(const Rendering::GrassFieldRenderData& field, float x, float z)
+        {
+            if (!std::isfinite(x) || !std::isfinite(z) || !std::isfinite(field.ChunkSizeMeters) ||
+                field.ChunkSizeMeters <= 0.0f || field.LayerAResolution == 0)
+            {
+                return 0.0f;
+            }
+            const double chunkX = std::floor(static_cast<double>(x) / field.ChunkSizeMeters);
+            const double chunkZ = std::floor(static_cast<double>(z) / field.ChunkSizeMeters);
+            if (chunkX < INT32_MIN || chunkX > INT32_MAX || chunkZ < INT32_MIN || chunkZ > INT32_MAX)
+            {
+                return 0.0f;
+            }
+            const float pixelWidth = field.ChunkSizeMeters / static_cast<float>(field.LayerAResolution);
+            if (pixelWidth <= 0.0f)
+            {
+                return 0.0f;
+            }
+            for (const Rendering::GrassFieldChunkRenderData& chunk : field.Chunks)
+            {
+                if (chunk.ChunkX != static_cast<int32_t>(chunkX) || chunk.ChunkZ != static_cast<int32_t>(chunkZ))
+                {
+                    continue;
+                }
+                // GrassField::Sample と同じく、局所座標の差は倍精度で取る。
+                const float localX = static_cast<float>(static_cast<double>(x) - chunkX * field.ChunkSizeMeters);
+                const float localZ = static_cast<float>(static_cast<double>(z) - chunkZ * field.ChunkSizeMeters);
+                const auto pixelCoordinate = [pixelWidth, &field](float local)
+                {
+                    const double pixel = std::floor(local / pixelWidth);
+                    return pixel <= 0.0 ? 0u : pixel >= field.LayerAResolution - 1u ?
+                        field.LayerAResolution - 1u : static_cast<uint32_t>(pixel);
+                };
+                const uint32_t pixelX = pixelCoordinate(localX);
+                const uint32_t pixelZ = pixelCoordinate(localZ);
+                const uint64_t pixelIndex = static_cast<uint64_t>(pixelZ) * field.LayerAResolution + pixelX;
+                const uint64_t byteCount = field.LayerAPixels.size();
+                // RGBA の全体が入ることを先に確かめ、バイト位置の乗算も範囲内に収める。
+                if (chunk.LayerAByteOffset > byteCount ||
+                    pixelIndex >= (byteCount - chunk.LayerAByteOffset) / 4u)
+                {
+                    return 0.0f;
+                }
+                const uint64_t offset = chunk.LayerAByteOffset + pixelIndex * 4u;
+                return static_cast<float>(field.LayerAPixels[offset]) / 255.0f;
+            }
+            return 0.0f;
         }
 
         uint64_t StepsForNanoseconds(uint64_t nanoseconds)
@@ -131,6 +181,7 @@ namespace NorvesLib::Core::Environment
     void EnvironmentSystem::Enable(const EnvironmentState& initial, const EnvironmentSceneBase& base)
     {
         m_RainTuning = Rendering::LoadRainTuningFile(Rendering::DefaultRainTuningPath);
+        m_RainSplashBudget = LoadRainSplashBudgetFile(DefaultRainSplashBudgetPath);
         m_bRainNearRecreatePending = true;
         Container::String rainError;
         m_bRainNearAssetReady = LoadRainNearEffect(rainError);
@@ -556,6 +607,12 @@ namespace NorvesLib::Core::Environment
 
     void EnvironmentSystem::PublishTo(Rendering::RenderWorld& renderWorld)
     {
+        const auto& coordinator = renderWorld.GetRenderingCoordinator();
+        const auto& camera = coordinator.GetMainCamera();
+        const auto& grassField = coordinator.GetGrassField();
+        m_RainNearGrassDensity = grassField ?
+            SampleRainNearGrassDensity(*grassField, camera.PositionX, camera.PositionZ) : 0.0f;
+
         if (m_bEnabled)
         {
             if (m_bRainTuningPublishPending)
@@ -603,17 +660,61 @@ namespace NorvesLib::Core::Environment
         {
             return false;
         }
-        if (asset.Emitters.size() != 1)
+        if (asset.Emitters.empty() || !(asset.Emitters[0].Name == "RainNear"))
         {
-            error = "エミッタの数が 1 ではありません";
+            error = "先頭のエミッタが RainNear ではありません";
             return false;
         }
         const Particle::VfxEmitterAsset& emitter = asset.Emitters[0];
-        const int32_t executorIndex = Particle::FindVfxParameterIndex(Particle::GetVfxEmitterSchema(), "Executor");
-        if (executorIndex < 0 || static_cast<uint32_t>(executorIndex) >= emitter.Properties.size() ||
-            emitter.Properties[static_cast<uint32_t>(executorIndex)].UInt != static_cast<uint32_t>(Particle::VfxExecutor::Gpu))
+        const Particle::VfxEmitterAsset* splash = nullptr;
+        const Particle::VfxEmitterAsset* droplet = nullptr;
+        for (const Particle::VfxEmitterAsset& candidate : asset.Emitters)
         {
-            error = "エミッタの実行先が GPU ではありません";
+            if (candidate.Name == "Splash")
+            {
+                splash = &candidate;
+            }
+            else if (candidate.Name == "Droplet")
+            {
+                droplet = &candidate;
+            }
+        }
+        if (splash == nullptr || droplet == nullptr)
+        {
+            error = "Splash または Droplet のエミッタがありません";
+            return false;
+        }
+        const Particle::VfxObjectSchema& emitterSchema = Particle::GetVfxEmitterSchema();
+        const int32_t executorIndex = Particle::FindVfxParameterIndex(emitterSchema, "Executor");
+        const Particle::VfxEmitterAsset* requiredEmitters[] = {&emitter, splash, droplet};
+        for (const Particle::VfxEmitterAsset* required : requiredEmitters)
+        {
+            if (executorIndex < 0 || static_cast<uint32_t>(executorIndex) >= required->Properties.size() ||
+                required->Properties[static_cast<uint32_t>(executorIndex)].UInt != static_cast<uint32_t>(Particle::VfxExecutor::Gpu))
+            {
+                error = "エミッタの実行先が GPU ではありません: ";
+                error += required->Name;
+                return false;
+            }
+        }
+        const int32_t capacityIndex = Particle::FindVfxParameterIndex(emitterSchema, "Capacity");
+        const int32_t maxParticlesIndex = Particle::FindVfxParameterIndex(emitterSchema, "MaxParticles");
+        if (capacityIndex < 0 || maxParticlesIndex < 0 ||
+            static_cast<uint32_t>(capacityIndex) >= emitter.Properties.size() ||
+            static_cast<uint32_t>(maxParticlesIndex) >= emitter.Properties.size())
+        {
+            error = "近距離の雨の粒の数がありません";
+            return false;
+        }
+        uint32_t lifetimeIndex = 0;
+        if (!FindRainNearModule(*splash, Particle::VfxModuleType::InitLifetime, lifetimeIndex, error))
+        {
+            return false;
+        }
+        const Particle::VfxValue* lifetime = FindRainNearValue(splash->Modules[lifetimeIndex], "Lifetime");
+        if (lifetime == nullptr || !std::isfinite(lifetime->Vector.x) || lifetime->Vector.x <= 0.0f)
+        {
+            error = "Splash の寿命がないか正の有限値ではありません";
             return false;
         }
 
@@ -625,7 +726,9 @@ namespace NorvesLib::Core::Environment
             !FindRainNearModule(emitter, Particle::VfxModuleType::Acceleration, modules.Acceleration, error) ||
             !FindRainNearModule(emitter, Particle::VfxModuleType::WindInfluence, modules.Wind, error) ||
             !FindRainNearModule(emitter, Particle::VfxModuleType::ActivationFraction, modules.Activation, error) ||
-            !FindRainNearModule(emitter, Particle::VfxModuleType::GpuSpriteRenderer, modules.Renderer, error))
+            !FindRainNearModule(emitter, Particle::VfxModuleType::GpuSpriteRenderer, modules.Renderer, error) ||
+            !FindRainNearModule(emitter, Particle::VfxModuleType::CollisionHeightField, modules.HeightField, error) ||
+            !FindRainNearModule(emitter, Particle::VfxModuleType::CollisionDepth, modules.Depth, error))
         {
             return false;
         }
@@ -642,6 +745,9 @@ namespace NorvesLib::Core::Environment
             error = "必要なモジュールの引数がありません";
             return false;
         }
+        const uint32_t capacity = emitter.Properties[static_cast<uint32_t>(capacityIndex)].UInt;
+        m_RainNearParticleCount = capacity != 0 ? capacity : emitter.Properties[static_cast<uint32_t>(maxParticlesIndex)].UInt;
+        m_RainSplashLifetimeSeconds = lifetime->Vector.x;
         m_RainNearWindCoupling = coupling->Vector.x;
         m_RainNearWindScale = scale->Vector.x;
         m_RainNearModules = modules;
@@ -770,6 +876,24 @@ namespace NorvesLib::Core::Environment
             Particle::VfxValue::MakeFloat(m_RainTuning.StreakShutterSeconds));
         SetRainNearParameter(effects, RainNearParameter::FadeDistance, m_RainNearModules.Renderer, "NearFadeDistance",
             Particle::VfxValue::MakeFloat(m_RainTuning.NearFadeFullMeters));
+
+        const RainSplashBudgetInput splashInput{
+            intensity,
+            static_cast<float>(m_RainNearParticleCount) * rain.ActiveFraction,
+            rain.FallSpeedMetersPerSecond,
+            m_RainTuning.NearBoxHeightMeters,
+            m_RainSplashLifetimeSeconds,
+            m_RainNearGrassDensity
+        };
+        const RainSplashBudgetResult splashBudget = ComputeRainSplashBudget(splashInput, m_RainSplashBudget);
+        SetRainNearParameter(effects, RainNearParameter::HeightFieldChildProbability, m_RainNearModules.HeightField,
+            "ChildProbability", Particle::VfxValue::MakeFloat(splashBudget.ChildProbability));
+        SetRainNearParameter(effects, RainNearParameter::DepthChildProbability, m_RainNearModules.Depth,
+            "ChildProbability", Particle::VfxValue::MakeFloat(splashBudget.ChildProbability));
+        SetRainNearParameter(effects, RainNearParameter::ShelterChildProbability, m_RainNearModules.HeightField,
+            "ShelterChildProbability", Particle::VfxValue::MakeFloat(splashBudget.DripProbability));
+        SetRainNearParameter(effects, RainNearParameter::ShelterMinClearance, m_RainNearModules.HeightField,
+            "ShelterMinClearance", Particle::VfxValue::MakeFloat(m_RainSplashBudget.CanopyMinClearanceMeters));
     }
 
     MulticastDelegate<EEnvironmentChange, const EnvironmentState&>& EnvironmentSystem::OnChanged()
