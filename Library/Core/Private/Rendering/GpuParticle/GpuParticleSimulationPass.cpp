@@ -1,6 +1,8 @@
 ﻿// GPU の実行先のエミッタを常駐のプールで生成・更新する描画の拡張のパス
 #include "Rendering/GpuParticle/GpuParticleSimulationPass.h"
 
+#include "Rendering/GpuParticle/GpuParticleDraw.h"
+#include "Rendering/GpuParticle/GpuParticleDrawPass.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderExtension/RenderExtension.h"
@@ -241,6 +243,7 @@ namespace NorvesLib::Core::Rendering
         if (m_PoolHandle.IsValid() && m_HeadsHandle.IsValid())
         {
             builder.Write(m_PoolHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            builder.PublishBuffer(kGpuParticlePoolResourceName, m_PoolHandle);
             builder.Write(m_HeadsHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
             builder.PreserveInsertionOrder();
         }
@@ -464,6 +467,8 @@ namespace NorvesLib::Core::Rendering
         desc.Name = ExtensionName;
         desc.Stage = RenderExtensionStage::GBuffer;
         desc.Order = 1 << 30;
-        return registry.Register(desc, {CreateGpuParticleSimulationPass, nullptr});
+        const bool bSimulationRegistered = registry.Register(desc, {CreateGpuParticleSimulationPass, nullptr});
+        const bool bDrawRegistered = RegisterGpuParticleDrawExtensions(registry);
+        return bSimulationRegistered && bDrawRegistered;
     }
 }

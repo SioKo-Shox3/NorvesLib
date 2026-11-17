@@ -186,6 +186,13 @@ namespace NorvesLib::Core::Rendering
     bool AreSkyAtmosphereParametersEqual(const SkyAtmosphereParameters& lhs,
                                          const SkyAtmosphereParameters& rhs);
 
+    /** sanitize 済みの太陽・大気の設定を比べる。曇天に関する 7 項目には依らない。 */
+    bool AreSkyAtmosphereClearKeysEqual(const SkyAtmosphereParameters& lhs,
+                                       const SkyAtmosphereParameters& rhs);
+
+    /** sanitize 後の曇天に関する 7 項目を既定値に戻し、晴天モデルの鍵を作る。 */
+    SkyAtmosphereParameters MakeSkyAtmosphereClearKey(const SkyAtmosphereParameters& parameters);
+
     /**
      * @brief 空のパラメータ1組に対する前計算を持つ、球殻の大気の評価器
      *
@@ -244,6 +251,16 @@ namespace NorvesLib::Core::Rendering
         /** BuildSkyViewTableの表を補間した放射輝度。表が無ければEvaluateViewRadianceと同じ。 */
         SkyRadianceSample SampleSkyView(const Math::Vector3& viewDirection) const;
 
+        /**
+         * @brief 天頂と色味を 1 とした単位曇天を、sky-view 表と同じ行の位置で補間する
+         *
+         * 惑星半径・観測点の高度・地表のアルベド・天頂と地平線の比に依り、太陽・大気の他の設定・
+         * 雲量・曇天の照度と色味には依らない。表が無くても同じ行の幾何を使う。
+         * 透過率と有効性は SampleSkyView と同様に返す。
+         */
+        SkyRadianceSample SampleUnitOvercastSkyView(const Math::Vector3& viewDirection,
+                                                    float zenithToHorizonRatio) const;
+
         /** 地表（GroundAltitudeMeters）での太陽の透過率（RGB）。ComputeSunGroundTransmittanceと同じ値。 */
         const Math::Vector3& GetSunGroundTransmittance() const
         {
@@ -274,6 +291,9 @@ namespace NorvesLib::Core::Rendering
          * CloudCover > 0 では曇天の空の照度と混ぜた値。
          */
         Math::Vector3 GetGroundSkyIlluminance() const;
+
+        /** 雲の直達係数・曇天の照度比を掛ける前の、晴天の水平面の全天照度（lux、RGB）。 */
+        const Math::Vector3& GetClearHorizontalIlluminance() const { return m_ClearHorizontalIlluminance; }
 
         /** 曇天の水平面の全天照度 E_oc（lux、RGB）。Tint を掛ける前。 */
         const Math::Vector3& GetOvercastIlluminance() const { return m_OvercastIlluminance; }
@@ -338,6 +358,12 @@ namespace NorvesLib::Core::Rendering
             double GroundNormal[3] = {0.0, 0.0, 0.0};
         };
 
+        struct SkyViewRowGeometry
+        {
+            float SinElevation = 0.0f;
+            bool bHitGround = false;
+        };
+
         void BuildTransmittanceTable();
         void BuildMultipleScatteringTable();
         void BuildGroundSkyIrradiance();
@@ -352,6 +378,7 @@ namespace NorvesLib::Core::Rendering
                           bool bIncludeMultipleScattering) const;
 
         double SkyViewRowToElevation(uint32_t row) const;
+        SkyViewRowGeometry ComputeSkyViewRowGeometry(uint32_t row) const;
 
         SkyAtmosphereParameters m_Parameters;
         double m_SunDirection[3] = {0.0, 1.0, 0.0};
@@ -360,6 +387,8 @@ namespace NorvesLib::Core::Rendering
         float m_SunDiskIrradiance = 0.0f;
         Math::Vector3 m_SunGroundTransmittance = Math::Vector3::Zero;
         Rgb m_GroundSkyIrradiance;
+        // 晴天の水平面の全天照度（lux、RGB）。雲の直達係数と曇天の照度比は掛けない。
+        Math::Vector3 m_ClearHorizontalIlluminance = Math::Vector3::Zero;
         // 曇天の水平面の全天照度 E_oc（lux、RGB）。Tint を掛ける前。
         Math::Vector3 m_OvercastIlluminance = Math::Vector3::Zero;
         // 曇天の天頂の放射輝度 Lz（cd/m²、RGB）。Tint を掛ける前。
@@ -367,8 +396,26 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<float> m_TransmittanceTable;
         Container::VariableArray<float> m_MultipleScatteringTable;
         Container::VariableArray<float> m_SkyViewTable;
+        Container::VariableArray<SkyViewRowGeometry> m_SkyViewRowGeometry;
         bool m_bReusedSunIndependentTables = false;
     };
+
+    /** 晴天と、天頂・色味を 1 とした単位曇天を混ぜる重み。 */
+    struct SkyCloudBlendWeights
+    {
+        float ClearWeight = 1.0f;
+        Math::Vector3 OvercastWeight = Math::Vector3::Zero;
+    };
+
+    /**
+     * @brief 晴天モデルと sanitize 後の曇天設定から、晴天と単位曇天の混合重みを求める
+     *
+     * clearModel は parameters の晴天の鍵から作ったモデルとする。曇天の重みは雲量・照度比・
+     * 天頂と地平線の比・色味に依り、直達光係数と太陽円盤の表示設定には依らない。
+     * 空が無効か雲量が 0 以下なら厳密に晴天 1・曇天 0 を返し、非有限の重みは 0 とする。
+     */
+    SkyCloudBlendWeights ComputeSkyCloudBlendWeights(const SkyAtmosphereModel& clearModel,
+                                                    const SkyAtmosphereParameters& parameters);
 
     /**
      * @brief 観測点から見た空の放射輝度をSkyAtmosphereModelで評価する

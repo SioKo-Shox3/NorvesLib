@@ -110,6 +110,7 @@ namespace NorvesLib::Core::Component
         void SetMegaMeshHandles(Container::Span<const Rendering::MegaGeometry::MegaMeshHandle> handles);
         Rendering::MegaGeometry::MegaMeshHandle GetMegaMeshHandle() const { return MegaMeshHandleValue.Get(); }
         void SetCastShadow(bool bCastShadow);
+        void SetSkyMapProxy(bool bSkyMapProxy);
         void SetVisible(bool bVisible);
         bool IsVisible() const { return bVisible.Get(); }
         /// 配置の種（保存する引数。値は使う側が決める）
@@ -179,6 +180,7 @@ namespace NorvesLib::Core::Component
 
         PROPERTY(Rendering::MegaGeometry::MegaMeshHandle, MegaMeshHandleValue)
         PROPERTY(bool, bCastShadow)
+        PROPERTY(bool, bSkyMapProxy)
         PROPERTY(bool, bVisible)
         PROPERTY(uint32_t, Seed)
         /// 本数（保存する引数）

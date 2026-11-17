@@ -161,6 +161,7 @@ namespace NorvesLib::Core::Rendering
                 tempBatch.MaterialBlendMode = proxy.MaterialBlendModes[i];
                 tempBatch.SortDepth = proxy.SortDepth;
                 tempBatch.bCastShadow = proxy.bCastShadow;
+                tempBatch.bSkyMapProxy = proxy.bSkyMapProxy;
 
                 uint64_t key = tempBatch.GetBatchKey();
 
@@ -174,6 +175,7 @@ namespace NorvesLib::Core::Rendering
                 batch.VertexOffset = 0;
                 batch.MaterialBlendMode = proxy.MaterialBlendModes[i];
                 batch.bCastShadow = proxy.bCastShadow;
+                batch.bSkyMapProxy = proxy.bSkyMapProxy;
 
                 // インスタンスを追加（カスタムデータとシャドウフラグも含む）
                 batch.AddInstance(proxy.WorldTransform,
@@ -207,6 +209,7 @@ namespace NorvesLib::Core::Rendering
             tempBatch.MaterialBlendMode = proxy.MaterialBlendModes[materialIndex];
             tempBatch.SortDepth = proxy.SortDepth;
             tempBatch.bCastShadow = proxy.bCastShadow;
+            tempBatch.bSkyMapProxy = proxy.bSkyMapProxy;
 
             uint64_t key = tempBatch.GetBatchKey();
 
@@ -220,6 +223,7 @@ namespace NorvesLib::Core::Rendering
             batch.VertexOffset = subMesh.VertexStart;
             batch.MaterialBlendMode = proxy.MaterialBlendModes[materialIndex];
             batch.bCastShadow = proxy.bCastShadow;
+            batch.bSkyMapProxy = proxy.bSkyMapProxy;
 
             // インスタンスを追加（カスタムデータとシャドウフラグも含む）
             batch.AddInstance(proxy.WorldTransform,
@@ -273,6 +277,7 @@ namespace NorvesLib::Core::Rendering
                 cmd.Draw.FirstInstance = static_cast<uint32_t>(outInstanceData.size());
                 cmd.Draw.InstanceDataOffset = cmd.Draw.FirstInstance;
                 cmd.Draw.bCastShadow = batch.bCastShadow;
+                cmd.Draw.bSkyMapProxy = batch.bSkyMapProxy;
                 // カスタムデータとフラグをコピー（最初のインスタンスの値を使用）
                 if (!batch.InstanceExtraData.empty())
                 {
@@ -338,6 +343,7 @@ namespace NorvesLib::Core::Rendering
                                         : 0;
                 cmd.Draw.FirstInstance = static_cast<uint32_t>(outInstanceData.size());
                 cmd.Draw.InstanceDataOffset = cmd.Draw.FirstInstance;
+                cmd.Draw.bSkyMapProxy = batch.bSkyMapProxy;
                 // カスタムデータとフラグをコピー
                 if (instanceIndex < batch.InstanceExtraData.size())
                 {

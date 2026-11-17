@@ -194,12 +194,46 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_CloudBlend = Container::MakeUnique<SkyCloudBlendRecorder>();
+        if (!m_CloudBlend->Initialize(m_Device, context.ShaderMgr))
+        {
+            // 記録器が失敗を一度警告する。パス自体は晴天入力で使い続ける。
+            m_CloudBlend.reset();
+        }
         m_bInitialized = true;
         return true;
     }
 
     void SkyAtmospherePass::Shutdown()
     {
+        if (m_CloudBlend)
+        {
+            m_CloudBlend->Shutdown();
+            m_CloudBlend.reset();
+        }
+        m_CloudBlendLane = nullptr;
+        for (auto& texture : m_UnitOvercastTextures)
+        {
+            texture.reset();
+        }
+        for (auto& texture : m_CloudBlendOutputs)
+        {
+            texture.reset();
+        }
+        for (auto& handle : m_CloudBlendHandles)
+        {
+            handle = {};
+        }
+        std::fill_n(m_UnitOvercastAverageIrradiance, 3u, 0.0f);
+        std::fill_n(m_CloudBlendAverageIrradiance, 3u, 0.0f);
+        m_UnitOvercastIblBuildCount = 0u;
+        m_bUnitOvercastIblAttempted = false;
+        m_bUnitOvercastWarningLogged = false;
+        m_bMissingOvercastWarningLogged = false;
+        m_LastCloudBlendWeights = {};
+        m_bCloudBlendDirty = true;
+        m_bUseCloudBlend = false;
+        m_ClearAerialProfile = {};
         m_TransmittanceTexture.reset();
         m_RadianceTexture.reset();
         m_SunDiskTexture.reset();
@@ -319,7 +353,7 @@ namespace NorvesLib::Core::Rendering
                               CreateTexture(m_RadianceTexture,
                                             m_Settings.RadianceWidth,
                                             m_Settings.RadianceHeight,
-                                            "SkyAtmosphere.Radiance") &&
+                                            "SkyAtmosphere.ClearRadiance") &&
                               CreateTexture(m_SunDiskTexture, 1u, 1u, "SkyAtmosphere.SunDisk");
         if (m_SunDiskTexture.get() != previousSunDisk)
         {
@@ -532,9 +566,9 @@ namespace NorvesLib::Core::Rendering
         float preExposure,
         FrameResourceLane* frameResources)
     {
-        if (!m_bLutValid || !AreSkyAtmosphereParametersEqual(m_LutParameters, parameters))
+        if (!m_bLutValid || !AreSkyAtmosphereClearKeysEqual(m_LutParameters, parameters))
         {
-            // LUTは空のパラメータ（太陽の向きを含む）が変わったときだけ作る。
+            // 晴天の鍵（太陽の向きを含む）が変わったときだけ LUT と晴天 IBL を作る。
             m_bLutValid = false;
             const auto startTime = std::chrono::steady_clock::now();
             const SkyAtmosphereModel* model = m_SourceCache ? m_SourceCache->AcquireModel(parameters) : nullptr;
@@ -561,10 +595,21 @@ namespace NorvesLib::Core::Rendering
                             model->ReusedSunIndependentTables() ? 1 : 0);
             m_LutParameters = parameters;
             m_LutSunGroundTransmittance = model->GetSunGroundTransmittance();
-            BuildSkyAerialProfile(*model, m_AerialProfile);
+            // 保持体のモデルは晴天の鍵なので、この表の直達光係数は厳密に 1。
+            BuildSkyAerialProfile(*model, m_ClearAerialProfile);
+            m_bCloudBlendDirty = true;
             m_bLutValid = true;
             // IBL が作れなくても LUT は使う。照明のパスは IBL が無ければ空の照明を黒にする。
             GenerateSkyIbl(parameters);
+        }
+        m_AerialProfile = m_ClearAerialProfile;
+        const float cloudDirectFactor = ComputeCloudDirectFactor(parameters);
+        for (uint32_t index = 0u; index < SkyAerialProfileSize; ++index)
+        {
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                m_AerialProfile.SunIlluminance[index][channel] *= cloudDirectFactor;
+            }
         }
         return GenerateSunDiskTexture(parameters, preExposure, frameResources);
     }
@@ -595,9 +640,9 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr prefilter;
         float averageIrradiance[3] = {};
         if (!CreateIblResources(m_Device, *source, width, height,
-                                "SkyAtmosphere.Environment",
-                                "SkyAtmosphere.DiffuseIrradiance",
-                                "SkyAtmosphere.PrefilteredSpecular",
+                                "SkyAtmosphere.ClearEnvironment",
+                                "SkyAtmosphere.ClearDiffuseIrradiance",
+                                "SkyAtmosphere.ClearPrefilteredSpecular",
                                 environment, diffuse, prefilter, averageIrradiance))
         {
             NORVES_LOG_WARNING("SkyAtmospherePass",
@@ -626,6 +671,155 @@ namespace NorvesLib::Core::Rendering
         return m_bIblValid;
     }
 
+    void SkyAtmospherePass::GenerateUnitOvercastIbl(const SkyAtmosphereParameters& parameters)
+    {
+        const auto* source = m_SourceCache->AcquireUnitOvercastRadianceSource(
+            parameters, m_Settings.RadianceWidth, m_Settings.RadianceHeight);
+        const uint64_t buildCount = m_SourceCache->GetUnitOvercastBuildCount();
+        if (source && m_bUnitOvercastIblAttempted && m_UnitOvercastIblBuildCount == buildCount)
+        {
+            // 作れなかった場合も、同じ源で毎フレーム再試行しない。
+            return;
+        }
+
+        const auto startTime = std::chrono::steady_clock::now();
+        for (auto& texture : m_UnitOvercastTextures)
+        {
+            if (texture)
+            {
+                m_bCloudBlendDirty = true;
+                m_RetireQueue->Retire(std::move(texture));
+            }
+        }
+        std::fill_n(m_UnitOvercastAverageIrradiance, 3u, 0.0f);
+        if (source)
+        {
+            m_bUnitOvercastIblAttempted = true;
+            m_UnitOvercastIblBuildCount = buildCount;
+        }
+        if (!source || !CreateIblResources(m_Device, *source,
+                                           m_Settings.RadianceWidth, m_Settings.RadianceHeight,
+                                           "SkyAtmosphere.UnitOvercastEnvironment",
+                                           "SkyAtmosphere.UnitOvercastDiffuseIrradiance",
+                                           "SkyAtmosphere.UnitOvercastPrefilteredSpecular",
+                                           m_UnitOvercastTextures[0], m_UnitOvercastTextures[1],
+                                           m_UnitOvercastTextures[2], m_UnitOvercastAverageIrradiance))
+        {
+            if (!m_bUnitOvercastWarningLogged)
+            {
+                NORVES_LOG_WARNING("SkyAtmospherePass", "単位曇天の IBL を生成できませんでした");
+                m_bUnitOvercastWarningLogged = true;
+            }
+            return;
+        }
+        m_bCloudBlendDirty = true;
+        const double elapsedMilliseconds = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - startTime).count();
+        NORVES_LOG_INFO("SkyAtmospherePass",
+                        "Sky unit overcast IBL generated in %.1f ms (unit_overcast_builds=%llu)",
+                        elapsedMilliseconds, static_cast<unsigned long long>(buildCount));
+    }
+
+    bool SkyAtmospherePass::EnsureCloudBlendOutput(RHI::TexturePtr& output,
+                                                  const RHI::TexturePtr& clear,
+                                                  const char* name)
+    {
+        if (!clear)
+        {
+            return false;
+        }
+        if (output && output->GetWidth() == clear->GetWidth() &&
+            output->GetHeight() == clear->GetHeight() && output->GetMipLevels() == clear->GetMipLevels())
+        {
+            return true;
+        }
+        m_bCloudBlendDirty = true;
+        m_RetireQueue->Retire(std::move(output));
+        output = CreateSkyCloudBlendOutputTexture(m_Device, clear->GetWidth(), clear->GetHeight(),
+                                                  clear->GetMipLevels(), name);
+        return output != nullptr;
+    }
+
+    bool SkyAtmospherePass::PrepareCloudBlend(const SkyAtmosphereParameters& parameters,
+                                              FrameResourceLane& lane)
+    {
+        const SkyAtmosphereModel* model = m_SourceCache->AcquireModel(parameters);
+        if (!model)
+        {
+            return false;
+        }
+        GenerateUnitOvercastIbl(parameters);
+        const RHI::TexturePtr clearTextures[4] = {m_RadianceTexture, m_IblEnvironmentTexture,
+                                                m_IblDiffuseIrradianceTexture, m_IblPrefilteredSpecularTexture};
+        const char* names[4] = {"SkyAtmosphere.Radiance", "SkyAtmosphere.Environment",
+                                "SkyAtmosphere.DiffuseIrradiance", "SkyAtmosphere.PrefilteredSpecular"};
+        const size_t targetCount = m_bIblValid ? 4u : 1u;
+        const bool bUnitOvercastValid = m_UnitOvercastTextures[0] &&
+            m_UnitOvercastTextures[1] && m_UnitOvercastTextures[2];
+        SkyCloudBlendWeights weights = ComputeSkyCloudBlendWeights(*model, parameters);
+        if (!bUnitOvercastValid)
+        {
+            weights = {};
+            if (parameters.CloudCover > 0.0f && !m_bMissingOvercastWarningLogged)
+            {
+                NORVES_LOG_WARNING("SkyAtmospherePass", "単位曇天の入力が無いため晴天を混ぜ先へ写します");
+                m_bMissingOvercastWarningLogged = true;
+            }
+        }
+        SkyCloudBlendTarget targets[4];
+        for (size_t index = 0u; index < targetCount; ++index)
+        {
+            if (!EnsureCloudBlendOutput(m_CloudBlendOutputs[index], clearTextures[index], names[index]))
+            {
+                return false;
+            }
+            targets[index] = {clearTextures[index],
+                bUnitOvercastValid ? m_UnitOvercastTextures[index == 0u ? 0u : index - 1u] : clearTextures[index],
+                m_CloudBlendOutputs[index]};
+        }
+        const bool bWeightsChanged = weights.ClearWeight != m_LastCloudBlendWeights.ClearWeight ||
+            weights.OvercastWeight.x != m_LastCloudBlendWeights.OvercastWeight.x ||
+            weights.OvercastWeight.y != m_LastCloudBlendWeights.OvercastWeight.y ||
+            weights.OvercastWeight.z != m_LastCloudBlendWeights.OvercastWeight.z;
+        if (m_bCloudBlendDirty || bWeightsChanged)
+        {
+            // 失敗した準備は次のフレームで再試行し、今のフレームは晴天入力を公開する。
+            m_bCloudBlendDirty = true;
+            if (!m_CloudBlend->Prepare(lane, targets, targetCount, weights.ClearWeight, weights.OvercastWeight))
+            {
+                return false;
+            }
+            m_CloudBlendLane = &lane;
+            m_LastCloudBlendWeights = weights;
+            m_bCloudBlendDirty = false;
+        }
+        const bool bCopyClear = weights.ClearWeight == 1.0f && weights.OvercastWeight.x == 0.0f &&
+            weights.OvercastWeight.y == 0.0f && weights.OvercastWeight.z == 0.0f;
+        const float overcastWeights[3] = {weights.OvercastWeight.x, weights.OvercastWeight.y, weights.OvercastWeight.z};
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            m_CloudBlendAverageIrradiance[channel] = bCopyClear ? m_IblAverageIrradiance[channel] :
+                weights.ClearWeight * m_IblAverageIrradiance[channel] +
+                overcastWeights[channel] * m_UnitOvercastAverageIrradiance[channel];
+        }
+        return true;
+    }
+
+    void SkyAtmospherePass::DiscardCloudBlend()
+    {
+        if (m_CloudBlend && m_CloudBlend->HasPrepared())
+        {
+            m_bCloudBlendDirty = true;
+            if (m_CloudBlendLane)
+            {
+                // 空集合の準備は借用を増やさず、記録しなかった定数・記述子への参照だけを捨てる。
+                m_CloudBlend->Prepare(*m_CloudBlendLane, nullptr, 0u, 1.0f, Math::Vector3::Zero);
+            }
+        }
+        m_CloudBlendLane = nullptr;
+        m_bUseCloudBlend = false;
+    }
+
     void SkyAtmospherePass::PublishContextResources(ViewRenderContext& context, bool bValid)
     {
         if (!m_bSnapshotEnabled)
@@ -637,7 +831,7 @@ namespace NorvesLib::Core::Rendering
         const float preExposure = ResolvePreExposure(context);
         context.SkyAtmosphere.Publish(m_LastParameters,
                                       bValid ? m_TransmittanceTexture : RHI::TexturePtr{},
-                                      bValid ? m_RadianceTexture : RHI::TexturePtr{},
+                                      bValid ? (m_bUseCloudBlend ? m_CloudBlendOutputs[0] : m_RadianceTexture) : RHI::TexturePtr{},
                                       bValid ? m_SunDiskTexture : RHI::TexturePtr{},
                                       bValid ? m_Sampler : RHI::SamplerPtr{},
                                       preExposure,
@@ -647,10 +841,11 @@ namespace NorvesLib::Core::Rendering
         context.SkyAtmosphere.AerialProfile = bValid ? m_AerialProfile : SkyAerialProfile{};
         if (bValid && m_bIblValid)
         {
-            context.SkyAtmosphere.Ibl.EnvironmentTexture = m_IblEnvironmentTexture;
-            context.SkyAtmosphere.Ibl.DiffuseIrradianceTexture = m_IblDiffuseIrradianceTexture;
-            context.SkyAtmosphere.Ibl.PrefilteredSpecularTexture = m_IblPrefilteredSpecularTexture;
-            std::copy_n(m_IblAverageIrradiance, 3u, context.SkyAtmosphere.Ibl.AverageIrradiance);
+            context.SkyAtmosphere.Ibl.EnvironmentTexture = m_bUseCloudBlend ? m_CloudBlendOutputs[1] : m_IblEnvironmentTexture;
+            context.SkyAtmosphere.Ibl.DiffuseIrradianceTexture = m_bUseCloudBlend ? m_CloudBlendOutputs[2] : m_IblDiffuseIrradianceTexture;
+            context.SkyAtmosphere.Ibl.PrefilteredSpecularTexture = m_bUseCloudBlend ? m_CloudBlendOutputs[3] : m_IblPrefilteredSpecularTexture;
+            std::copy_n(m_bUseCloudBlend ? m_CloudBlendAverageIrradiance : m_IblAverageIrradiance,
+                        3u, context.SkyAtmosphere.Ibl.AverageIrradiance);
             context.SkyAtmosphere.Ibl.bValid = true;
         }
         else
@@ -661,6 +856,12 @@ namespace NorvesLib::Core::Rendering
 
     void SkyAtmospherePass::Declare(RenderGraphBuilder& builder)
     {
+        // Execute まで進まなかった準備も、次のフレームへ持ち越さない。
+        DiscardCloudBlend();
+        for (auto& handle : m_CloudBlendHandles)
+        {
+            handle = {};
+        }
         m_TransmittanceHandle = {};
         m_RadianceHandle = {};
         m_SunDiskHandle = {};
@@ -691,23 +892,42 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        if (m_CloudBlend && m_CloudBlend->IsReady() && context->FrameResources)
+        {
+            m_bUseCloudBlend = PrepareCloudBlend(m_LastParameters, *context->FrameResources);
+        }
+
         const RGResourceHandle transmittanceResource = builder.ImportTexture(
             m_TransmittanceTexture,
             RHI::ResourceState::ShaderResource,
             "SkyAtmosphere.Transmittance");
         const RGResourceHandle radianceResource = builder.ImportTexture(
-            m_RadianceTexture,
+            m_bUseCloudBlend ? m_CloudBlendOutputs[0] : m_RadianceTexture,
             RHI::ResourceState::ShaderResource,
             "SkyAtmosphere.Radiance");
         const RGResourceHandle sunDiskResource = builder.ImportTexture(
             m_SunDiskTexture,
             RHI::ResourceState::ShaderResource,
             "SkyAtmosphere.SunDisk");
+        bool bBlendResourcesImported = true;
+        if (m_bUseCloudBlend)
+        {
+            m_CloudBlendHandles[0] = radianceResource;
+            const char* names[3] = {"SkyAtmosphere.Environment", "SkyAtmosphere.DiffuseIrradiance",
+                                    "SkyAtmosphere.PrefilteredSpecular"};
+            for (size_t index = 1u; m_bIblValid && index < 4u; ++index)
+            {
+                m_CloudBlendHandles[index] = builder.ImportTexture(m_CloudBlendOutputs[index],
+                    RHI::ResourceState::ShaderResource, names[index - 1u]);
+                bBlendResourcesImported = bBlendResourcesImported && m_CloudBlendHandles[index].IsValid();
+            }
+        }
         if (!transmittanceResource.IsValid() || !radianceResource.IsValid() ||
-            !sunDiskResource.IsValid())
+            !sunDiskResource.IsValid() || !bBlendResourcesImported)
         {
             m_bPrepared = false;
             m_bSunDiskCopyPending = false;
+            DiscardCloudBlend();
             return;
         }
 
@@ -725,8 +945,26 @@ namespace NorvesLib::Core::Rendering
                               m_SunDiskHandle);
         builder.Read(m_TransmittanceHandle.ToResourceHandle(),
                      RHI::ResourceState::ShaderResource);
-        builder.Read(m_RadianceHandle.ToResourceHandle(),
-                     RHI::ResourceState::ShaderResource);
+        if (m_bUseCloudBlend)
+        {
+            for (size_t index = 0u; index < (m_bIblValid ? 4u : 1u); ++index)
+            {
+                if (m_CloudBlend->HasPrepared())
+                {
+                    // 前のフレームの読みの後に書き、記録内で全ミップを ShaderResource へ戻す。
+                    builder.Write(m_CloudBlendHandles[index], RHI::ResourceState::UnorderedAccess,
+                                  RHI::ResourceState::ShaderResource);
+                }
+                else
+                {
+                    builder.Read(m_CloudBlendHandles[index], RHI::ResourceState::ShaderResource);
+                }
+            }
+        }
+        else
+        {
+            builder.Read(m_RadianceHandle.ToResourceHandle(), RHI::ResourceState::ShaderResource);
+        }
         if (m_bSunDiskCopyPending)
         {
             // このパスがコピーで書き、パスの中で読み取りの状態へ戻す。後の読み手はグラフがこの後へ並べる。
@@ -747,6 +985,32 @@ namespace NorvesLib::Core::Rendering
     {
         const bool bCopyPending = m_bSunDiskCopyPending;
         m_bSunDiskCopyPending = false;
+        const bool bResourcesResolved = AreGraphResourcesResolved(resources);
+        if (m_CloudBlend && m_CloudBlend->HasPrepared())
+        {
+            if (bResourcesResolved && context.CommandList)
+            {
+                m_CloudBlend->Record(*context.CommandList);
+                m_CloudBlendLane = nullptr;
+            }
+            else
+            {
+                // 書けない場合も、解決できた出力は宣言した最後の状態へ戻す。
+                if (context.CommandList)
+                {
+                    for (const auto& handle : m_CloudBlendHandles)
+                    {
+                        const RHI::TexturePtr texture = handle.IsValid() ? resources.GetTexture(handle) : RHI::TexturePtr{};
+                        if (texture)
+                        {
+                            context.CommandList->TextureBarrier(texture, RHI::ResourceState::UnorderedAccess,
+                                                                RHI::ResourceState::ShaderResource);
+                        }
+                    }
+                }
+                DiscardCloudBlend();
+            }
+        }
         if (!m_bPrepared || !m_TransmittanceHandle.IsValid() ||
             !m_RadianceHandle.IsValid() || !m_SunDiskHandle.IsValid())
         {
@@ -756,7 +1020,6 @@ namespace NorvesLib::Core::Rendering
         }
 
         const RHI::TexturePtr sunDiskTexture = resources.GetTexture(m_SunDiskHandle);
-        const bool bResourcesResolved = AreGraphResourcesResolved(resources);
         if (bCopyPending && sunDiskTexture && context.CommandList)
         {
             // グラフが入れたバリアで CopyDest にある。宣言した最後の状態（ShaderResource）へはパスの中で戻す。
@@ -795,6 +1058,16 @@ namespace NorvesLib::Core::Rendering
 
     bool SkyAtmospherePass::AreGraphResourcesResolved(RenderGraphResources& resources) const
     {
+        if (m_bUseCloudBlend && m_bIblValid)
+        {
+            for (size_t index = 1u; index < 4u; ++index)
+            {
+                if (!m_CloudBlendHandles[index].IsValid() || !resources.GetTexture(m_CloudBlendHandles[index]))
+                {
+                    return false;
+                }
+            }
+        }
         return m_bPrepared && m_TransmittanceHandle.IsValid() && m_RadianceHandle.IsValid() && m_SunDiskHandle.IsValid() &&
                resources.GetTexture(m_TransmittanceHandle) != nullptr &&
                resources.GetTexture(m_RadianceHandle) != nullptr &&
@@ -803,8 +1076,8 @@ namespace NorvesLib::Core::Rendering
 
     bool SkyAtmospherePass::DeclaresAllLayoutChanges() const
     {
-        // グラフの Texture は太陽の円盤だけを変え、宣言（CopyDest で書き、最終の ShaderResource）のとおりに
-        // 状態を明示したバリアで戻す。中継のバッファのバリアは layout を持たない
+        // 太陽の円盤は CopyDest、空の混ぜ先は UnorderedAccess で書き、宣言した ShaderResource へ
+        // 記録内のバリアで戻す。中継のバッファのバリアは layout を持たない。
         return true;
     }
 

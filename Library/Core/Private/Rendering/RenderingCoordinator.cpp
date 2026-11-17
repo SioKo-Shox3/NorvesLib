@@ -183,6 +183,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, proxy.bHasMaterialOverrides);
             hash = HashRevisionValue(hash, proxy.bVisible);
             hash = HashRevisionValue(hash, proxy.bCastShadow);
+            hash = HashRevisionValue(hash, proxy.bSkyMapProxy);
             hash = HashRevisionValue(hash, proxy.bReceiveShadow);
             hash = HashRevisionValue(hash, proxy.bAffectDynamicIndirectLighting);
             hash = HashRevisionValue(hash, proxy.bAffectDistanceFieldLighting);
@@ -1265,6 +1266,7 @@ namespace NorvesLib::Core::Rendering
                                                        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
                                                        const Container::VariableArray<MeshProxy>* meshProxies)
     {
+        const bool bSkyOcclusionEnabled = packet.Scene.SkyOcclusion.bEnabled;
         packet.RayTracingScene.Clear();
         if (!meshResources && !megaGeometryResources)
         {
@@ -1279,7 +1281,8 @@ namespace NorvesLib::Core::Rendering
         {
             const DrawParams& draw = command.Draw;
             // 影を落とさない物体もパストレーサーの主光線・散乱光線には見えるため含める。
-            // 影・DDGI・RTGIはinstance maskで影を落とす物体だけを調べる。
+            // 樹冠を DDGI・RTGI の光線から外すのは、空の遮蔽の樹冠だけの組が拡散を補うフレームだけ。
+            // 無効なフレームは光線が樹冠を解く。
             if (!meshResources ||
                 (command.Type != DrawCommandType::DrawIndexed &&
                  command.Type != DrawCommandType::DrawIndexedInstanced) ||
@@ -1412,8 +1415,9 @@ namespace NorvesLib::Core::Rendering
                 }
                 instance.Instance.customIndex =
                     static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
-                instance.Instance.mask = draw.bCastShadow ? RayTracingInstanceMaskShadowCaster
-                                                          : RayTracingInstanceMaskNonShadowCaster;
+                instance.Instance.mask = !draw.bCastShadow ? RayTracingInstanceMaskNonShadowCaster
+                    : (bSkyOcclusionEnabled && draw.bSkyMapProxy
+                           ? RayTracingInstanceMaskSkyMapProxy : RayTracingInstanceMaskShadowCaster);
                 CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
                 if (IsFiniteRayTracingTransform(previousWorldTransform))
                 {
@@ -1669,7 +1673,8 @@ namespace NorvesLib::Core::Rendering
         }
         entry.ObjectId = proxy->ObjectId;
         entry.MegaMeshHandle = proxy->MegaMeshHandle;
-        entry.Mask = proxy->bCastShadow ? RayTracingInstanceMaskShadowCaster : RayTracingInstanceMaskNonShadowCaster;
+        entry.Mask = !proxy->bCastShadow ? RayTracingInstanceMaskNonShadowCaster
+            : (proxy->bSkyMapProxy ? RayTracingInstanceMaskSkyMapProxy : RayTracingInstanceMaskShadowCaster);
         entry.bUsable = true;
     }
 
@@ -1754,7 +1759,10 @@ namespace NorvesLib::Core::Rendering
             }
         }
         instance.Instance.customIndex = static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
-        instance.Instance.mask = entry.Mask;
+        // 樹冠を DDGI・RTGI の光線から外すのは、空の遮蔽の樹冠だけの組が拡散を補うフレームだけ。
+        // 無効なフレームは光線が樹冠を解く。
+        instance.Instance.mask = !packet.Scene.SkyOcclusion.bEnabled && entry.Mask == RayTracingInstanceMaskSkyMapProxy
+                                     ? RayTracingInstanceMaskShadowCaster : entry.Mask;
         std::memcpy(instance.Instance.transform, entry.Transform, sizeof(entry.Transform));
         if (entry.bHasPreviousTransform)
         {
