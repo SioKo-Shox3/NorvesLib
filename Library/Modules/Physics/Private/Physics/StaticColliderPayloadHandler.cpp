@@ -3,6 +3,7 @@
 
 #include "Asset/AssetFileReader.h"
 #include "Logging/LogMacros.h"
+#include "Physics/ColliderShapeTransform.h"
 #include "Scatter/ScatterSystem.h"
 #include "Text/JsonDocument.h"
 
@@ -16,6 +17,120 @@ namespace NorvesLib::Modules::Physics
     {
         using namespace Core::Streaming;
         using Core::JsonValue;
+
+        bool IsFiniteVector(const Math::Vector3& value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+        }
+
+        bool BuildScatterCollider(const Core::Asset::CookedScatterCollisionShape& shape,
+            const Core::Scatter::ScatterColliderInstance& instance, StaticColliderDesc& out)
+        {
+            const Math::Transform& transform = instance.Transform;
+            const float scale = transform.scale.x;
+            if (!std::isfinite(scale) || scale <= 0.0f)
+            {
+                return false;
+            }
+
+            StaticColliderDesc desc;
+            desc.UserData = instance.Index;
+            desc.bTrigger = false;
+            const Math::Vector3 a(shape.A[0], shape.A[1], shape.A[2]);
+            const Math::Vector3 worldA = transform.TransformPoint(a);
+            if (!IsFiniteVector(worldA))
+            {
+                return false;
+            }
+
+            EPhysicsProxyShape proxyShape;
+            switch (shape.Type)
+            {
+            case Core::Asset::ScatterCollisionShapeType::Capsule:
+            {
+                desc.Radius = shape.Radius * scale;
+                if (!std::isfinite(desc.Radius) || desc.Radius <= 0.0f)
+                {
+                    return false;
+                }
+                const Math::Vector3 b(shape.B[0], shape.B[1], shape.B[2]);
+                const Math::Vector3 worldB = transform.TransformPoint(b);
+                if (!IsFiniteVector(worldB))
+                {
+                    return false;
+                }
+                const double dx = double(worldB.x) - worldA.x;
+                const double dy = double(worldB.y) - worldA.y;
+                const double dz = double(worldB.z) - worldA.z;
+                const double length = std::hypot(dx, dy, dz);
+                desc.WorldTransform.position = worldA * 0.5f + worldB * 0.5f;
+                // 線分がほぼ点なら、同じ半径を持つ球として登録する。
+                if (length <= 1.0e-6)
+                {
+                    desc.Shape = EStaticColliderShape::Sphere;
+                    proxyShape = EPhysicsProxyShape::Sphere;
+                }
+                else
+                {
+                    desc.Shape = EStaticColliderShape::Capsule;
+                    proxyShape = EPhysicsProxyShape::Capsule;
+                    desc.CapsuleHalfHeight = static_cast<float>(length * 0.5);
+                    if (!std::isfinite(desc.CapsuleHalfHeight) || desc.CapsuleHalfHeight <= 0.0f)
+                    {
+                        return false;
+                    }
+                    // Y 軸と線分の外積を回転軸とし、真下のときは X 軸で半回転する。
+                    const double horizontal = std::hypot(dx, dz);
+                    if (horizontal > 0.0)
+                    {
+                        const Math::Vector3 axis(static_cast<float>(dz / horizontal), 0.0f,
+                            static_cast<float>(-dx / horizontal));
+                        desc.WorldTransform.rotation = Math::Quaternion(axis,
+                            static_cast<float>(std::atan2(horizontal, dy)));
+                    }
+                    else if (dy < 0.0)
+                    {
+                        desc.WorldTransform.rotation = Math::Quaternion(Math::Vector3::UnitX, Math::Constants::PI);
+                    }
+                }
+                break;
+            }
+            case Core::Asset::ScatterCollisionShapeType::Sphere:
+                desc.Shape = EStaticColliderShape::Sphere;
+                proxyShape = EPhysicsProxyShape::Sphere;
+                desc.Radius = shape.Radius * scale;
+                desc.WorldTransform.position = worldA;
+                if (!std::isfinite(desc.Radius) || desc.Radius <= 0.0f)
+                {
+                    return false;
+                }
+                break;
+            case Core::Asset::ScatterCollisionShapeType::Box:
+                desc.Shape = EStaticColliderShape::Box;
+                proxyShape = EPhysicsProxyShape::Box;
+                desc.HalfExtents = Math::Vector3(shape.B[0], shape.B[1], shape.B[2]) * scale;
+                desc.WorldTransform.position = worldA;
+                desc.WorldTransform.rotation = transform.rotation;
+                if (!IsFiniteVector(desc.HalfExtents) || desc.HalfExtents.x <= 0.0f ||
+                    desc.HalfExtents.y <= 0.0f || desc.HalfExtents.z <= 0.0f)
+                {
+                    return false;
+                }
+                break;
+            default:
+                return false;
+            }
+
+            // 登録時と同じ形状検証で、合成による非有限値なども個別に除く。
+            PhysicsShapeProxy proxy;
+            if (!BuildColliderWorldShape(proxyShape, desc.Radius, desc.CapsuleHalfHeight, desc.HalfExtents,
+                desc.WorldTransform, Math::Transform(), proxy))
+            {
+                return false;
+            }
+            out = desc;
+            return true;
+        }
 
         uint64_t StateKey(const StreamingPayloadContext& context)
         {
@@ -187,6 +302,92 @@ namespace NorvesLib::Modules::Physics
             return true;
         }
     } // namespace
+
+    ScatterColliderBinding::ScatterColliderBinding(IPhysicsModule& physics)
+        : m_Physics(physics)
+    {
+    }
+
+    bool ScatterColliderBinding::MakeChunkKey(Core::Scatter::ScatterHandle scatter, uint32_t chunk,
+        StaticColliderChunkKey& outKey)
+    {
+        if (scatter == Core::Scatter::kInvalidScatterHandle || scatter > 0xFFFFFFu)
+        {
+            return false;
+        }
+        outKey.Value = (kScatterColliderKeyTag << 56) | (uint64_t(scatter) << 32) | chunk;
+        return true;
+    }
+
+    void ScatterColliderBinding::OnScatterColliderChunk(const Core::Scatter::ScatterColliderChunkEvent& event)
+    {
+        StaticColliderChunkKey key;
+        if (!MakeChunkKey(event.Scatter, event.Chunk, key))
+        {
+            LOG_WARNING("SCATTER_COLLIDERS_INVALID_KEY scatter=%u chunk=%u 散布ハンドルを鍵に変換できません",
+                event.Scatter, event.Chunk);
+            return;
+        }
+
+        const auto found = m_RegisteredKeys.find(key.Value);
+        if (found != m_RegisteredKeys.end())
+        {
+            const EPhysicsResult result = m_Physics.UnregisterStaticColliderChunk(key);
+            m_RegisteredKeys.erase(found);
+            if (result != EPhysicsResult::Success)
+            {
+                LOG_WARNING("SCATTER_COLLIDERS_UNREGISTER_FAILED scatter=%u chunk=%u result=%u 当たりを解除できません",
+                    event.Scatter, event.Chunk, static_cast<unsigned>(result));
+            }
+        }
+        if (!event.bRegister)
+        {
+            return;
+        }
+
+        m_Colliders.clear();
+        size_t invalidCount = 0;
+        for (const auto& species : event.Species)
+        {
+            for (const auto& instance : species.Instances)
+            {
+                for (const auto& shape : species.Shapes)
+                {
+                    StaticColliderDesc desc;
+                    if (BuildScatterCollider(shape, instance, desc))
+                    {
+                        m_Colliders.push_back(desc);
+                    }
+                    else
+                    {
+                        ++invalidCount;
+                    }
+                }
+            }
+        }
+        if (invalidCount != 0)
+        {
+            LOG_WARNING("SCATTER_COLLIDERS_INVALID_SHAPES scatter=%u chunk=%u count=%zu 不正な当たりを除外しました",
+                event.Scatter, event.Chunk, invalidCount);
+        }
+
+        const EPhysicsResult result = m_Physics.RegisterStaticColliderChunk(key, {m_Colliders.data(), m_Colliders.size()});
+        if (result == EPhysicsResult::Success)
+        {
+            m_RegisteredKeys.insert(key.Value);
+        }
+        else
+        {
+            LOG_WARNING("SCATTER_COLLIDERS_REGISTER_FAILED scatter=%u chunk=%u result=%u 当たりを登録できません",
+                event.Scatter, event.Chunk, static_cast<unsigned>(result));
+        }
+    }
+
+    void ScatterColliderBinding::Reset()
+    {
+        m_RegisteredKeys.clear();
+        m_Colliders.clear();
+    }
 
     StaticColliderPayloadHandler::StaticColliderPayloadHandler(IPhysicsModule& physics)
         : m_Physics(physics)

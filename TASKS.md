@@ -7691,7 +7691,7 @@
 - notes: 設計はロードマップ 2252・2254・2258 行（GR47 の保存形式・少数の目立つ物との使い分け・衝突）、完了条件は 2618〜2619 行。G12A-S9 のとおり、保存の形式は新しい NVINST を作らず NVSCT v0（G5-GR90）に入力の口を足す（要件の「バイナリ形式のシーン保存（GR90）」）。手で置く配置の作り手（エディタ・Blender・生成の台本）は企画で未定なので、入力は JSON の一覧にし、作り手を選ばない。主人公の近くの印象的な木・岩は今どおり Entity（Prefab）で置き、背景をこの経路にする。TLAS に入れる既定は「入れる」にして、今の散布（バナナ・荒野の岩）の見た目を変えない（RT の選択は SCN-MEGA-RT-SELECT が範囲で絞っている。ロードマップ 2248 行の「配置層は既定で false」は、RT の選択が全インスタンスを入れていた頃の前提）。試験を足す理由: 反証する契約は「照会が総当たりと同じ個体を返し、非表示がチャンクの出し入れとセーブをまたいで残り、RT の除外が指定の種だけに効く」こと。破れると倒した木が戻る・AI が見えない木に当たる・RT の影が抜けるとして、まれにしか出ず、撮影・ログでは気づけず黙って起きる。危険地帯（アセットのクック・Object の寿命・Public API）なので評価者を通す。
 
 ## G12-GR47-SCATTER-COLLIDERS: 散布の木の幹・岩に、Entity を作らずにチャンク単位の当たりを付け、出し入れと 1 本の非表示に合わせる
-- status: todo
+- status: done
 - after: G12-GR47-PLACEMENT-COOK, G12-GR09-DETACHED-COLLIDERS
 - gr: GR47
 - done-when: `ScatterSystem` に、チャンクの当たりの出し入れの通知（チャンクの鍵・種ごとの衝突の形・常駐の個体の変換の一覧、隠した個体を除く）と、当たりを持たせる範囲（焦点からの半径。描く常駐の半径とは別の設定。既定は仮の 150 m）を足す。Physics モジュールが Install でこの通知を受ける口を登録し（Core の散布は Physics を参照しない）、通知のたびに `RegisterStaticColliderChunk` / `UnregisterStaticColliderChunk`（G12-GR09-DETACHED-COLLIDERS）を呼ぶ。1 本の非表示（G12-GR47-PLACEMENT-COOK）を切り替えると、そのチャンクの当たりを登録し直す（ほかのチャンクは触らない）。セル（G12-GR40-WORLD-PAYLOADS）の `static-colliders` の payload と同じ鍵の空間を使い、鍵がぶつからない（上位のビットで出どころを分ける）。新設の `ScatterColliderTest`（`PhysicsDynamicsTest` の束へ MEMBER）が通る: 当たりの半径に入ったチャンクの幹のカプセルに、個体の位置・ヨー・拡大どおりの所で Raycast が当たり、動く球が止まる。隠した個体には当たらず、戻すと当たる。半径の外へ出たチャンクと解放したチャンクには当たらない。出し入れを 20 周しても World の Entity・コライダーの数が基準に戻る。同じ焦点の動きで登録の列がビット一致。`PhysicsDetachedColliderTest`・`ScatterSystemResidencyTest`・`ScatterSystemQueryTest` が通る。
