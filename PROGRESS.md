@@ -12330,3 +12330,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `Test/Tools/Blender/FurMapsCoreTest.py` は作っていない。verify の 2 行目はその試験を指すので TASKS.md から外した（G6-GR103-RIG-SPEC-VALIDATE と同じ扱い）。Blender・アプリは起動していない。
 - Notes: 判断: 補正マスクは 0.5 が 8bit で表せないので 127 と 128 の両方を恒等にした。流れは膨張の後に単位化して書き、膨張の後も空の texel は (128,128,0)。重なる UV は後の三角形が勝つ。補正は膨張の後・量子化の前に画像全体へ重ね、Region には補正が無い。
 - Notes: 既知の限界: UniRig の 14 関節ほどの骨格では四肢の先と顔の流れが足りないので、領域の表・頂点の塗り・補正マスクで補う前提。頭の先・耳・尾の付け根では骨の向きが法線に近く、近傍の平均でも埋まらない頂点が残りうる。`fur_flow.py` はポーズや modifier を適用する前の元のメッシュを読む。頂点カラーの CORNER は頂点ごとの平均になる。
+- U1 SDK に依らない資産の編集の変換と状態(BridgeAssetEditProtocol)を作る: 着地(直し 1 回)
