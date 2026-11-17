@@ -375,6 +375,21 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.UnregisterSkyOccluder(handle);
     }
 
+    LocalFogVolumeHandle RenderWorld::RegisterLocalFogVolume(const LocalFogVolumeProxy& proxy)
+    {
+        return m_RenderingCoordinator.RegisterLocalFogVolume(proxy);
+    }
+
+    void RenderWorld::UpdateLocalFogVolume(LocalFogVolumeHandle handle, const LocalFogVolumeProxy& proxy)
+    {
+        m_RenderingCoordinator.UpdateLocalFogVolume(handle, proxy);
+    }
+
+    void RenderWorld::UnregisterLocalFogVolume(LocalFogVolumeHandle handle)
+    {
+        m_RenderingCoordinator.UnregisterLocalFogVolume(handle);
+    }
+
     void RenderWorld::SetStaticEnvironmentIntensityScale(float scale)
     {
         m_RenderingCoordinator.SetStaticEnvironmentIntensityScale(scale);
