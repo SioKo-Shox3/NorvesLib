@@ -283,6 +283,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DecalPass.cpp
     Private/Rendering/DistortionPass.cpp
     Private/Rendering/FoliagePass.cpp
+    Private/Rendering/ImpostorGBufferPass.cpp
     Private/Rendering/GBufferOverlayTargets.cpp
     Private/Rendering/GrassPass.cpp
     Private/Rendering/GrassBladeMesh.cpp
@@ -828,6 +829,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/DecalPass.h
     Public/Rendering/DistortionPass.h
     Public/Rendering/FoliagePass.h
+    Public/Rendering/ImpostorGBufferPass.h
     Public/Rendering/ImpostorBatch.h
     Public/Rendering/GrassPass.h
     Public/Rendering/WorldFieldPass.h

@@ -11,6 +11,7 @@
 #include "Rendering/DepthOfFieldPass.h"
 #include "Rendering/MotionBlurPass.h"
 #include "Rendering/FoliagePass.h"
+#include "Rendering/ImpostorGBufferPass.h"
 #include "Rendering/GrassPass.h"
 #include "Rendering/WorldFieldPass.h"
 #include "Rendering/SkyAtmospherePass.h"
@@ -1279,6 +1280,10 @@ namespace NorvesLib::Core::Rendering
         // 頂点シェーダーで風に揺らすので解決の経路には載せず、SSAO・影の印付け・照明より前に置いて影を受ける。
         // 束が無いフレームは何も宣言しない（既定の描画は変えない）
         AddPass(MakeUnique<FoliagePass>());
+
+        // インポスターを、解決・GBuffer の描画の後の GBuffer と深度へ重ねて描く。
+        // SSAO・照明の前に置き、照明・影の受け・霧・濡れに参加させる。束が無いフレームは何も宣言しない。
+        AddPass(MakeUnique<ImpostorGBufferPass>());
 
         // GrassPass: 草の場からタイルごとのブレードと間接描画の引数を生成する。
         auto grassPass = MakeUnique<GrassPass>();

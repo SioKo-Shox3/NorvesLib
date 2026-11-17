@@ -12093,3 +12093,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 GBuffer へ書くインポスターのシェーダー（impostor_gbuffer.vert/.frag）を足す: 着地(直し 0 回)
 - U5 前方描画からインポスターの専用のパイプラインを外す: 着地(直し 0 回)
 - U2 インポスターの束を SceneView から FramePacket・描画の文脈まで渡す: 着地(直し 1 回)
+- U4 ImpostorGBufferPass を足して遅延の流れの FoliagePass の隣に置く: 着地(直し 0 回)
