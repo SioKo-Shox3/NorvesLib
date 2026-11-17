@@ -11933,3 +11933,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: G17-GR33-STATIC-IMPORT・G17-GR80-REPAIR・G17-GR80-SIMPLIFY の verify のビルド行が、TEST-REMOVE-1114 で消えた `CookedMeshTest`・`AssetCookMeshSimplifySmoke` を名指ししている。ランナーが試験のターゲットを外した形（`--target AssetCook AssetCookMeshSimplifySmoke`）でも `MSB1009: プロジェクト ファイルが存在しません。スイッチ: AssetCookMeshSimplifySmoke.vcxproj` で終了コード 1 になる（この項目の反復 2 の再確認と同じ落ち方）。
 - U1 空のモデルに晴天の鍵・混ぜる重み・単位曇天の標本を足し、保持体を晴天の鍵と単位曇天の源に分ける: 着地(直し 0 回)
 - U2 晴天と単位曇天を重みで混ぜる compute シェーダーを足す: 着地(直し 0 回)
+- U3 IblGeneration に永続の出力テクスチャの作成と、混ぜのディスパッチの準備・記録の道具を足す: 着地(直し 0 回)
