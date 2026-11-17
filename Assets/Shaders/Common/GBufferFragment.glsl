@@ -1,7 +1,7 @@
 ﻿// GBuffer の標準の断片シェーダーの本体。材質ごとのプログラムの FS は、この本体か
 // Common/GBufferEncoding.glsl の GBufferEncodeNormal・GBufferEncodeMaterial・GBufferEncodeEmissive を通して 5 枚へ書く約束。
 // 材質ごとのプログラムの FS も、環境の UBO（set 0 / binding 13）を読み、GBuffer へ書く前に
-// ApplyWetSurfaceFromEnvironment を呼ぶ。濡れの感度は DefaultLit の P0、未指定は 1。
+// ApplyWetSurfaceWithPuddle を呼ぶ。濡れの感度は DefaultLit の P0、未指定は 1。
 // 材質ごとのプログラムの FS も法線の確定直後に SpecularAAFilterMaterial を通す（強さは MVPData.specularAAParams.x）。
 // 発光テクスチャは binding 14、specularAAParams.z の印は 1=発光テクスチャ、2=NormalScale。
 // GBUFFER_ALPHA_CLIP を定義した gbuffer_alphaclip.frag は切り抜き材質に使う。
@@ -64,6 +64,8 @@ layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
 layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 layout(set = 0, binding = 14) uniform sampler2D emissiveTexture;
+layout(set = 0, binding = 16) uniform sampler2D overheadHeightMap;
+layout(set = 0, binding = 17) uniform sampler2D puddleField;
 
 #include "Common/GBufferEncoding.glsl"
 #include "Common/VelocityEncoding.glsl"
@@ -79,6 +81,7 @@ layout(set = 0, binding = 14) uniform sampler2D emissiveTexture;
 #include "Common/SparseResidencySampling.glsl"
 #include "Common/WetSurface.glsl"
 NORVES_DECLARE_ENVIRONMENT_UBO(0, 13)
+NORVES_DECLARE_PUDDLE_SURFACE_UBO(0, 15)
 #define VT_FEEDBACK_BINDING 11
 #ifdef GBUFFER_ALPHA_CLIP
 // 切り抜いた画素の深度への書き込みを discard で止めるため、早期の深度テストを宣言しない。
@@ -210,8 +213,12 @@ void main()
     float wetResponse = ResolveWetSurfaceResponse(fragInstanceShadingParams.x, mvp.shadingParams.x,
                                                   id == GBUFFER_SHADING_MODEL_DEFAULT_LIT);
 #endif
-    ApplyWetSurfaceFromEnvironment(albedo, roughness, metallic, normal, normalize(geometricNormal),
-                                    u_Environment.params, wetResponse);
+    float rainExposure = PuddleRainExposure(overheadHeightMap, u_PuddleSurface.params, fragWorldPos);
+    float puddleCavity = SamplePuddleFieldLayer(puddleField, u_PuddleSurface.params.puddleField, fragWorldPos.xz);
+    float puddleCoverage = ApplyWetSurfaceWithPuddle(
+        albedo, roughness, metallic, normal, normalize(geometricNormal), u_Environment.params,
+        wetResponse, rainExposure, puddleCavity, fragWorldPos.xz);
+    float emissiveP1 = id == GBUFFER_SHADING_MODEL_DEFAULT_LIT ? puddleCoverage : params.y;
 #ifdef GBUFFER_DISSOLVE
     // 縁でアルベドを灰へ寄せる。
     albedo = mix(albedo, vec3(dot(albedo, vec3(0.2126, 0.7152, 0.0722))), e);
@@ -246,12 +253,12 @@ void main()
     emissive += ComputePreExposedEmissive(mvp.dissolveEdge.rgb,
                                          min(mvp.dissolveEdge.a, DISSOLVE_EDGE_EMISSIVE_NITS_MAX) * e,
                                          mvp.frameParams.y);
-    outEmissive = GBufferEncodeEmissive(min(emissive, vec3(GBUFFER_PRE_EXPOSED_EMISSIVE_MAX)), params.y);
+    outEmissive = GBufferEncodeEmissive(min(emissive, vec3(GBUFFER_PRE_EXPOSED_EMISSIVE_MAX)), emissiveP1);
 #else
     outEmissive = GBufferEncodeEmissive(ComputePreExposedEmissive(emissiveChromaticity,
                                                                 fragEmissiveChromaticityAndLuminanceNits.a,
                                                                 mvp.frameParams.y),
-                                       params.y);
+                                       emissiveP1);
 #endif
 
     // 前のフレームの w が閾値以下なら履歴なしの印を書く。
