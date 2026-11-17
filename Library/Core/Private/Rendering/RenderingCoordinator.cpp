@@ -891,6 +891,28 @@ namespace NorvesLib::Core::Rendering
             return range;
         }
 
+        // ビュー内のインスタンス添字をパケット全体の添字へ移し、束を写す。
+        CommandRange AppendRebasedImpostorBatches(const Container::VariableArray<ImpostorBatch> &source,
+                                                  uint32_t baseInstance,
+                                                  Container::VariableArray<ImpostorBatch> &destination)
+        {
+            if (source.empty())
+            {
+                return {};
+            }
+
+            CommandRange range;
+            range.First = static_cast<uint32_t>(destination.size());
+            range.Count = static_cast<uint32_t>(source.size());
+            for (const ImpostorBatch &batch : source)
+            {
+                ImpostorBatch rebased = batch;
+                rebased.InstanceDataOffset += baseInstance;
+                destination.push_back(rebased);
+            }
+            return range;
+        }
+
         CommandRange CombineCommandRanges(const CommandRange &opaqueRange,
                                           const CommandRange &transparentRange)
         {
@@ -5001,6 +5023,8 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->SkinnedMeshFrameLeases.clear();
             m_CurrentPacket->TransparentCommandRange = CommandRange{};
             m_CurrentPacket->InstanceData.clear();
+            m_CurrentPacket->ImpostorBatches.clear();
+            m_CurrentPacket->ImpostorBatchRange = CommandRange{};
             m_CurrentPacket->Views.clear();
             m_CurrentPacket->Stats = FrameStatsSnapshot{};
             m_CurrentPacket->GeneratedDrawCommandCount = 0;
@@ -5049,6 +5073,7 @@ namespace NorvesLib::Core::Rendering
                 CommandRange opaqueCommandRange;
                 CommandRange transparentCommandRange;
                 CommandRange drawCommandRange;
+                CommandRange impostorBatchRange;
                 if (m_CurrentPacket)
                 {
                     opaqueCommandRange =
@@ -5063,6 +5088,10 @@ namespace NorvesLib::Core::Rendering
                                                   instanceBase,
                                                   m_CurrentPacket->DrawCommands);
                     drawCommandRange = CombineCommandRanges(opaqueCommandRange, transparentCommandRange);
+                    impostorBatchRange =
+                        AppendRebasedImpostorBatches(sceneView->GetImpostorBatches(),
+                                                     instanceBase,
+                                                     m_CurrentPacket->ImpostorBatches);
                     AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
                 }
 
@@ -5071,6 +5100,7 @@ namespace NorvesLib::Core::Rendering
                     m_CurrentPacket->DrawCommandRange = drawCommandRange;
                     m_CurrentPacket->OpaqueCommandRange = opaqueCommandRange;
                     m_CurrentPacket->TransparentCommandRange = transparentCommandRange;
+                    m_CurrentPacket->ImpostorBatchRange = impostorBatchRange;
                     bLegacyCommandsSet = true;
                 }
             }
@@ -5121,6 +5151,10 @@ namespace NorvesLib::Core::Rendering
                         viewportPlan.DrawCommandRange =
                             CombineCommandRanges(viewportPlan.OpaqueCommandRange,
                                                  viewportPlan.TransparentCommandRange);
+                        viewportPlan.ImpostorBatchRange =
+                            AppendRebasedImpostorBatches(sceneView->GetImpostorBatches(),
+                                                         instanceBase,
+                                                         m_CurrentPacket->ImpostorBatches);
                         AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
                     }
 
@@ -5129,6 +5163,7 @@ namespace NorvesLib::Core::Rendering
                         m_CurrentPacket->DrawCommandRange = viewportPlan.DrawCommandRange;
                         m_CurrentPacket->OpaqueCommandRange = viewportPlan.OpaqueCommandRange;
                         m_CurrentPacket->TransparentCommandRange = viewportPlan.TransparentCommandRange;
+                        m_CurrentPacket->ImpostorBatchRange = viewportPlan.ImpostorBatchRange;
                         bLegacyCommandsSet = true;
                     }
                 }
@@ -5979,6 +6014,8 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotMeshProxies =
             packet->MeshDelta.bActive ? &m_MeshMirror.GetProxies() : &packet->Scene.MeshProxies;
         viewContext.SnapshotInstanceData = &packet->InstanceData;
+        viewContext.SnapshotImpostorBatches = &packet->ImpostorBatches;
+        viewContext.SnapshotImpostorBatchRange = packet->ImpostorBatchRange;
         viewContext.SnapshotSkinnedMeshProxies = packet->SkinnedMeshDelta.bActive
                                                      ? &m_SkinnedMeshMirror.GetProxies()
                                                      : &packet->Scene.SkinnedMeshProxies;
