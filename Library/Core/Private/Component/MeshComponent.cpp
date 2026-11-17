@@ -62,6 +62,7 @@ namespace NorvesLib::Core::Component
         // PROPERTYマクロは値初期化するため、非ゼロデフォルト値を設定
         getbVisible().Set(true);
         getbCastShadow().Set(true);
+        bSkyMapProxy = false;
         getbReceiveShadow().Set(true);
         getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         ForcedLODLevel = -1;
@@ -72,6 +73,7 @@ namespace NorvesLib::Core::Component
     {
         getbVisible().Set(true);
         getbCastShadow().Set(true);
+        bSkyMapProxy = false;
         getbReceiveShadow().Set(true);
         getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         ForcedLODLevel = -1;
@@ -82,6 +84,7 @@ namespace NorvesLib::Core::Component
     {
         getbVisible().Set(true);
         getbCastShadow().Set(true);
+        bSkyMapProxy = false;
         getbReceiveShadow().Set(true);
         getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         ForcedLODLevel = -1;
@@ -418,6 +421,7 @@ namespace NorvesLib::Core::Component
         // 描画フラグ
         outProxy.bVisible = getbVisible().Get();
         outProxy.bCastShadow = getbCastShadow().Get();
+        outProxy.bSkyMapProxy = bSkyMapProxy.Get();
         outProxy.bReceiveShadow = getbReceiveShadow().Get();
         outProxy.LayerMask = getRenderLayerProp().Get();
 

@@ -49,6 +49,7 @@ namespace NorvesLib::Core::Component
         outProxy.WorldBounds = m_WorldBounds;
         outProxy.bVisible = getbVisible().Get();
         outProxy.bCastShadow = getbCastShadow().Get();
+        outProxy.bSkyMapProxy = IsSkyMapProxy();
         outProxy.LayerMask = getRenderLayerProp().Get();
         return true;
     }

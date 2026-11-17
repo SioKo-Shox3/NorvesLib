@@ -11945,3 +11945,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（RenderThread・パスの並び = 危険地帯）。GPU での確かめは G7-GR58-CHECK（回さない決まりで backlog）
 - U1 空の遮蔽のクリップマップに樹冠だけの組を足し、RTGI・DDGI の拡散に掛ける: 着地(直し 0 回)
 - U2 instance mask 0x04 を定義し、印を DrawParams・バッチの鍵・TLAS の mask・RT の影の光線へ通す: 着地(直し 0 回)
+- U3 散布の樹冠の種と手置きの物に印を立て、Game をビルドする: 着地(直し 0 回)
