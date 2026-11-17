@@ -415,6 +415,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetCloudLayer(parameters);
     }
 
+    void RenderWorld::SetCloudShadow(const CloudShadowParameters& parameters)
+    {
+        m_RenderingCoordinator.SetCloudShadow(parameters);
+    }
+
     void RenderWorld::SetFoliageSource(FoliageSourceSlot slot, const FoliageScene& foliage)
     {
         const uint32_t sourceIndex = static_cast<uint32_t>(slot);
