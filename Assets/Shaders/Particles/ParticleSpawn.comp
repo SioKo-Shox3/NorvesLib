@@ -86,5 +86,7 @@ void main()
         basePosition = simulation.cameraPosition + emitter.positionLifetime.xyz;
     }
     uint slot = GpuParticleRingSlot(emitter.poolCapacitySeedFlags.x, emitter.poolCapacitySeedFlags.y, serial);
-    particles[slot] = InitParticle(emitter, emitterExtras[emitterIndex], serial, basePosition, normal, addVelocity);
+    GpuParticle particle = InitParticle(emitter, emitterExtras[emitterIndex], serial, basePosition, normal, addVelocity);
+    ClassifyParticleAtPlacement(emitter, particle);
+    particles[slot] = particle;
 }

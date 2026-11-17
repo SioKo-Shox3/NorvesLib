@@ -7554,7 +7554,7 @@
 - notes: 要件 `#### GR56` の受け入れ確認の撮影・計測の分（要件 5625・5626・5628 行）。`Scripts/CameraScripts/grassland-sweep.txt` は G5-GR43-GRASS-CHECK が使う台本（G5 が足す。無ければ同じ形で足す）。grassland に `sky-occlusion` の引数が効くのは G11-GR56-SKY-OCC-WORLD の設定から。数値の合否は G11-GR56-SKY-OCC-SPECULAR と G11-GR56-SKY-OCC-REFERENCE の試験が持ち、ここは目で見る確かめと記録だけ。コードは変えない（直す必要が出たら新しい項目を提案する）。
 
 ## G11-GR59-RAIN-HIT: 雨粒が雨の遮蔽マップで屋根・樹冠の下では消え、屋根や地面に当たると着水のしぶきと小粒を出し、樹冠の下では滴りを出すようにする
-- status: todo
+- status: done
 - after: G11-GR59-OVERHEAD-MAP, G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT, G7-GR58-RAIN-MODEL, G7-GR58-RAIN-CURTAIN, G7-GR58-RAIN-NEAR
 - gr: GR59
 - needs-gr: GR42, GR49, GR57, GR58

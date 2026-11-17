@@ -10,6 +10,8 @@ layout(location = 2) out vec3 vWorldPos;
 layout(location = 3) flat out uint vEmitterIndex;
 layout(location = 4) flat out uint vOrientation;
 layout(location = 5) out float vStreakAspect;
+layout(location = 6) flat out float vFlipbookPhase;
+layout(location = 7) flat out float vFlipbookSeed;
 
 const vec2 kParticleCorners[6] = vec2[](
     vec2(-1.0, -1.0),
@@ -29,6 +31,8 @@ void main()
     vEmitterIndex = 0u;
     vOrientation = 0u;
     vStreakAspect = 0.0;
+    vFlipbookPhase = -1.0;
+    vFlipbookSeed = 0.0;
 
     uint instanceIndex = uint(gl_InstanceIndex);
     uint slot = instanceIndex;
@@ -46,7 +50,8 @@ void main()
         return;
     }
     GpuParticle p = drawPool.particles[slot];
-    if ((p.meta.z & kGpuParticleFlagAlive) == 0u || p.meta.y >= 1024u ||
+    if ((p.meta.z & kGpuParticleFlagAlive) == 0u ||
+        (p.meta.z & kGpuParticleFlagSheltered) != 0u || p.meta.y >= 1024u ||
         any(isnan(p.posAge.xyz)) || any(isinf(p.posAge.xyz)) ||
         any(isnan(p.velLife.xyz)) || any(isinf(p.velLife.xyz)))
     {
@@ -218,6 +223,15 @@ void main()
         vWorldPos = worldPos;
         vColor = look.color;
         vStreakAspect = 1.0;
+    }
+
+    uint frames = (e.renderFlags >> kGpuEmitterRenderFlipbookFramesShift) & kGpuEmitterRenderFlipbookFramesMask;
+    if (frames > 0u)
+    {
+        // コマの中央の位相を全頂点で共有し、寿命内ではコマ単位で形を切り替える。
+        float frameCount = float(frames);
+        vFlipbookPhase = (min(floor(look.age01 * frameCount), frameCount - 1.0) + 0.5) / frameCount;
+        vFlipbookSeed = VfxHashToUnitFloat(VfxPcgHash(p.meta.x));
     }
 
     vQuadUV = corner;
