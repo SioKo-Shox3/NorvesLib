@@ -12316,3 +12316,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 bpy に依らない計算と設定の検査 rig_core.py: 着地(直し 1 回)
 - U3 張り直しとベイクの段 rebuild_on_base.py: 着地(直し 0 回)
 - U4 ウェイトの保持と転送の段 transfer_weights.py: 着地(直し 1 回)
+- U5 書き出しの段 export_gltf.py: 着地(直し 1 回)
