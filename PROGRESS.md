@@ -12143,3 +12143,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 要起票: GPU の粒子（`Particles/ParticleDraw.glsl`・`GpuParticleDrawPass`）・インポスター（`impostor.frag`）・剣のトレイル（`ribbon_trail.frag`）・雨の幕（`rain_curtain.frag`）の前向きの霧に局所霧を掛ける作業。done-when (3) の「粒子にも局所霧が効く」の要件だが、どの項目の paths にも無い（各 UBO の末尾に `GPULocalFogParams` を足し、`EvaluateLocalFogForward` と `ApplyLocalFog*` を掛けるだけ）。
 - Next: ランナーの評価者の反証（危険地帯: volumetrics・半透明）。
 - 統合ブランチの取り込み（2026-11-18、run 20261117-232307）: G11-GR52-CLOUD-SHAFTS が入った `feature/scene-launcher` を取り込み、`VolumetricsCommon.glsl` の `VolumetricsParams` と `VolumetricsPass.cpp` の `GPUVolumetricsParams` の衝突を、雲の影の 3 項目（`cloudShadowCenterAndExtent`・`cloudShadowSunAndBottom`・`cloudShadowOutside`）の後ろに局所霧を置く並びで解いた（`static_assert` は 912 + 表 + `GPULocalFogParams`）。局所霧の太陽の散乱は `CalculateVolumetricShadowVisibility` を通るので、雲の影のマスクが掛かる。証拠: `.harness/runs/20261117-232307/verify-build-game.txt`（`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0・エラー 0）、`.harness/runs/20261117-232307/verify-glslc.txt`（volumetrics・volumetrics_probe・forward_transparent・world_board・CloudShadowMask・cloud_layer・lighting・impostor・ribbon_trail・rain_curtain の 10 本を BOM を外して glslc に通して全部 EXIT=0）。試験と撮影は回さない決まり。
+- U1 局所霧の値の型・解析の光学的深さ・近い順の選択・GPU の並びを CPU 側に置く: 着地(直し 0 回)
+- U4 前向きと体積の霧が共有する局所霧の GLSL の関数を HeightFog.glsl に足す: 着地(直し 0 回)
+- U2 局所霧の登録・解除と、スナップショットで近い 8 個をパケットへ写す経路を足す: 着地(直し 0 回)
+- U5 体積の霧の視線に局所霧の透過率と散乱を足し、空の画素にも局所霧を掛ける: 着地(直し 0 回)
+- U7 体積の霧のパスの定数に局所霧を詰め、局所霧だけでもパスを回す: 着地(直し 0 回)
+- U6 半透明とワールドの板の前向きの描画に局所霧を掛ける: 着地(直し 0 回)
+- U3 Entity に付けて動かせる LocalFogVolumeComponent を足し、全体のビルドとシェーダーの検査で仕上げる: 着地(直し 1 回)
+- U1 局所霧の値の型・解析の光学的深さ・近い順の選択・GPU の並びを CPU 側に置く: 着地(直し 0 回)
+- U4 前向きと体積の霧が共有する局所霧の GLSL の関数を HeightFog.glsl に足す: 着地(直し 0 回)
+- U2 局所霧の登録・解除と、スナップショットで近い 8 個をパケットへ写す経路を足す: 着地(直し 0 回)
+- U5 体積の霧の視線に局所霧の透過率と散乱を足し、空の画素にも局所霧を掛ける: 着地(直し 0 回)
+- U7 体積の霧のパスの定数に局所霧を詰め、局所霧だけでもパスを回す: 着地(直し 0 回)
+- U6 半透明とワールドの板の前向きの描画に局所霧を掛ける: 着地(直し 0 回)
+- U3 Entity に付けて動かせる LocalFogVolumeComponent を足し、全体のビルドとシェーダーの検査で仕上げる: 着地(直し 1 回)
