@@ -12090,3 +12090,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 Game に開発用の引数 --sun-sweep を足す: 着地(直し 0 回)
 - U6 空のパスをキーフレームの窓で回し、SKY_SWEEP を出す: 着地(直し 0 回)
 - U1 インポスターの部品とプロキシに法線・ORM・深度のアトラスと八面体の配置を持たせる: 着地(直し 0 回)
+- U3 GBuffer へ書くインポスターのシェーダー（impostor_gbuffer.vert/.frag）を足す: 着地(直し 0 回)
