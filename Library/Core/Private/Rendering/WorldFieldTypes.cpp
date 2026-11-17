@@ -225,6 +225,47 @@ namespace NorvesLib::Core::Rendering
         return count;
     }
 
+    uint32_t SanitizeWorldFieldPuddleSources(Container::Span<const WorldFieldPuddleSource> input,
+        Container::VariableArray<WorldFieldPuddleSource>& output)
+    {
+        // 出力自身を入力にした場合も参照を壊さないよう、先に固定配列へ詰める。
+        WorldFieldPuddleSource sanitized[WorldFieldPuddleMaxSources];
+        uint32_t count = 0;
+        const auto inputCount = std::min(input.size(), static_cast<size_t>(WorldFieldPuddleMaxSources));
+        for (size_t index = 0; index < inputCount; ++index)
+        {
+            WorldFieldPuddleSource source = input[index];
+            if (!std::isfinite(source.CenterXZ[0]) || !std::isfinite(source.CenterXZ[1]) ||
+                !std::isfinite(source.RadiusA) || !std::isfinite(source.RadiusB) ||
+                source.RadiusA <= 0.0f || source.RadiusB <= 0.0f)
+            {
+                continue;
+            }
+            source.Level = SanitizeScalar(source.Level, 0.0f, 0.0f, 1.0f);
+            source.Falloff = SanitizeScalar(source.Falloff, 0.0f, 0.0f, 1.0f);
+            // 倍精度で長さを求め、極端な有限値でも二乗の桁あふれ・桁落ちを避ける。
+            const double yawLength = std::hypot(static_cast<double>(source.CosYaw), static_cast<double>(source.SinYaw));
+            if (std::isfinite(source.CosYaw) && std::isfinite(source.SinYaw) && yawLength > 0.0)
+            {
+                source.CosYaw = static_cast<float>(source.CosYaw / yawLength);
+                source.SinYaw = static_cast<float>(source.SinYaw / yawLength);
+            }
+            else
+            {
+                source.CosYaw = 1.0f;
+                source.SinYaw = 0.0f;
+            }
+            for (uint32_t component = 0; component < 4; ++component)
+            {
+                source.Reserved0[component] = 0.0f;
+                source.Reserved1[component] = 0.0f;
+            }
+            sanitized[count++] = source;
+        }
+        output.assign(sanitized, sanitized + count);
+        return count;
+    }
+
     WorldFieldScrollResult CalculateWorldFieldScroll(const WorldFieldOrigin& previousOrigin,
         double centerXMeters, double centerZMeters, double texelSizeMeters, uint32_t resolution)
     {

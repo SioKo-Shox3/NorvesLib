@@ -244,10 +244,12 @@ namespace NorvesLib::Core::Rendering
             OverlayOnly,
             All
         };
+        void ExecuteWithPuddleField(ViewRenderContext& context, const RHI::TexturePtr& puddleField);
         void RecordGBufferDraws(ViewRenderContext& context,
                                 const RHI::RenderPassPtr& renderPass,
                                 const RHI::FramebufferPtr& framebuffer,
-                                DrawSelection selection);
+                                DrawSelection selection,
+                                const RHI::TexturePtr& puddleField);
         void EnqueueGBufferGeometryPass(ViewRenderContext& context,
                                         const RHI::RenderPassPtr& renderPass,
                                         const RHI::FramebufferPtr& framebuffer,
@@ -325,6 +327,9 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle m_EmissiveHandle;
         RGTextureHandle m_VelocityHandle;
         RGTextureHandle m_DepthHandle;
+        RGTextureHandle m_PuddleFieldHandle;
+        // 同じ描画グラフの重ね描きが使う、このフレームの水たまりの層。
+        RHI::TexturePtr m_PuddleFieldTexture;
 
         // GBuffer用レンダーパス・フレームバッファ
         RHI::RenderPassPtr m_GBufferRenderPass;
@@ -378,6 +383,7 @@ namespace NorvesLib::Core::Rendering
         DynamicUniformAllocator m_UniformAllocator;
         // フレームの環境定数を借りられない文脈用。初期化時に一度だけ書く。
         RHI::BufferPtr m_DefaultEnvironmentBuffer;
+        RHI::BufferPtr m_DefaultPuddleSurfaceBuffer;
         int8_t m_MaterialDescriptorCacheState = -1;
 
         // デフォルトテクスチャ・サンプラー（テクスチャ未設定オブジェクト用）
@@ -386,6 +392,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 (0,0,0,255) — メタリックデフォルト
         RHI::TexturePtr m_DefaultMidGrayTexture;    // 1x1 中間灰 (128,128,128,255) — ラフネスデフォルト
         RHI::SamplerPtr m_DefaultLinearSampler;
+        RHI::SamplerPtr m_PuddleFieldSampler;
         // 材質のスカラー値（金属度・粗さ）を表す 1x1 の灰色テクスチャ。8bit の値ごとに初回だけ作る。
         Container::UnorderedMap<uint32_t, RHI::TexturePtr> m_ConstantGrayTextures;
         // 準備段が灰色テクスチャを作ったフレーム（Execute は作らず、無ければ既定のテクスチャを使う）

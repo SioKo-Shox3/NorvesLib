@@ -413,6 +413,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 枯れ度の源（最大 WorldFieldDrynessMaxSources 件の値の配列）。SceneRevision に入れない（源の変化で RTGI の履歴を捨てないため）。 */
         Container::VariableArray<WorldFieldDrynessSource> WorldFieldDrynessSources;
 
+        /** @brief 手置きの水たまりの源（最大 WorldFieldPuddleMaxSources 件の値の配列）。SceneRevision に入れない。 */
+        Container::VariableArray<WorldFieldPuddleSource> WorldFieldPuddleSources;
+
         Container::VariableArray<GPUSceneInstanceData> InstanceData;
 
         /** @brief デバッグライン頂点スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
@@ -490,6 +493,7 @@ namespace NorvesLib::Core::Rendering
             GrassField.reset();
             WorldFieldInteractors.clear();
             WorldFieldDrynessSources.clear();
+            WorldFieldPuddleSources.clear();
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             DebugLineVertices.clear();

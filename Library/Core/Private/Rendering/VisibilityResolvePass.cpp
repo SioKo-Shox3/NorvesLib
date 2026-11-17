@@ -29,6 +29,7 @@
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VisibilityResolveMaterialBuild.h"
+#include "PuddleSurfaceParams.h"
 
 #include <cstring>
 #include <limits>
@@ -72,6 +73,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t EnvironmentBindingIndex = 37u;
         // 材質ごとのタイルの解決だけで使う発光テクスチャ。既存の束縛の番号は保つ。
         constexpr uint32_t EmissiveTextureBindingIndex = 38u;
+        // Common/VisibilityResolve.glsl の全変種で共通の水たまり定数・雨の遮蔽マップ・水たまりの層。
+        constexpr uint32_t PuddleSurfaceBindingIndex = 39u;
+        constexpr uint32_t OverheadHeightMapBindingIndex = 40u;
+        constexpr uint32_t PuddleFieldBindingIndex = 41u;
 
         // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
         RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles, bool bFeedback)
@@ -186,6 +191,21 @@ namespace NorvesLib::Core::Rendering
                 RHI::DescriptorBinding binding;
                 binding.binding = EnvironmentBindingIndex;
                 binding.type = RHI::ResourceBindType::ConstantBuffer;
+                binding.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(binding);
+            }
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = PuddleSurfaceBindingIndex;
+                binding.type = RHI::ResourceBindType::ConstantBuffer;
+                binding.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(binding);
+            }
+            for (uint32_t bindingIndex : {OverheadHeightMapBindingIndex, PuddleFieldBindingIndex})
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = bindingIndex;
+                binding.type = RHI::ResourceBindType::CombinedImageSampler;
                 binding.stages = RHI::ShaderStage::Compute;
                 desc.bindings.push_back(binding);
             }
@@ -473,6 +493,17 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
         m_DefaultEnvironmentUniform->Update(&defaultEnvironment, sizeof(defaultEnvironment));
+        const PuddleSurfaceGpuParams defaultPuddleSurface{};
+        m_DefaultPuddleSurfaceUniform = device->CreateBuffer(
+            RHI::BufferDesc(sizeof(PuddleSurfaceGpuParams), RHI::ResourceUsage::ConstantBuffer, true,
+                            "VisibilityResolveDefaultPuddleSurface"));
+        if (!m_DefaultPuddleSurfaceUniform)
+        {
+            NORVES_LOG_WARNING("VisibilityResolve", "既定の水たまり定数のバッファの作成に失敗");
+            Shutdown();
+            return false;
+        }
+        m_DefaultPuddleSurfaceUniform->Update(&defaultPuddleSurface, sizeof(defaultPuddleSurface));
 
         m_Device = device;
         m_bDump = bDump;
@@ -490,6 +521,7 @@ namespace NorvesLib::Core::Rendering
         m_Sampler.reset();
         m_Placeholder.reset();
         m_DefaultEnvironmentUniform.reset();
+        m_DefaultPuddleSurfaceUniform.reset();
         m_DefaultWhite.reset();
         m_DefaultFlatNormal.reset();
         m_DefaultBlack.reset();
@@ -760,7 +792,7 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        if (!EnsurePlaceholder())
+        if (!EnsurePlaceholder() || !EnsureMaterialDefaults())
         {
             return false;
         }
@@ -813,6 +845,20 @@ namespace NorvesLib::Core::Rendering
         {
             set.BindConstantBuffer(EnvironmentBindingIndex, m_DefaultEnvironmentUniform, 0, sizeof(GPUEnvironmentParams));
         }
+        if (dispatch.PuddleSurfaceConstants.IsValid())
+        {
+            set.BindConstantBuffer(PuddleSurfaceBindingIndex, dispatch.PuddleSurfaceConstants.Buffer,
+                                   dispatch.PuddleSurfaceConstants.GetOffset32(), dispatch.PuddleSurfaceConstants.GetSize32());
+        }
+        else
+        {
+            set.BindConstantBuffer(PuddleSurfaceBindingIndex, m_DefaultPuddleSurfaceUniform, 0, sizeof(PuddleSurfaceGpuParams));
+        }
+        set.BindTexture(OverheadHeightMapBindingIndex, dispatch.OverheadHeightMap ? dispatch.OverheadHeightMap : m_DefaultBlack);
+        set.BindSampler(OverheadHeightMapBindingIndex, dispatch.OverheadHeightMapSampler
+                                                         ? dispatch.OverheadHeightMapSampler : m_TerrainSplatSampler);
+        set.BindTexture(PuddleFieldBindingIndex, dispatch.PuddleField ? dispatch.PuddleField : m_DefaultBlack);
+        set.BindSampler(PuddleFieldBindingIndex, m_TerrainSplatSampler);
         set.BindStorageBuffer(1, dispatch.RecordTable, 0, BindBytes(dispatch.RecordTable, dispatch.RecordTableBytes));
         // スキンの記録が無いフレームも、有効なバッファを結ぶ（記録の種類が違えば読まない）。
         const RHI::BufferPtr& vertexAnimParamsTable = dispatch.SkinnedVertexAnimParamsTable
@@ -1160,6 +1206,8 @@ namespace NorvesLib::Core::Rendering
     {
         m_Resolve.Shutdown();
         m_IdHandle = {};
+        m_OverheadHeightMapHandle = {};
+        m_PuddleFieldHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_MaterialHandle = {};
@@ -1215,6 +1263,8 @@ namespace NorvesLib::Core::Rendering
     void VisibilityResolvePass::Declare(RenderGraphBuilder& builder)
     {
         m_IdHandle = {};
+        m_OverheadHeightMapHandle = {};
+        m_PuddleFieldHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_MaterialHandle = {};
@@ -1340,6 +1390,11 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 任意の地表の入力を計算シェーダーから読む。無いフレームは代替のテクスチャを束ねる。
+        builder.TryReadTexture(RenderGraphResourceNames::OverheadHeightMap, m_OverheadHeightMapHandle,
+                               RHI::ResourceState::ShaderResource);
+        builder.TryReadTexture(RenderGraphResourceNames::WorldFieldPuddleNear, m_PuddleFieldHandle,
+                               RHI::ResourceState::ShaderResource);
         m_IdHandle = idHandle;
         builder.PreserveInsertionOrder();
     }
@@ -1388,6 +1443,16 @@ namespace NorvesLib::Core::Rendering
 
         VisibilityResolveDispatch dispatch;
         dispatch.EnvironmentConstants = AcquireEnvironmentConstants(context);
+        dispatch.PuddleSurfaceConstants = AcquirePuddleSurfaceConstants(context);
+        if (IsOverheadHeightMapUsable(context))
+        {
+            dispatch.OverheadHeightMap = context.OverheadHeightMap.Texture;
+            dispatch.OverheadHeightMapSampler = context.OverheadHeightMap.Sampler;
+        }
+        if (m_PuddleFieldHandle.IsValid())
+        {
+            dispatch.PuddleField = resources.GetTexture(m_PuddleFieldHandle);
+        }
         dispatch.IdTexture = resources.GetTexture(m_IdHandle);
         dispatch.Albedo = resources.GetTexture(m_AlbedoHandle);
         dispatch.Normal = resources.GetTexture(m_NormalHandle);

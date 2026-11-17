@@ -7576,7 +7576,7 @@
 - notes: GR59 の P3（要件 5995 行）。今あるもの: 窓のイベント（Begin・End）とイベントの列（G3-GR11 done）、ソケット（G3-GR13 done、`SocketTypes.h`）。接地のイベントの名前を出すのは todo の G3-GR11-FOOT-CONTACT-SOURCE（needs-gr の GR11 でつながる）。UniRig の 14 関節には足先が無い（ロードマップ 2011 行）ので、足先の骨が無いときは足首＋データのずれで代える（GR103 の共通の骨格が入れば骨を使う）。要件の暫定（GR05 の歩様の位相から歩幅ごとに出す）は、接地のイベントが G3 で入るので作らない。放出の列 `GpuParticleBurstQueue`（位置・法線・速度・個数・エミッタ）は G7-GR57-GPU-SIMULATION の名前と欄に合わせた。足が水たまりを踏んだときの波紋は G11-GR59-PUDDLES の手続きの波紋の範囲外（雨の波紋だけ）。試験を足す理由: 反証する契約は「乾いた地面では出ない・接地の点から出る」。ずれは足の下でなく横から出るしぶきとして動いているときだけ見え、黙って起きる。ロードマップ 1990・2001 行。
 
 ## G11-GR59-PUDDLES: 雨の量と乾きで水位が上下する水たまり（被覆・暗化・つや・手続きの波紋・空の見え方を掛けた反射）と、屋根の下は濡れない雨の遮蔽を地面と一般のメッシュに入れる
-- status: todo
+- status: done
 - after: G11-GR59-OVERHEAD-MAP, G11-GR59-PUDDLE-MASK, G11-GR56-SKY-OCC-SPECULAR, G5-GR37-TERRAIN-COMPONENT, G5-GR37-TERRAIN-LAYERS, G5-GR44-WORLD-FIELD, G5-GR44-TRAMPLE, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR53-WET-MODEL, G7-GR53-WET-WRITERS
 - gr: GR59
 - needs-gr: GR37, GR44, GR49, GR53
@@ -10862,3 +10862,15 @@
 - effort: high
 - from: SCN-MEGA-RT-SELECT
 - notes: 判断の理由（1. 実際に起きている不具合）: 枠 NorvesLib-2-u2 の反復 2 で、地形を 14 分焼いたあとに 415 行の throw で EXIT=1 になった。原因は、枠のマニフェストが G5-GR42-GRASS-FIELD-ASSET で足された `GrasslandTerrain.json` の草の場の項目より古いこと。資産の一覧に項目が足されるたびに、全体をクックし直していない枠では絞ったクックがすべて落ちる。`-OnlyLogicalPath` を verify に使う todo のタスク（G12-GR47-PLACEMENT-COOK、G5-GR37-TERRAIN-COMPONENT-P1 など）も同じ落ち方をする。
+
+## G6-GR35-WETNESS-STATE-P1: 毛の濡れの当たり方を、真上の屋根・樹冠の判定と雨宿りの体積の小さい方にする
+- status: todo
+- after: G6-GR35-WETNESS-STATE
+- done-when: `FurCoatComponent` が `ETickGroup::PostPhysics` の Tick で、Entity の世界位置について `ComputeOverheadRainExposure`(`Library/Core/Private/Rendering/OverheadHeightMapMath.h:126`)を求める。これを `RainShelterVolume` が `SetRainExposure` で渡す値と別に持ち、小さい方を `AdvanceCoatWetness` の当たり方として使う。`ComputeOverheadRainExposure` に渡す遮蔽物の集合は、雨の遮蔽マップと同じものにする。具体的には、`RenderWorld::RegisterSkyOccluder` で登録した手置きの遮蔽物と、`ScatterSystem::PublishSkyOccluders` が出す散布のチャンクの遮蔽物のうち、雨を遮るもの。GameThread からこの集合を読む口を `RenderWorld` に足す(RenderThread のデータは読まない)。`RainShelterVolume` の重なりの数え方と `SetRainExposure` の意味は変えない。屋根の無い場所で体積の外にいるときは、当たり方を今と同じ 1 にする。Debug で `Game` のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Component/FurCoatComponent.h, Library/Core/Private/Component/FurCoatComponent.cpp, Library/Core/Public/Rendering/RenderWorld.h, Library/Core/Private/Rendering/RenderWorld.cpp, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
+- from: G6-GR35-WETNESS-STATE
+- notes: 根拠は 3 つ(「元の done-when の取りこぼし」と「計画の要件が一覧に無い」の両方に当たる)。
+  - 1 つ目: G11-GR59-PUDDLES の done-when (5) が「犬の毛の当たり方も遮蔽物の形から屋根を求めて渡す(`RainShelterVolume` と重なるときは小さい方)」を求めている(TASKS.md 7583 行)。しかし `FurCoatComponent` がまだ無かったので繋がれていない(PROGRESS.md 12069 行の既知の限界)。
+  - 2 つ目: G6-GR35-WETNESS-STATE の notes は、樹冠の下の遮蔽を GR59 が入れる前提にしている(ロードマップ 1461 行)。ところが GR59 の残りの項目(RAIN-HIT・FOOT-SPLASH)にも、G11-GR36-WETNESS-DYNAMICS にもこの作業は無い。
+  - 3 つ目: CPU の判定 `ComputeOverheadRainExposure` は実装済みだが、遮蔽物の一覧を GameThread から読む公開の口が無い。今の `RenderingCoordinator` には `GetSkyOccluderCount` しか無く、散布の遮蔽物は拡張データで RenderThread へ出ているだけ。

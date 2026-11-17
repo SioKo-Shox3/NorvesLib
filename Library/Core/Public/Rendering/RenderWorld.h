@@ -323,6 +323,9 @@ namespace NorvesLib::Core::Rendering
          */
         void SetWorldFieldDryness(Container::Span<const WorldFieldDrynessSource> sources);
 
+        /** @brief 手置きの水たまりの源を設定する（GameThread）。呼ばれなければ前の源を保つ。 */
+        void SetWorldFieldPuddles(Container::Span<const WorldFieldPuddleSource> sources);
+
         /**
          * @brief このフレームの帯の頂点と描画範囲を設定する（GameThread）
          *

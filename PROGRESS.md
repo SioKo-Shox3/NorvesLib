@@ -12051,15 +12051,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 人が見る所: `--scene=rendering3dtest --clock --time-of-day=6 --time-scale=600` で太陽が東から昇り、1° をまたぐときだけ RTGI の履歴が切れること（間は蓄積が保たれてノイズが増えない）。同じく矢印キーで太陽を動かすと時計より操作が勝つこと。`--clock --weather-seed=<数>` で雲量・雨・霧が予定表に沿って変わっても RTGI がざらつかないこと。
 - Notes: 既知の限界: 濡れの復元は窓の始まりの濡れを今の値（読み込みでは保存された値）とするので、乾きの時定数 900 秒の下で窓の外の影響が最大で約 1.8 % 残る。無効のとき `SkipTime` の警告の文言は `SkipTo` の名前で出る。
 
-## G11-GR54-SUN-KEYFRAMES 太陽が連続して動いても、高度をはさむ晴天のキーフレーム 2 枚を混ぜて空 LUT・IBL を止まらずに追う（2026-11-17、run 20261117-140059 の反復 1〜3）
-- Done: `IblGeneration` を装置に触れない CPU の計算（`ComputeIblCpuData`。環境・拡散・鏡面の各ミップの texel と平均照度）と RenderThread での転送（`UploadIblResources`）に分けた。`CreateIblResources` は 2 つを順に呼ぶだけで出力は前と同じ。空のモデルの側に、太陽の高度・方位を除いた大気の鍵（`MakeSkyKeyframeSetKey`・`AreSkyKeyframeSetKeysEqual`）、晴天の水平面の照度からの曇天の重み（`ComputeSkyCloudBlendWeightsFromIlluminance`）、スレッド安全な晴天の源（`BuildSkyRadianceSource`）、開発用の印 `bDebugLogSunSweep` を足した。
-- Done: `Library/Core/Private/Rendering/SkyKeyframeWindow.{h,cpp}` を足した。非一様の既定の高度の表（0, 0.5, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 18, 22, 26, 30, 35, 40, 45, 50, 60, 70, 80, 90 度。`SkyAtmospherePassSettings::KeyframeAltitudesDegrees` で差し替えられ、負の高度も置ける）に、リセット時の今の高度（錨）を足した実効の表から、今の高度をはさむキー a・b と重み（線形）を選ぶ。必要なキーが常駐していなければ常駐する最も近いキーに重み 1 で留まり、警告を 1 回だけ出す。先読みは今の区間の [-1, +2] を高度に近い順に（作成中は最大 2）、範囲の外の常駐キーは手放す。キーの CPU 生成（`BuildSkyKeyframeCpuData`：モデル・放射輝度 LUT・晴天の源・IBL・空気遠近の表・太陽の地表の透過率・晴天の水平面の照度）は `SkyKeyframeBuilder` が `JobSystem::SubmitTask` のワーカーへ投げ、終わったものを RenderThread で `UploadSkyKeyframe` が転送する。
-- Done: `SkyCloudBlend.comp` と記録器を、晴天 a・晴天 b・単位曇天の 3 入力の重み付き和と、晴天のキーごとの経度のずらし（正距円筒の u。表のキーは方位 0 で作り、今の方位との差だけずらす）へ広げた。方位だけの変化では何も作り直さない。
-- Done: `SkyAtmospherePass` は晴天の鍵が変わるたびの同期の作り直しをやめた。大気の鍵が変わったとき（初回を含む）と、1 フレームで 10 度（`KeyframeJumpThresholdDegrees`）を超えて高度が跳んだときだけ、常駐キーを退役のキューへ預けて今の高度・方位そのもので錨を同期で作る（太陽が止まっていれば錨の重み 1・ずらし 0 で、出力は前とビット一致する作り）。毎フレーム、終わったジョブを世代で照合して転送し、窓で選び、手放し、次を投げる。空気遠近の表・太陽の地表の透過率・晴天の照度は重みで混ぜ、全球の平均照度は晴天 a・b と単位曇天の重みで混ぜて公開する。混ぜの再ディスパッチはキーの転送の通し番号・重み・ずらしのどれかが変わったときだけ。`GetSkyModelBuildCount` は保持体・ワーカー・同期の錨の回数の合計。
-- Done: Game に開発用の引数 `--sun-sweep=<開始の度>,<終わりの度>,<秒>`（開発ビルドだけ）を足した。掃引の間は空のパスが、高度・方位・選択が変わったフレームごとに `SKY_SWEEP frame=… altitude=… key_a=… key_b=… weight_a=… weight_b=… mean_irradiance=…`（mean_irradiance は公開する全球の平均照度の Y）を出す。
-- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた版。`.harness/runs/20261117-140059/G11-GR54-SUN-KEYFRAMES-U6-verify.txt`）。編集したファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。
-- Next: ランナーの評価者の反証（危険地帯: RenderThread・ワーカーとの受け渡し・テクスチャの寿命）。計測は G11-GR54-SKY-MEASURE、太陽角の SceneRevision への量子化は G11-GR55-CLOCK-SKIP、負の高度（夜）の空は GR55。撮影・計測の確かめは回さない決まり。人が見るときの見どころ: Rendering3DTest か荒野を `--sun-sweep=0,90,60` で起動し、空の背景・地平線の色・霧の色・地面の環境光・鏡面の映り込みが段差なしに日の出から正午へ移ること（特に地平線付近 0〜6 度）、ログの `SKY_SWEEP` の weight_a・weight_b が連続し、`空の錨と LUT を … 生成しました` が起動時の 1 行だけで掃引中に出ないこと、`空のキーフレームの生成が間に合わないため…` が出ても空が黒くならず止まるだけであること。`--sun-sweep` を付けない起動画面が前と同じに見えること。
-- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyKeyframeWindowTest`・`SkyAtmosphereModelTest` の同時構築のケース・`SkyCloudBlendVulkanTest` の高度と方位のケースは作っていない。`RenderingGolden*`・`PathTracingOutdoorVulkanTest` も回していない。変えた API を使う既存の試験は無い。
-- Notes: 判断: 錨は今の方位で作り（静止した太陽でずらし 0）、表のキーは方位 0 で作る。同時に作成中のキーは 2 まで。跳びの閾値は 10 度。混ぜが使えない文脈（記録器の初期化の失敗・フレームの持ち主の無い文脈）では重みの大きい方のキーをそのまま公開する。
-- Notes: 既知の限界: 混ぜが使えない文脈で表のキー（方位 0）が重みの大きい側になると、空の太陽の向きの明るさが方位の差だけずれる。sanitize が高度を 0〜90 度に丸めるので、負の高度のキーは 0 度のキーと同じ中身になる。リセットの前に投げたジョブはワーカーで最後まで走ってから捨てられる。JobSystem が受け付けないときは投げ手がその場（RenderThread）で作る。空気遠近の表の 4 番目の成分（定数 1）も重みで混ぜるので、区間の途中では 1 からわずかにずれる（参照する側は無い）。
-- 統合ブランチ feature/scene-launcher を取り込んだ（G11-GR55-CLOCK-SKIP の時計と同じ箇所で衝突した `GameApplicationHandler.cpp` は、時計の初期状態と掃引の印を両方残す形に解いた）。確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（`.harness/runs/20261117-140059/verify-merge-build-game.txt`）。`--clock` と `--sun-sweep` を併せたときの扱いは決めていない（時計が太陽を毎フレーム書く）。
+- U1 水たまりの式（Puddle.glsl）と、濡れの式へ雨の遮蔽と水たまりを重ねる関数: 着地(直し 0 回)
+- U2 地形の凹み度 PDL0 をスプラットの配列の 3 枚目に載せ、TerrainLayerBlend.glsl で引く: 着地(直し 0 回)
+- U3 水たまりの層の型・手置きの水たまりの源の経路・共有の UBO を詰める口: 着地(直し 0 回)
+- U4 世界空間のフィールドに水たまりの層（手置きの源から）を作って公開する: 着地(直し 0 回)
+- U5 可視バッファの解決（既定の経路）で雨の遮蔽と水たまりを掛け、被覆を P1 へ書く: 着地(直し 0 回)
+- U6 MegaGeometry のハードのラスタで雨の遮蔽と水たまりを掛け、被覆を P1 へ書く: 着地(直し 0 回)
+- U8 照明で、水たまりの画素の空の鏡面に雨の遮蔽マップの上の空の見え方を掛ける: 着地(直し 0 回)
+- U9 CPU の屋根の判定（雨を遮る遮蔽物の天面が点の上にあるか）: 着地(直し 0 回)
+- U7 通常のメッシュの GBuffer（gbuffer.frag）で雨の遮蔽と水たまりを掛け、被覆を P1 へ書く: 着地(直し 1 回)
+- U10 地形の凹み度を水たまりの層へ写す: 着地(直し 0 回)
+- U11 GBuffer と束縛の契約の文書を直し、タスクの verify のビルドを通す（最後）: 着地(直し 0 回)
+- Done: 雨の量と乾きで水位が上下する水たまりと、屋根の下は濡れない雨の遮蔽を、GBuffer の全部の書き手（可視バッファの解決・MegaGeometry のハードのラスタ・通常のメッシュと材質ごとの GBuffer プログラム）と照明に入れた。式の正本は `Common/Puddle.glsl`（水位 = 環境の地面の濡れから、被覆 = smoothstep(閾値, 凹み度) × 上向き度 × 雨の当たり方、アルベド 0.6 倍・粗さ 0.03〜0.1・法線を上向きへ、0.35 m のセルの 2 層の波紋で時刻は環境 UBO の `fmod(ゲーム時刻, 4096)`）、`Common/WetSurface.glsl::ApplyWetSurfaceWithPuddle` が画素ごとの雨の遮蔽マップの当たり方で濡れの当たり方を上書きしてから濡れ・水たまりの順に掛け、被覆を DefaultLit の P1 に書く。地形は PDL0 をスプラットの配列の 3 枚目から引き、一般のメッシュは世界空間のフィールドの `WorldField.PuddleNear`（256² × 0.25 m・R8。地形の PDL0 の写しと手置きの源 `RenderWorld::SetWorldFieldPuddles` の最大）を引く。照明は水たまりの画素の空由来の鏡面に、GR56 の円錐の遮りに加えて雨の遮蔽マップの上の空の見え方を被覆の割合で掛ける。CPU の屋根の判定 `ComputeOverheadRainExposure`（`OverheadHeightMapMath.h`）を足した。配置は `Docs/Architecture/GpuLayoutRegistry.md` の 16 節。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が全単位を合わせた状態でエラー 0（BUILD_EXIT=0、Game.exe を生成）、触ったシェーダー 68 通りの glslc がすべて成功（SHADER_CHECK_OK）。
+- 作らなかったもの: done-when の `PuddleSurfaceTest`・`RenderingRainPuddleVulkanTest`（`--rain-scenario=puddles`）と golden の 4 試験の実行は、試験を作らない・回さない決まりと、撮影・GPU の確かめを回さない決まりにより作らず回していない。
+- 人が見るときの見どころ: 荒野など地形のあるシーンを `--rain=1 --wetness=1` で起動し、地形の窪地に暗くつやのある水たまりができて雨の波紋が揺れること、`--wetness` を下げると水たまりが縮むこと、建物の軒下・屋根の下の地面と物が濡れず水たまりもできないこと、屋根・樹冠の下の水たまりに空が映らず開けた所の水たまりには空が映ること。`--wetness=0`（既定）では Rendering3DTest とランチャーの各シーンが前と同じに見えること。
+- 既知の限界: done-when (5) の犬の毛の当たり方は、`FurCoatComponent` がまだ無い（G6-GR35-WETNESS-STATE が todo）ので繋いでいない。CPU の判定 `ComputeOverheadRainExposure` は用意したので、毛の当たり方へ `RainShelterVolume` の値との小さい方を渡すだけが残る。
+- 要起票: G6-GR35-WETNESS-STATE の完了後に、`FurCoatComponent::SetRainExposure` へ `ComputeOverheadRainExposure`（雨を遮る `SkyOccluderProxy` から犬の位置の上の屋根を判定）と `RainShelterVolume` の値の小さい方を渡す作業。G6-GR35 は口だけを作り GR59 が入れる前提で、どの項目にも無い。
+- Next: ランナーの評価者の反証（危険地帯: GBuffer の書き手・lighting.frag）。
