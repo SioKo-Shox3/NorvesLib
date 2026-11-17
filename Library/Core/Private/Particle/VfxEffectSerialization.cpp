@@ -1005,7 +1005,8 @@ namespace NorvesLib::Core::Particle
         {
             return false;
         }
-        if (version != kVfxCookedVersion && version != kVfxCookedVersionLegacyV1)
+        if (version != kVfxCookedVersion && version != kVfxCookedVersionLegacyV2 &&
+            version != kVfxCookedVersionLegacyV1)
         {
             return Fail(outError, "bad_version", "Effect.Header");
         }
@@ -1061,6 +1062,8 @@ namespace NorvesLib::Core::Particle
         const VfxObjectSchema& emitterSchema = GetVfxEmitterSchema();
         // 版 1 には MaxParticles・Space・Seed の先頭 3 設定だけが保存されている。
         const uint32_t emitterPropertyCount = version == kVfxCookedVersionLegacyV1 ? 3u : emitterSchema.ParameterCount;
+        // 版 1・2 の GpuSpriteRenderer は DrawInSlotOrder を持たず、先頭 10 個だけを保存する。
+        constexpr uint32_t kGpuSpriteRendererLegacyParameterCount = 10u;
         for (uint32_t index = 0; index < emitterCount; ++index)
         {
             VfxEmitterAsset emitter;
@@ -1089,7 +1092,10 @@ namespace NorvesLib::Core::Particle
                 {
                     return Fail(outError, "unknown_module", "Module", "Type");
                 }
-                if (!ReadValues(reader, *schema, "Values", schema->ParameterCount, module.Values, outError))
+                const uint32_t storedParameterCount =
+                    version <= kVfxCookedVersionLegacyV2 && module.Type == VfxModuleType::GpuSpriteRenderer ?
+                    kGpuSpriteRendererLegacyParameterCount : schema->ParameterCount;
+                if (!ReadValues(reader, *schema, "Values", storedParameterCount, module.Values, outError))
                 {
                     return false;
                 }

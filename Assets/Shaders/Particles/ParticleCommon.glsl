@@ -3,6 +3,11 @@
 #ifndef NORVES_PARTICLE_COMMON_GLSL
 #define NORVES_PARTICLE_COMMON_GLSL
 
+// GpuParticleFrame.h の kGpuParticlePoolCapacity と同じ値。
+const uint kGpuParticlePoolCapacity = 262144u;
+// GpuParticleDraw.h の kGpuParticleDrawBucketCount と同じ値。
+const uint kGpuParticleDrawBucketCount = 4u;
+
 // 粒が生存している旗。
 const uint kGpuParticleFlagAlive = 1u << 0u;
 // 粒が衝突面に留まっている旗。
@@ -63,6 +68,10 @@ const uint kGpuEmitterRenderLightingMask = 0x1u;
 const uint kGpuEmitterRenderSubPixelCompensationShift = 5u;
 // シフト前の 幅 1px 未満の補償 のマスク。
 const uint kGpuEmitterRenderSubPixelCompensationMask = 0x1u;
+// RenderFlags 内のスロットの順に描く設定の開始ビット。
+const uint kGpuEmitterRenderSlotOrderShift = 6u;
+// シフト前のスロットの順に描く設定のマスク。
+const uint kGpuEmitterRenderSlotOrderMask = 0x1u;
 // CurveKeyCounts 内の Size のキー数の開始ビット。
 const uint kGpuCurveKeyCountSizeShift = 0u;
 // CurveKeyCounts 内の Color のキー数の開始ビット。
@@ -109,7 +118,7 @@ struct GpuEmitterParams
     GpuCollisionParams planeCollision;          // 176: 平面の衝突応答。
     GpuCollisionParams heightFieldCollision;    // 192: 高さ場の衝突応答。
     GpuCollisionParams depthCollision;          // 208: 深度の衝突応答。
-    uint renderFlags;                          // 224: bit 0〜1 向き・2 合成・3 描画段階・4 照明・5 幅 1px 未満の補償。
+    uint renderFlags;                          // 224: bit 0〜1 向き・2 合成・3 描画段階・4 照明・5 幅 1px 未満の補償・6 スロットの順に描く設定。
     float softDistance;                        // 228: ソフトパーティクルの距離。
     float fogInfluence;                        // 232: 霧の影響。
     float streakShutterSeconds;                // 236: 伸びのシャッター時間。
