@@ -350,6 +350,7 @@ set(PRIVATE_SOURCES
     Private/Environment/EnvironmentDataFile.h
     Private/Environment/EnvironmentDataFile.cpp
     Private/Environment/SunPath.cpp
+    Private/Environment/WeatherSchedule.cpp
     Private/Rendering/EnvironmentGpuParams.cpp
     Private/Rendering/SkyOcclusion.cpp
     Private/Rendering/SkyOcclusionMapPass.cpp
@@ -776,6 +777,7 @@ set(PUBLIC_HEADERS
     Public/Environment/EnvironmentState.h
     Public/Environment/EnvironmentSystem.h
     Public/Environment/SunPath.h
+    Public/Environment/WeatherSchedule.h
     Public/Rendering/EnvironmentGpuParams.h
     Public/Rendering/SkyOcclusion.h
     Public/Rendering/SkyOcclusionMapPass.h
