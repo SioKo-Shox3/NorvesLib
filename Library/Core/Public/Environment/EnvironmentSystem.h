@@ -43,6 +43,7 @@ namespace NorvesLib::Core::Environment
      * Clock が太陽を動かす間だけ、SceneRevision の太陽の量子化の幅を 1 度にする。
      * 解決には Enable で受けた場面の土台を使い、状態にある欄だけを重ねて大気定数などを保持する。
      * Enable で RainTuning.json を読み、上書き後の雨量に応じた霧の密度の増分を Resolve で足す。
+     * Enable で NightLight.json を読み、解決後の太陽高度から月明かりと夜の露出の下限を空へ書く。
      * Enable 後の最初の PublishTo で雨の調整値を一度渡す。
      * 霧と雨の調整値はシーンの revision に入らない。
      * Disable 後の最初の PublishTo は環境の値（EnvironmentParameters）だけを既定値へ一度戻す。
@@ -157,6 +158,7 @@ namespace NorvesLib::Core::Environment
         /// プリセットの根。既定の空文字列は作業ディレクトリを表す。
         Container::String m_PresetRoot;
         SunPathSettings m_SunPath;
+        NightLightSettings m_NightLight;
         WeatherScheduleSettings m_WeatherSchedule;
         Container::VariableArray<EnvironmentTarget> m_WeatherPresets;
         WeatherTrack m_WeatherTrack;
