@@ -16,6 +16,8 @@
 
 #if defined(NORVES_BRIDGE_ENABLED)
 
+#include "Bridge/BridgeAssetEditProtocol.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -408,6 +410,30 @@ namespace Game::Bridge
         Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
         assetReloadManifest(const Norves::Bridge::JsonValue& params) override;
 
+        /**
+         * @brief asset.getProperties。資産のプロパティ一覧を値コピーで返す。
+         * @param params {logicalPath}。拒否は ENGINE_ASSET_EDIT_REJECTED と data {method, reason, path?}。
+         * @return {logicalPath, properties:[{path, valueType, value, unit?, minimum?, maximum?, description?}]}。
+         */
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        assetGetProperties(const Norves::Bridge::JsonValue& params) override;
+
+        /**
+         * @brief asset.setProperty。資産の指定プロパティを編集サービスで変更する。
+         * @param params {logicalPath, path, value}。拒否は ENGINE_ASSET_EDIT_REJECTED と data {method, reason, path?}。
+         * @return {previousValue, appliedValue?}。変更前の値を必ず含む。
+         */
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        assetSetProperty(const Norves::Bridge::JsonValue& params) override;
+
+        /**
+         * @brief asset.save。編集サービスが保持する資産を同期で保存する。
+         * @param params {logicalPath}。拒否は ENGINE_ASSET_EDIT_REJECTED と data {method, reason, path?}。
+         * @return {saved:true}。応答の完了が保存の完了を表す。
+         */
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        assetSave(const Norves::Bridge::JsonValue& params) override;
+
         // --- Viewport ---
 
         /**
@@ -426,6 +452,11 @@ namespace Game::Bridge
         viewportGetThumbnail(const Norves::Bridge::JsonValue& params) override;
 
     private:
+        /** @brief 初回の資産編集要求でサービスを生成し、未保存の編集を保持する。 */
+        BridgeAssetEditService& GetAssetEditService();
+
+        Container::TUniquePtr<BridgeAssetEditService> m_AssetEditService;
+
         /**
          * @brief セッション id 採番用の単調カウンタ
          *
