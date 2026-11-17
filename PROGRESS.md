@@ -12103,6 +12103,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 Game の開発用の起動の引数 --gpu-particle-stress=<粒の数>: 着地(直し 1 回)
 - U3 ParticleCompact.comp で生きている粒をバケットごとに詰め、間接の引数を書く: 着地(直し 0 回)
 - U4 描画のパスを詰めた列の間接の描画へ切り替え、能力が無ければ直の描画へ落とす: 着地(直し 0 回)
+
 ## G11-GR52-CLOUD-SHAFTS 空の雲の層から太陽の向きの雲の影のマスクを作り、SunGap と合わせて霧の中の光の筋を出す（2026-11-17、run 20261117-172954）
 - Done: `CloudShadow.h/.cpp` に `CloudShadowParameters`（有効・マスクの一辺 既定 8000 m・`CloudSunGap` 最大 4（雲の底の平面の中心 XZ・半径・柔らかさ・強さ）・`bApplyToGroundDirect` 既定 偽）と、Sanitize・等価・切れ間の重みと開き・雲の底の平面への写し・マスクの置き場（カメラを写した XZ を texel の格子へ丸める）の関数を置き、`RenderWorld::SetCloudShadow` → `RenderingCoordinator` → `FramePacket` の `Scene.CloudShadow` で渡す（SceneRevision には入れない）。
 - Done: `Sky/CloudShadowMask.comp` が空に描く雲と同じ `SampleCloudDensity`（同じ定数・同じ風のずれ・同じノイズ）を雲の底の平面から太陽の向きに殻の中で 24 歩積んだ透過率に切れ間の開きを掛け、256² の R32F へ書く。`CloudLayerCommon.glsl` は `CLOUD_LAYER_DENSITY_ONLY` で画面用の束縛を外せる。引く側の写し・重み・縁で外の値へ寄せる関数は `Common/CloudShadowMaskSample.glsl`。
@@ -12114,3 +12115,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 人が見る所: SunGap を置いたシーン（受け入れのタスクの grassland の near・low）で、霧の中の光の筋が切れ間の真下ではなく太陽の向きへ写した位置から地面へ届くこと、空に見える雲の切れ目と筋の位置が合うこと、`bEnabled` を偽にすると今の一様な弱めの霧に戻ること、マスクの一辺（既定 8 km）の縁で明るさの段が出ないこと。
 - Notes: 採った判断: 雲の層は球殻でなく平面として積む（カメラの近く数 km では曲がりは 1 m ほど）。マスクの縁の 20 % で外の値 f へ寄せる。マスクの書き直しの判定に時間方向の雑音の位相は入れない（風が吹いていれば毎フレーム書き直す）。地面の直達の既定の画像は 1×1 の黒の 2D。局所霧と雲の影は PT・RT・DDGI・空由来 IBL に入らない（方式差）。
 - Notes: 統合ブランチの取り込み（2026-11-17・反復 3）: 照明パスの記述子の binding 31・32 を水たまりの定数と雨の遮蔽マップ（G11-GR59-PUDDLES）が使うため、地面の直達の雲の影のマスクを binding 33（`LIGHTING_CLOUD_SHADOW_MASK_BINDING`）へ移した。取り込み後の `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0、`lighting.frag` と `Sky/CloudShadowMask.comp` は BOM を外した写しを glslc（vulkan1.3）で組み立てて終了コード 0、前処理後の lighting.frag に binding の重複なし。
+- U1 雲の影の値の型・純関数と、RenderWorld → FramePacket の受け渡し: 着地(直し 0 回)
+- U2 雲の影のマスクの compute と、引く側の共有 include: 着地(直し 0 回)
+- U3 CloudShadowMaskPass（マスクを書き、ViewRenderContext へ出す）: 着地(直し 0 回)
+- U4 霧の太陽の散乱にマスクを掛け、一様の直達の弱めを外す: 着地(直し 1 回)
+- U5 地面の太陽の直達にマスクを掛ける選択と、全体のビルドの確かめ: 着地(直し 0 回)
