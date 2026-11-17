@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <exception>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -33,11 +34,13 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t MaxSubsteps = 8u;
         constexpr uint32_t PoolBytes = kGpuParticlePoolCapacity * sizeof(GpuParticle);
         constexpr uint32_t HeadBytes = kGpuParticleMaxEmitters * sizeof(uint32_t);
+        constexpr uint32_t DrawListBytes = kGpuParticleDrawListCapacity * sizeof(uint32_t);
+        constexpr uint32_t DrawArgsBytes = sizeof(GpuParticleDrawArgs);
 
         RHI::DescriptorSetDesc MakeDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
-            for (uint32_t index = 0; index < 10; ++index)
+            for (uint32_t index = 0; index < 12; ++index)
             {
                 RHI::DescriptorBinding binding;
                 binding.binding = index;
@@ -46,7 +49,7 @@ namespace NorvesLib::Core::Rendering
                 {
                     binding.type = RHI::ResourceBindType::ConstantBuffer;
                 }
-                else if (index == 1 || index == 6)
+                else if (index == 1 || index == 6 || index >= 10)
                 {
                     binding.type = RHI::ResourceBindType::RWBuffer;
                 }
@@ -61,6 +64,13 @@ namespace NorvesLib::Core::Rendering
                 desc.bindings.push_back(binding);
             }
             return desc;
+        }
+
+        void ClearBuffer(RHI::ICommandList& commands, const RHI::BufferPtr& buffer, uint32_t size)
+        {
+            commands.BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest);
+            commands.FillBuffer(buffer, 0, size, 0);
+            commands.BufferBarrier(buffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
         }
 
         void SynchronizeBuffers(RHI::ICommandList& commands,
@@ -133,6 +143,24 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        try
+        {
+            m_CompactShader = context.ShaderMgr->LoadShader("Particles/ParticleCompact.comp", RHI::ShaderStage::Compute);
+            if (m_CompactShader)
+            {
+                pipelineDesc.computeShader = m_CompactShader;
+                m_CompactPipeline = m_Device->CreateComputePipeline(pipelineDesc);
+            }
+        }
+        catch (const std::exception&)
+        {
+            m_CompactShader.reset();
+            m_CompactPipeline.reset();
+        }
+        if (!m_CompactPipeline)
+        {
+            NORVES_LOG_WARNING("GpuParticleSimulationPass", "粒の詰めのパイプラインを作れなかったため、詰めを無効にします");
+        }
         const float zero = 0.0f;
         m_EmptyTexture->Update(&zero, sizeof(zero), sizeof(zero));
         m_EmptyHeightTexture->Update(&zero, sizeof(zero), sizeof(zero));
@@ -149,12 +177,16 @@ namespace NorvesLib::Core::Rendering
         m_DescriptorSetLayout.reset();
         m_UpdatePipeline.reset();
         m_SpawnPipeline.reset();
+        m_CompactPipeline.reset();
         m_UpdateShader.reset();
         m_SpawnShader.reset();
+        m_CompactShader.reset();
         m_DepthHandle = {};
         m_NormalHandle = {};
         m_PoolHandle = {};
         m_HeadsHandle = {};
+        m_DrawListHandle = {};
+        m_DrawArgsHandle = {};
         m_Device = nullptr;
         m_bReportedClampedTime = false;
         m_bInitialized = false;
@@ -194,7 +226,10 @@ namespace NorvesLib::Core::Rendering
         const RHI::ResourceUsage usage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst;
         view.Pool = m_Device->CreateBuffer(RHI::BufferDesc(PoolBytes, usage, false, "GpuParticleSimulation.Pool"));
         view.Heads = m_Device->CreateBuffer(RHI::BufferDesc(HeadBytes, usage, false, "GpuParticleSimulation.Heads"));
-        if (!view.Pool || !view.Heads)
+        view.DrawList = m_Device->CreateBuffer(RHI::BufferDesc(DrawListBytes, usage, false, "GpuParticleSimulation.DrawList"));
+        view.DrawArgs = m_Device->CreateBuffer(RHI::BufferDesc(DrawArgsBytes, usage | RHI::ResourceUsage::IndirectBuffer,
+            false, "GpuParticleSimulation.DrawArgs"));
+        if (!view.Pool || !view.Heads || !view.DrawList || !view.DrawArgs)
         {
             return nullptr;
         }
@@ -225,6 +260,8 @@ namespace NorvesLib::Core::Rendering
         m_NormalHandle = {};
         m_PoolHandle = {};
         m_HeadsHandle = {};
+        m_DrawListHandle = {};
+        m_DrawArgsHandle = {};
         if (!m_bInitialized || !context || !context->SnapshotScene ||
             context->SnapshotScene->GpuParticles.IsEmpty())
         {
@@ -245,12 +282,32 @@ namespace NorvesLib::Core::Rendering
             builder.Write(m_PoolHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
             builder.PublishBuffer(kGpuParticlePoolResourceName, m_PoolHandle);
             builder.Write(m_HeadsHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            if (m_CompactPipeline)
+            {
+                m_DrawListHandle = builder.ImportBuffer(view->DrawList, RHI::ResourceState::UnorderedAccess,
+                    "GpuParticleSimulation.DrawList");
+                m_DrawArgsHandle = builder.ImportBuffer(view->DrawArgs, RHI::ResourceState::UnorderedAccess,
+                    "GpuParticleSimulation.DrawArgs");
+                if (m_DrawListHandle.IsValid() && m_DrawArgsHandle.IsValid())
+                {
+                    builder.Write(m_DrawListHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    builder.Write(m_DrawArgsHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    builder.PublishBuffer(kGpuParticleDrawListResourceName, m_DrawListHandle);
+                    builder.PublishBuffer(kGpuParticleDrawArgsResourceName, m_DrawArgsHandle);
+                }
+            }
             builder.PreserveInsertionOrder();
         }
     }
 
     void GpuParticleSimulationPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
+        const RHI::BufferPtr drawArgs = m_DrawArgsHandle.IsValid() ? resources.GetBuffer(m_DrawArgsHandle) : nullptr;
+        if (drawArgs && context.CommandList)
+        {
+            // 後の確保や資源の確認に失敗しても、公開した引数に前のフレームの値を残さない。
+            ClearBuffer(*context.CommandList, drawArgs, DrawArgsBytes);
+        }
         if (!m_bInitialized || !context.SnapshotScene || context.SnapshotScene->GpuParticles.IsEmpty() ||
             !context.CommandList || !context.FrameResources || !m_PoolHandle.IsValid() || !m_HeadsHandle.IsValid())
         {
@@ -263,6 +320,9 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+        const RHI::BufferPtr drawList = m_DrawListHandle.IsValid() ? resources.GetBuffer(m_DrawListHandle) : nullptr;
+        const bool bCompactResourcesValid = m_CompactPipeline && drawList && drawArgs &&
+            drawList == view->DrawList && drawArgs == view->DrawArgs;
 
         const GpuParticleScene& scene = context.SnapshotScene->GpuParticles;
         Container::VariableArray<GpuEmitterParams> emitters;
@@ -374,17 +434,15 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        RHI::DescriptorSetPtr sets[MaxSubsteps];
-        for (uint32_t step = 0; step < substeps; ++step)
+        const auto allocateSet = [&](const GpuParticleSimulationConstants& setConstants) -> RHI::DescriptorSetPtr
         {
-            constants.SubstepIndex = step;
-            const FrameUploadAllocation uniform = lane.AllocateConstants(constants);
-            sets[step] = lane.AllocateDescriptorSet(m_DescriptorSetLayout).Set;
-            if (!uniform.IsValid() || !sets[step])
+            const FrameUploadAllocation uniform = lane.AllocateConstants(setConstants);
+            const RHI::DescriptorSetPtr descriptor = lane.AllocateDescriptorSet(m_DescriptorSetLayout).Set;
+            if (!uniform.IsValid() || !descriptor)
             {
-                return;
+                return nullptr;
             }
-            RHI::IDescriptorSet& set = *sets[step];
+            RHI::IDescriptorSet& set = *descriptor;
             set.BindConstantBuffer(0, uniform.Buffer, uniform.GetOffset32(), uniform.GetSize32());
             set.BindStorageBuffer(1, pool, 0, PoolBytes);
             set.BindStorageBuffer(2, emitterData.Buffer, emitterData.GetOffset32(), emitterData.GetSize32());
@@ -398,18 +456,51 @@ namespace NorvesLib::Core::Rendering
             set.BindSampler(7, m_Sampler);
             set.BindSampler(8, m_Sampler);
             set.BindSampler(9, m_Sampler);
+            set.BindStorageBuffer(10, view->DrawList, 0, DrawListBytes);
+            set.BindStorageBuffer(11, view->DrawArgs, 0, DrawArgsBytes);
             set.Update();
+            return descriptor;
+        };
+
+        RHI::DescriptorSetPtr sets[MaxSubsteps];
+        for (uint32_t step = 0; step < substeps; ++step)
+        {
+            constants.SubstepIndex = step;
+            sets[step] = allocateSet(constants);
+            if (!sets[step])
+            {
+                return;
+            }
         }
+        RHI::DescriptorSetPtr compactSet;
+        RHI::DescriptorSetPtr finalizeSet;
+        if (bCompactResourcesValid)
+        {
+            constants.CompactPhase = 0;
+            if (updateCount != 0)
+            {
+                compactSet = allocateSet(constants);
+            }
+            constants.CompactPhase = 1;
+            finalizeSet = allocateSet(constants);
+        }
+        const bool bCanCompact = bCompactResourcesValid && finalizeSet && (updateCount == 0 || compactSet);
 
         RHI::ICommandList& commands = *context.CommandList;
         if (view->bNeedsClear)
         {
             commands.BufferBarrier(pool, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest);
             commands.BufferBarrier(heads, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest);
+            commands.BufferBarrier(view->DrawList, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest);
+            commands.BufferBarrier(view->DrawArgs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest);
             commands.FillBuffer(pool, 0, PoolBytes, 0);
             commands.FillBuffer(heads, 0, HeadBytes, 0);
+            commands.FillBuffer(view->DrawList, 0, DrawListBytes, 0);
+            commands.FillBuffer(view->DrawArgs, 0, DrawArgsBytes, 0);
             commands.BufferBarrier(pool, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
             commands.BufferBarrier(heads, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+            commands.BufferBarrier(view->DrawList, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+            commands.BufferBarrier(view->DrawArgs, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
             view->bNeedsClear = false;
         }
         else
@@ -441,6 +532,22 @@ namespace NorvesLib::Core::Rendering
             commands.SetDescriptorSet(sets[substeps - 1u]);
             commands.Dispatch(std::min(spawnGroups, MaxWorkgroupCountX), 1, 1);
             SynchronizeBuffers(commands, pool, heads);
+        }
+
+        if (bCanCompact)
+        {
+            ClearBuffer(commands, drawArgs, DrawArgsBytes);
+            commands.SetPipeline(m_CompactPipeline);
+            if (updateCount != 0)
+            {
+                commands.SetDescriptorSet(compactSet);
+                commands.Dispatch(updateGroups, 1, 1);
+            }
+            commands.BufferBarrier(drawList, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            commands.BufferBarrier(drawArgs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            commands.SetDescriptorSet(finalizeSet);
+            commands.Dispatch(1, 1, 1);
+            commands.BufferBarrier(drawArgs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         }
 
         for (size_t index = 0; index < scene.Emitters.size(); ++index)

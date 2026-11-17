@@ -68,6 +68,12 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t kGpuEmitterRenderSubPixelCompensationShift = 5u;
     /// シフト前の 幅 1px 未満の補償 のマスク。
     inline constexpr uint32_t kGpuEmitterRenderSubPixelCompensationMask = 0x1u;
+    /// RenderFlags 内のスロットの順に描く設定の開始ビット。
+    /// 1 は DrawInstanced(6, Capacity, 0, PoolOffset) で詰めずにスロットの順に描き、0（既定）は生きている粒を詰めた列から間接描画する。
+    /// 詰めは atomic の順なので描く順が毎フレーム変わりうる。premultiplied で重なりの多いエミッタはスロットの順を選ぶ。
+    inline constexpr uint32_t kGpuEmitterRenderSlotOrderShift = 6u;
+    /// シフト前のスロットの順に描く設定のマスク。
+    inline constexpr uint32_t kGpuEmitterRenderSlotOrderMask = 0x1u;
     /// CurveKeyCounts 内の Size のキー数の開始ビット。
     inline constexpr uint32_t kGpuCurveKeyCountSizeShift = 0u;
     /// CurveKeyCounts 内の Color のキー数の開始ビット。
@@ -100,7 +106,7 @@ namespace NorvesLib::Core::Rendering
     /// エミッタの GPU 定数。std430 の 16 バイト行を 16 行で構成する。
     /// CurveKeyCounts は Size・Color・Opacity・Stretch のキー数を下位から各 8 ビットに詰める（0 は曲線なし）。
     /// 別バッファのキーは CurveKeyOffset から同じ Target 順に連続して置く。
-    /// RenderFlags は bit 0〜1 が向き、2 が合成、3 が描画段階、4 が照明、5 が幅 1px 未満の補償。
+    /// RenderFlags は bit 0〜1 が向き、2 が合成、3 が描画段階、4 が照明、5 が幅 1px 未満の補償、6 がスロットの順に描く設定。
     struct alignas(16) GpuEmitterParams
     {
         uint32_t PoolOffset, Capacity, Seed, Flags;

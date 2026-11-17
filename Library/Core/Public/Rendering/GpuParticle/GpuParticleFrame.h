@@ -41,7 +41,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved;
     };
 
-    /// 更新と生成の定数。std140 の一様バッファとして読む。256 バイト。
+    /// 更新・生成・詰めの定数。std140 の一様バッファとして読む。256 バイト。
     struct alignas(16) GpuParticleSimulationConstants
     {
         float ViewProjection[16];         // 今のフレームの GBuffer と同じジッタつきの ViewProjection（GBuffer のシェーダーが受け取る並び）。
@@ -49,7 +49,7 @@ namespace NorvesLib::Core::Rendering
         float CameraPosition[3]; float DeltaTime; // ビューのカメラの位置・この刻みの時間差（Particle のチャンネル）。
         float UnscaledDeltaTime; uint32_t SubstepIndex; uint32_t SubstepCount; uint32_t EmitterCount;
         uint32_t UpdateCount; uint32_t SpawnJobCount; uint32_t JobSpawnCount; uint32_t BurstCount;
-        uint32_t TotalSpawnCount; uint32_t DepthCollisionEnabled; uint32_t HeightFieldBound; uint32_t Reserved0;
+        uint32_t TotalSpawnCount; uint32_t DepthCollisionEnabled; uint32_t HeightFieldBound; uint32_t CompactPhase; // 詰めは 0、仕上げは 1。
         float ScreenSize[2]; float InvScreenSize[2]; // GBuffer の解像度とその逆数。
         float WindA[4]; // 風の向き xz（WindDirectionXZ）・BaseSpeed・GustStrength（風が無効なら全部 0）。
         float WindB[4]; // GustFrequencyHz・GustScaleMeters・Turbulence・風の時刻（WindClockSeconds）。
@@ -93,7 +93,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuParticleSimulationConstants, TotalSpawnCount) == 176u);
     static_assert(offsetof(GpuParticleSimulationConstants, DepthCollisionEnabled) == 180u);
     static_assert(offsetof(GpuParticleSimulationConstants, HeightFieldBound) == 184u);
-    static_assert(offsetof(GpuParticleSimulationConstants, Reserved0) == 188u);
+    static_assert(offsetof(GpuParticleSimulationConstants, CompactPhase) == 188u);
     static_assert(offsetof(GpuParticleSimulationConstants, ScreenSize) == 192u);
     static_assert(offsetof(GpuParticleSimulationConstants, InvScreenSize) == 200u);
     static_assert(offsetof(GpuParticleSimulationConstants, WindA) == 208u);

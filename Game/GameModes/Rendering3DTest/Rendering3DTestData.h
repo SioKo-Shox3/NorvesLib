@@ -435,6 +435,11 @@ namespace Game::GameModes
         uint32_t m_CottageLoadRequestId = 0;
         TSharedPtr<BoulderAsyncState> m_CottageAsyncState; ///< 小屋の非同期ロード共有状態（Boulder と同じ型）
         NorvesLib::Core::Particle::VfxEffectHandle m_VfxEmbers;
+#if NORVES_BUILD_DEVELOPMENT
+        // GPU の粒の負荷用の数（0 は配置しない）と生成した効果。
+        uint32_t m_GpuParticleStressCount = 0;
+        NorvesLib::Core::Particle::VfxEffectHandle m_VfxGpuParticleStress;
+#endif
     };
 
 } // namespace Game::GameModes
