@@ -1,0 +1,49 @@
+﻿// 晴天と天頂を 1 に正規化した曇天の放射輝度を、指定の重みで混ぜる。
+// 晴天の複写では値をそのまま保ち、混合時は半精度で保存できる範囲へ収める。
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// 重みと出力先の寸法・入力ミップ・複写フラグを受け取る。
+layout(std140, set = 0, binding = 0) uniform SkyCloudBlendConstants
+{
+    vec4 u_ClearWeight;    // x = 晴天の重み（yzw は未使用）
+    vec4 u_OvercastWeight; // rgb = 単位曇天の重み × 曇天の色味（w は未使用）
+    uvec4 u_Target;        // xy = 出力の幅と高さ、z = 入力ミップ、w = 晴天の複写フラグ
+};
+layout(set = 0, binding = 1) uniform sampler2D u_ClearInput;        // 晴天の全ミップ
+layout(set = 0, binding = 2) uniform sampler2D u_UnitOvercastInput; // 単位曇天の全ミップ
+layout(rgba16f, set = 0, binding = 3) uniform writeonly image2D u_Output; // 出力先の 1 ミップ
+
+void main()
+{
+    // ワークグループの端で出力範囲を超える呼び出しを除外する。
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(p, u_Target.xy)))
+    {
+        return;
+    }
+
+    vec4 clearValue = texelFetch(u_ClearInput, ivec2(p), int(u_Target.z));
+    // 晴天の複写時は重み付けや補正をせず、そのまま保存する。
+    if (u_Target.w != 0u)
+    {
+        imageStore(u_Output, ivec2(p), clearValue);
+        return;
+    }
+
+    // 放射輝度だけを混ぜ、太陽の円盤を示す晴天のアルファを保つ。
+    vec3 unit = texelFetch(u_UnitOvercastInput, ivec2(p), int(u_Target.z)).rgb;
+    vec3 blended = clearValue.rgb * u_ClearWeight.x + unit * u_OvercastWeight.rgb;
+
+    // 非有限の成分を 0 にし、半精度の最大値に余裕を持たせて制限する。
+    for (int channel = 0; channel < 3; ++channel)
+    {
+        if (isnan(blended[channel]) || isinf(blended[channel]))
+        {
+            blended[channel] = 0.0;
+        }
+    }
+    blended = clamp(blended, vec3(0.0), vec3(65504.0 * 0.9));
+    imageStore(u_Output, ivec2(p), vec4(blended, clearValue.a));
+}

@@ -11932,3 +11932,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ（反復 4）: verify を `cmake --build build --config Debug --target AssetCook Game -- /m:1` の 1 行にそろえ（d98b336d。消えた試験のターゲットと ctest の行を外した）、この作業ツリーで終了コード 0（`.harness/runs/20261116-145122/G10-GR63-LOD-BUILDER-final-verify.txt` の 16 行目に `AssetCook.exe`、33 行目に `Game.exe`、エラー 0 件）。コードは 4941de89 から変えていない。
 - Notes: 要起票: G17-GR33-STATIC-IMPORT・G17-GR80-REPAIR・G17-GR80-SIMPLIFY の verify のビルド行が、TEST-REMOVE-1114 で消えた `CookedMeshTest`・`AssetCookMeshSimplifySmoke` を名指ししている。ランナーが試験のターゲットを外した形（`--target AssetCook AssetCookMeshSimplifySmoke`）でも `MSB1009: プロジェクト ファイルが存在しません。スイッチ: AssetCookMeshSimplifySmoke.vcxproj` で終了コード 1 になる（この項目の反復 2 の再確認と同じ落ち方）。
 - U1 空のモデルに晴天の鍵・混ぜる重み・単位曇天の標本を足し、保持体を晴天の鍵と単位曇天の源に分ける: 着地(直し 0 回)
+- U2 晴天と単位曇天を重みで混ぜる compute シェーダーを足す: 着地(直し 0 回)
