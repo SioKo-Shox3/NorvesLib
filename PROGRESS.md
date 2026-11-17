@@ -11977,3 +11977,19 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 月明かり・夜は G11-GR55-NIGHT、時計・スキップ（環境状態へ時刻と天候をつなぐ）は G11-GR55-CLOCK-SKIP。
 - Notes: 試験は作らない決まり（絶対規則 11）なので `SunPathTest`・`WeatherScheduleTest` は作っていない。verify の ctest の行が選ぶ試験は無い。人が見る所は、G11-GR55-CLOCK-SKIP で環境状態へつないだ後に、ランチャーの荒野・Rendering3DTest で時刻を進めたときの太陽の向き（正午に南、北緯 55°・夏至の正午で高度約 58°）と、天候が 15 分のセルの境界で滑らかに移ること。
 - Notes: 判断: 選定課題 G11-S6 は推奨の (A)（仮の既定値で作り、企画が決まったらデータだけ差し替える）。重みの上限 1000000 は JSON の読みと検証で同じにし、検証を通った設定は必ず書けて読み直せる。既知の限界: 24 時間の並びは毎日同じ繰り返し（種を日ごとに変えると日の継ぎ目が連続しない）。
+
+- U1 空のモデルに晴天の鍵・混ぜる重み・単位曇天の標本を足し、保持体を晴天の鍵と単位曇天の源に分ける: 着地(直し 0 回)
+- U2 晴天と単位曇天を重みで混ぜる compute シェーダーを足す: 着地(直し 0 回)
+- U3 IblGeneration に永続の出力テクスチャの作成と、混ぜのディスパッチの準備・記録の道具を足す: 着地(直し 0 回)
+- U4 Game に雲量を 0 → 1 へ指定のフレーム数で動かす開発用の引数を足す: 着地(直し 0 回)
+- U5 空のパスを晴天の鍵で作り直し、単位曇天を 1 回だけ作り、重みが変わったフレームだけ GPU で永続の最終テクスチャへ混ぜて公開する: 着地(直し 0 回)
+## G11-GR54-CLOUD-BLEND 雲量の連続した変化を、晴天と単位曇天の空 LUT・IBL の GPU の重み付き和で追う（2026-11-17、run 20261117-103235 の反復 1）
+- Done: 作り直しの鍵と混ぜる重みを分けた。`AreSkyAtmosphereClearKeysEqual`・`MakeSkyAtmosphereClearKey`（曇天の 7 欄を除いた鍵）を足し、`SkyAtmosphereSourceCache` は晴天の鍵でモデルを作る（雲量・曇天の調整値だけの変化では何も作らない）。空のパスの LUT と晴天の IBL の作り直しの判定も晴天の鍵にした。
+- Done: 天頂 1 に正規化した単位曇天を `SkyAtmosphereModel::SampleUnitOvercastSkyView`（sky-view 表と同じ行の補間、地面の行は GroundAlbedo×(2r+1)/(3r)、地面の判定は March と同じ `DistanceToGround`）で求め、保持体の `AcquireUnitOvercastRadianceSource`（鍵は惑星半径・地表高度・地表アルベド・天頂と地平線の比だけ）から `CreateIblResources` で単位曇天の環境・拡散・鏡面と平均照度を 1 回だけ作る（ログ `Sky unit overcast IBL generated ... unit_overcast_builds=N`）。
+- Done: `ComputeSkyCloudBlendWeights` で 晴天の重み a=1-c、単位曇天の重み c·Lz·tint（Lz は晴天の水平面の全天照度×F から求める天頂の放射輝度）を求め、`Assets/Shaders/Sky/SkyCloudBlend.comp` が永続の最終テクスチャ（空の放射輝度 LUT・環境・拡散・鏡面の全ミップ、RGBA16F・同じ大きさとミップ）へ 晴天×a ＋ 単位曇天×(b×色味) を書く（alpha は晴天のまま）。重み・入力が変わったフレームだけ Declare で準備して `UnorderedAccess → ShaderResource` の書き込みを宣言し、Execute で記録する。雲量 0 では重みが厳密に (1,0) になり、晴天をそのまま写す。全球の平均照度も同じ重みで混ぜて公開する。公開の名前（`SkyAtmosphereRadiance`・`Ibl.*`）は最終テクスチャを指し、`m_LastParameters` は雲量を含めたまま（PT の `HashPathSky` は雲量で再累積する）。空気遠近の太陽の照度は実際の雲量の直達の係数で毎フレーム弱める。
+- Done: Game に開発用の引数 `--cloud-cover-sweep=<frames>`（開発ビルドだけ）を足した。気象を当てるときに雲量 0 から始め、毎フレーム `EnvironmentSystem::SetTarget`（雲量の欄だけ・遷移時間 0。DiscontinuityId を進めない）で k/frames を当て、1 に着いたら止める（ログ `CLOUD_COVER_SWEEP start/done frames=N`）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（Game.exe まで。U1〜U3 を着地させた後の版に U5 を載せた作業ツリー。`.harness/runs/20261117-103235/verify-G11-GR54-CLOUD-BLEND-U5.txt`）。U4（Game のみ）も同じ版の上で Game のビルドが終了コード 0。シェーダーは ShaderManager と同じく BOM を外した写しで `glslc -fshader-stage=compute --target-env=vulkan1.2` が終了コード 0。
+- Next: ランナーの評価者の反証（危険地帯: 照明・RenderThread・永続テクスチャの更新の順）。計測（雲量 0 → 1 を 120 フレームで、フレーム時間の最大が中央値の 2 倍以内）は G11-GR54-SKY-MEASURE。撮影・計測の確かめは回さない決まり。人が見るときの見どころ: 荒野か Rendering3DTest を `--cloud-cover-sweep=120` で起動し、空の背景・霧の色・地面の環境光・鏡面の映り込みが引っ掛からずに晴天から均一な曇天へ移ること、ログで `Sky LUT generated`・`Sky IBL generated` が雲量の変化の間に出ないこと（`Sky unit overcast IBL generated` は起動後に 1 行だけ）。雲量 0 のままの起動画面が前と同じに見えること。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyCloudBlendVulkanTest` と `SkyAtmosphereSourceCacheTest` のケースは作っていない。`RenderingGolden*`・`PathTracingOutdoorVulkanTest`・`SkyAtmosphereModelTest` も回していない。
+- Notes: 判断: 混ぜの道具（永続の出力の作成 `CreateSkyCloudBlendOutputTexture` と、記述子・定数をフレームの持ち主から借りて全ミップをディスパッチする `SkyCloudBlendRecorder`）は paths の内の `IblGeneration.{h,cpp}` に置いた。放射輝度 LUT の混ぜの単位曇天の入力は、同じ大きさの単位曇天の環境（1 ミップ）を使う。混ぜが使えない文脈（記録器の初期化の失敗・フレームの持ち主の無い手組みの文脈）では晴天の入力をそのまま公開する（雲量は空の LUT・IBL に効かない）。
+- Notes: 既知の限界: スイープの開始のフレームは、雲量 0 を当てた同じフレームで 1/frames まで進む。単位曇天の入力が作れなかったときは重みを (1,0) にして晴天を写す（警告 1 回）。

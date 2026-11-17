@@ -428,6 +428,7 @@ namespace Game
         float s_Rendering3DTestStartupCamera[3] = {0.0f, 0.0f, 0.0f};
         // --rain=<0〜1>: 雨の強さ。--wetness=<0〜1>: 地表の濡れ。
         // --cloud-cover=<0〜1>: 均一な曇天の度合い。--wind=<方位>,<速さ>,<突風>: 風（0〜360 度、0〜100 m/s、0〜1）。
+        // --cloud-cover-sweep=<frames>: 開発ビルドで雲量を指定フレーム数で 0 から 1 へ動かす。
         // --environment-preset=<name>: 気象のプリセット。明示の値をプリセットに重ねる。
         // どれかがあればシーンの準備の後に気象を有効にして当てる。無ければ気象は無効のまま。
         constexpr const TCHAR* kRainOption = TEXT("--rain=");
@@ -446,6 +447,14 @@ namespace Game
         float s_Wind[3] = {};
         Environment::EnvironmentTarget s_EnvironmentPresetTarget;
         bool s_bEnvironmentApplyPending = false;
+#if NORVES_BUILD_DEVELOPMENT
+        constexpr const TCHAR* kCloudCoverSweepOption = TEXT("--cloud-cover-sweep=");
+        bool s_bHasCloudCoverSweep = false;
+        uint32_t s_CloudCoverSweepFrames = 0;
+        bool s_bCloudCoverSweepActive = false;
+        uint32_t s_CloudCoverSweepElapsedFrames = 0;
+        bool s_bCloudCoverSweepConflictWarned = false;
+#endif
 
         String ResolveEnvironmentPresetRoot()
         {
@@ -464,6 +473,12 @@ namespace Game
 
         bool HasEnvironmentArguments()
         {
+#if NORVES_BUILD_DEVELOPMENT
+            if (s_bHasCloudCoverSweep)
+            {
+                return true;
+            }
+#endif
             return s_bHasRain || s_bHasWetness || s_bHasCloudCover || s_bHasWind || s_bHasEnvironmentPreset;
         }
 
@@ -480,6 +495,9 @@ namespace Game
             {
                 NorvesLib::Core::Engine::GEngine->GetEnvironment().Disable();
             }
+#if NORVES_BUILD_DEVELOPMENT
+            s_bCloudCoverSweepActive = false;
+#endif
             s_bEnvironmentApplyPending = (id != Game::GameModes::Launcher);
         }
 
@@ -538,6 +556,21 @@ namespace Game
                                Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindBaseSpeed) |
                                Environment::EnvironmentFieldBit(Environment::EEnvironmentField::WindGustStrength);
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (s_bHasCloudCoverSweep)
+            {
+                if (s_bHasCloudCover && !s_bCloudCoverSweepConflictWarned)
+                {
+                    LOG_WARNING("--cloud-cover-sweep と --cloud-cover の両方が指定されたため、スイープを優先します");
+                    s_bCloudCoverSweepConflictWarned = true;
+                }
+                target.Values.CloudCover = 0.0f;
+                target.Mask |= Environment::EnvironmentFieldBit(Environment::EEnvironmentField::CloudCover);
+                s_CloudCoverSweepElapsedFrames = 0;
+                s_bCloudCoverSweepActive = true;
+                LOG_INFO("CLOUD_COVER_SWEEP start frames=%u", s_CloudCoverSweepFrames);
+            }
+#endif
             environment.SetImmediate(target);
             const auto resolved = environment.Resolve();
             LOG_INFO("ENVIRONMENT_RESOLVED rain=%.3f wetness=%.3f cloud=%.3f wind=%.1f,%.2f,%.2f fog=%.5f discontinuity=%u",
@@ -1149,6 +1182,13 @@ namespace Game
         s_Wind[2] = 0.0f;
         s_EnvironmentPresetTarget = {};
         s_bEnvironmentApplyPending = false;
+#if NORVES_BUILD_DEVELOPMENT
+        s_bHasCloudCoverSweep = false;
+        s_CloudCoverSweepFrames = 0;
+        s_bCloudCoverSweepActive = false;
+        s_CloudCoverSweepElapsedFrames = 0;
+        s_bCloudCoverSweepConflictWarned = false;
+#endif
         s_bRendering3DTestHasSunElevation = false;
         s_bRendering3DTestHasSunAzimuth = false;
         s_bRendering3DTestHasExposureEV100 = false;
@@ -1304,6 +1344,20 @@ namespace Game
                 s_bHasCloudCover = true;
                 continue;
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], kCloudCoverSweepOption, environmentValue))
+            {
+                uint32_t frames = 0;
+                if (!TryParseUInt32(environmentValue, frames) || frames == 0 || frames > 100000u)
+                {
+                    LOG_ERROR("--cloud-cover-sweep は 1〜100000 の整数で指定してください");
+                    continue;
+                }
+                s_bHasCloudCoverSweep = true;
+                s_CloudCoverSweepFrames = frames;
+                continue;
+            }
+#endif
             if (TryStripPrefix(args[i], kWindOption, environmentValue))
             {
                 const auto firstComma = environmentValue.find(TEXT(','));
@@ -4947,6 +5001,30 @@ namespace Game
         m_M6ScriptSmokeController.Update();
         UpdatePauseMenu();
         ApplyPendingEnvironment();
+#if NORVES_BUILD_DEVELOPMENT
+        if (s_bCloudCoverSweepActive)
+        {
+            auto* engine = NorvesLib::Core::Engine::GEngine;
+            if (engine == nullptr || !engine->GetEnvironment().IsEnabled())
+            {
+                s_bCloudCoverSweepActive = false;
+            }
+            else
+            {
+                ++s_CloudCoverSweepElapsedFrames;
+                Environment::EnvironmentTarget target;
+                target.Mask = Environment::EnvironmentFieldBit(Environment::EEnvironmentField::CloudCover);
+                target.Values.CloudCover = s_CloudCoverSweepElapsedFrames >= s_CloudCoverSweepFrames
+                    ? 1.0f : static_cast<float>(s_CloudCoverSweepElapsedFrames) / static_cast<float>(s_CloudCoverSweepFrames);
+                engine->GetEnvironment().SetTarget(target);
+                if (s_CloudCoverSweepElapsedFrames >= s_CloudCoverSweepFrames)
+                {
+                    s_bCloudCoverSweepActive = false;
+                    LOG_INFO("CLOUD_COVER_SWEEP done frames=%u", s_CloudCoverSweepFrames);
+                }
+            }
+        }
+#endif
 
 #if NORVES_BUILD_DEVELOPMENT
         if (NorvesLib::Core::Engine::GEngine != nullptr)
