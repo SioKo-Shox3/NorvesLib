@@ -73,6 +73,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief 目標の EV100 の上限 */
         float MaxEV100 = 18.0f;
 
+        /** @brief 環境が夜に目標の EV100 の下限を MinEV100Override で上書きするか（既定は無効） */
+        bool bOverrideMinEV100 = false;
+
+        /** @brief 上書きする目標の EV100 の下限（EV100） */
+        float MinEV100Override = -4.0f;
+
         /**
          * @brief 明るくなる向きの順応の速さ（1/秒。差が e 分の1になるまでの時間の逆数）
          *
@@ -194,6 +200,10 @@ namespace NorvesLib::Core::Rendering
     {
         float minEV100 = AutoExposureDetail::SanitizeFinite(settings.MinEV100, -4.0f);
         float maxEV100 = AutoExposureDetail::SanitizeFinite(settings.MaxEV100, 18.0f);
+        if (settings.bOverrideMinEV100 && std::isfinite(settings.MinEV100Override))
+        {
+            minEV100 = std::min(settings.MinEV100Override, maxEV100);
+        }
         if (minEV100 > maxEV100)
         {
             std::swap(minEV100, maxEV100);
