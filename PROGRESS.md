@@ -12212,3 +12212,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 自動露出の MinEV100 を上書きする口を足し、パスが空のスナップショットから毎フレーム当てる: 着地(直し 1 回)
 - U7 Rendering3DTest の太陽の操作（毎フレームの丸めと仰角のスライダー）を −20〜90 度へ広げる: 着地(直し 1 回)
 - U2 太陽は地平線の下で方向光を作らず、月明かりの方向光を作る関数を足して描画の光源表へつなぐ（最後）: 着地(直し 0 回)
+
+### G11-GR59-FOOT-SPLASH 犬の足が濡れた地面に着くたびに、接地の点から濡れ度と速さに応じた水しぶきを出す（2026-11-17、run 20261117-215954 の反復 1、完了）
+
+- Done: `Particle::PlanFootSplash`（`Library/Core/Public/Particle/FootSplashPlanner.h`）を足した。接地 1 件（脚の番号・通し番号・接地の点と法線・足の速度・濡れ度・地形の凹み度）と係数 `FootSplashTuning`（データ）と種から、放出 1 件（位置・法線・速度・個数・エミッタ番号）を返す純関数。濡れ度 0 以下なら水たまりがあっても 0 個、既定の係数で濡れ度 1・基準の速さ 1.5 m/s なら 9.6〜14.4 → 10〜14 個、速さ（法線に直交する成分）に対して減らない、乱数は種・脚・通し番号だけの PCG ハッシュで同じ入力から同じ結果。水たまりの被覆は `Puddle.glsl` の PuddleWaterLevel・PuddleCoverage を同じ演算順で写して濡れ度へ足す。位置は接地の点そのもの。
+- Done: `Assets/Vfx/FootSplash.vfx.json`（エミッタ 0 の `Droplet`。Executor=Gpu・World・Counter、容量 512、常時の生成なし、寿命 0.32 秒・大きさ 0.018 m・重力・弱い抗力、`GpuSpriteRenderer` の Billboard・PostTAA・premultiplied）と、パスから .vfx.json か焼いた .nvfx を読む `Particle::LoadVfxEffectFile` を足した。
+- Done: `FootSplashComponent`（`Library/Core/Public/Component/`）を足した。同じ Entity の `AnimatorComponent::OnEvent` で `Foot.<脚>.Down`（既定 LF・RF・LH・RH）を受けて脚ごとに保留し、PostPhysics の tick で足先（ソケット `Toe.<脚>`、無ければ足首の骨 `front_L_paw` などとデータのずれ）の位置と速度を読み、`SceneQuery::QueryGround`（取れなければ `TerrainSystem::SampleGround`）で接地の点と法線を求め、濡れ度（環境が有効なら `EnvironmentState::Wetness`、無効なら `TerrainSystem::GetWetness`）と地形の凹み度を添えて計画器を呼び、個数が 1 以上なら `VfxEffectSystem::RaiseGpuBurst` で 1 件積む。係数・効果のパス・種・照会の範囲（上 0.5 m・下 1.0 m・足先の高さの上限 0.15 m）は PROPERTY。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・エラー 0（全単位を載せた版）。`AssetCook --cook-vfx Assets/Vfx/FootSplash.vfx.json` が終了コード 0（`vfx_cooked bytes=259 emitters=1`）。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致、新規ファイルは UTF-8 + BOM + CRLF。
+- Next: ランナーの評価者の反証（Public API の Component）。人が見るときの見どころは G11-GR59-RAIN-CHECK（雨の草原）で、犬に `FootSplashComponent` を付けて濡れ度を上げ、歩く・走る犬の足の真下から（横からでなく）小粒が跳ね、乾いた地面（濡れ度 0）では何も出ず、走るほど多いこと。
+- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `FootSplashPlannerTest` は作っていない。verify の ctest の行は対象の試験が無い。撮影・起動の確かめは回さない決まり。
+- Notes: 判断: G11-GR59-RAIN-HIT の `Splash`・`Droplet` はまだ無いので、流用せず足のしぶき専用の小粒の効果 `FootSplash.vfx.json` を置いた（RAIN-HIT と同じファイル名にしないことで衝突を避けた。効果のパスは PROPERTY なので後で差し替えられる）。放出は 1 接地 1 件（エミッタ 0）。Engine で `SceneQuery::SetTerrainSystem` を結ぶ G5-GR38-PHYSICS-HEIGHTFIELD-P1 が未着手で、物理の地形コライダーが無いと `QueryGround` が地形を引けないため、`TerrainSystem::SampleGround` へ落とす経路を足した。
+- Notes: 既知の限界: Animator が後から付いたときは、結ぶ前のイベントは拾えない。同じ脚の同じ tick の中の複数の接地は最後の 1 件になる。足先を読めない tick は保留と前の位置を捨てる。足の速度は tick ごとの位置の差で、最初の接地では 0（止まった足の倍率 0.25）。
+- U2 足のしぶきの効果のデータと、効果のファイルの読み込みの関数: 着地(直し 0 回)
+- U1 足のしぶきの放出を決める純関数 FootSplashPlanner: 着地(直し 1 回)
+- U3 接地のイベントから放出を積む FootSplashComponent: 着地(直し 1 回)
+- Notes: 2026-11-18（run 20261118-013230 の反復 1）: 前回の評価が枠切れ（429）で回らず status が doing に戻ったため、実装は変えずに done に戻した。最後の単位の確かめ（`cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・エラー 0）以降、Library・Assets の変更は無い。評価者の反証はランナーが回す。
