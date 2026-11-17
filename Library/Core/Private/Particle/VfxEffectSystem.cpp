@@ -655,7 +655,8 @@ namespace NorvesLib::Core::Particle
                         }
                         particle.Velocity += acceleration * emitterDeltaTime;
                         particle.Position += particle.Velocity * emitterDeltaTime;
-                        if (!emitter.Collisions.empty() && !ResolveCollisions(emitter, particle, context.HeightField, children))
+                        if (!emitter.Collisions.empty() &&
+                            !ResolveCollisions(emitter, particle, context.CameraPosition, context.HeightField, children))
                         {
                             continue;
                         }
@@ -923,6 +924,8 @@ namespace NorvesLib::Core::Particle
                 {
                     params.Flags |= Rendering::kGpuEmitterFlagCollisionHeightField;
                 }
+                static_assert(static_cast<uint32_t>(VfxCollisionResponse::ReturnToCameraBoxTop) == 4u,
+                    "衝突応答の値は ParticleSimulation.glsl と一致させる");
                 collision.Response = value(responseIndex).UInt;
                 collision.Restitution = value(responseIndex + 1u).Vector.x;
                 collision.ChildProbability = value(responseIndex + 3u).Vector.x;
@@ -1643,7 +1646,7 @@ namespace NorvesLib::Core::Particle
     }
 
     bool VfxEffectSystem::ResolveCollisions(const EmitterState& emitter, VfxParticleState& particle,
-        const VfxHeightFieldView& heightField, VariableArray<ChildSpawn>& children)
+        const Math::Vector3& cameraPosition, const VfxHeightFieldView& heightField, VariableArray<ChildSpawn>& children)
     {
         for (const CollisionState& collision : emitter.Collisions)
         {
@@ -1691,6 +1694,20 @@ namespace NorvesLib::Core::Particle
                     children.push_back(child);
                 }
                 return false;
+            case VfxCollisionResponse::ReturnToCameraBoxTop:
+            {
+                if (emitter.Shape != VfxSpawnShape::CameraBox)
+                {
+                    return false;
+                }
+                const float top = cameraPosition.y + emitter.CameraBoxHeight * 0.5f;
+                if (surface < top)
+                {
+                    particle.Position.y = top;
+                    return true;
+                }
+                continue;
+            }
             }
         }
         return true;

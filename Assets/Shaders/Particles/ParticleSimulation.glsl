@@ -14,6 +14,7 @@ const uint kVfxCollisionKill = 0u;
 const uint kVfxCollisionStick = 1u;
 const uint kVfxCollisionBounce = 2u;
 const uint kVfxCollisionSpawnChild = 3u;
+const uint kVfxCollisionReturnToCameraBoxTop = 4u;
 
 // CPU の GpuParticleBurst と同じ 64 バイトの並び。
 struct GpuParticleBurst
