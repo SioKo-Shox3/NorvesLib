@@ -7672,7 +7672,7 @@
 - notes: GR36 の (C)(D)（要件 3835-3841 行）。段階をまたぐ注意（ロードマップ 4386・4452・4473 行）に従い、表面の点は `SurfaceSampleTable`、位置だけのスキニングは G3 の `SkinPosition`（G3-GR12 で done。SkeletalPoseBounds.h:43）を使い、自前で作らない。`SurfaceSampleTable` は GR57 の P6 が G10 の GR60 へ移った（4431 行の案のとおり。G10-GR60-SKIN-SURFACE-EMITTER）ので、G10 の GR60 を needs-gr に入れた（G11 は G10 を段階として待たないが、この項目だけは表を待つ）。放出の列 `GpuParticleBurstQueue` と効果の形は G7 の項目の名前（G7-GR57-GPU-SIMULATION・G7-GR57-GPU-DEFINITION）に合わせた。要件の「表面のサンプル点を自前で選ぶ（最寄りの頂点の簡易版）」は作らない。UniRig の 14 関節では耳・頬の揺れからの飛散は出ない（要件のリスク。共通の骨格 GR103 で良くなる）。動画由来の BVH は 1 コマ 1/30 秒と書かれるが入力の動画は 16fps なので、取り込みの時間の直しは G2 の範囲（速度の差分に直接効く）。点の数（128〜512）と上限は要件の案で、根拠は要件だけ。試験を足す理由: 反証する契約は「表面の点の速度が回転の解析値に合う」「濡れていない・止まっているときに出ない」「上限を守る」。速度の誤りは水滴の飛ぶ向きの不自然さとしてしか見えず、数の超過は後のフレーム時間として出るので黙って起きる。ロードマップ 1985・1996 行。
 
 ## G12-GR47-PLACEMENT-COOK: 手で置く森・岩の配置の一覧を NVSCT に cook し、散布に空間の照会・1 本の非表示の保存・RT に入れるかの指定を足す
-- status: todo
+- status: blocked
 - after: G5-GR90-SCATTER-RUNTIME, G12-GR47-INSTANCE-VARIATION, G5-GR90-SCATTER-BAKE
 - gr: GR47
 - needs-gr: GR90
