@@ -7093,7 +7093,7 @@
 - notes: 選定課題 G7-S7（ロードマップ 4531 行）は推奨の (A) を採る: GR57 のパスは G5 の GR25 の描画の拡張の段へファクトリで登録する（シミュレーションは GBuffer の段の最後、描画は Transparent と PostTemporalAA の段。G7-GR57-GPU-DRAW）。理由: `SetupDeferredPipeline`（SceneView.cpp:1058）の組み直しで消えず、段の位置が名前で決まる。10-02 の後に可視バッファ・DecalPass・FoliagePass・CloudLayerPass・DistortionPass が入り（SceneView.cpp:1094〜1371）、直に AddPass する (B) は並びが変わるたびに直す所が増える。GR25 の段の錨は G5-GR25-STAGE-REGISTRY の done-when にある。エンジンの内部のパスでも同じ登録の口を使い、パス名の規約（`Ext.<Game>.<Name>`）に合わなければエンジン用の接頭辞を GR25 の文書に足す。時計（段階をまたぐ注意 4460 行の直す点）: 粒の dt は TimeSystem の Particle のチャンネル（ApplicationProcessor.cpp:2723 の `PostTick` の群と同じ値）。`ViewRenderContext::DeltaTime` は RenderThread のフレームの時間なので積分に使わない。描画がゲームのフレームを飛ばしたときは、写しに載った時刻の差で進める（上限 1/15 秒、超えたら分けて刻む）。CPU への読み戻し（命中の通知）はしない（ロードマップ 1546 行の非ゴール）。`ParticleEmitterComponent` の更新は ECS の作り（`Docs/Plans/EcsUpdatePathPlan.md`）に合わせ、今の Component の登録の仕組みで系に載せる（UNCERTAIN: 今の Component から毎フレームの描画の変換を読む正しい場所は、`SocketAttachmentComponent`〈GAME-GR130-VFX-CHECK-P1〉の扱いを読んで確かめる）。間接の描画と生き残りの詰め込みは G7-GR57-GPU-INDIRECT。試験を足す理由: GPU と CPU の積分のずれ・衝突の取りこぼしは画面の粒の数と位置が少し違うだけで、撮影では気づけず黙って起きる。危険地帯（RenderThread・FramePacket・Public API の Component・RenderWorld）なので評価者を通す。共有の ApplicationProcessor.cpp・SceneView.cpp・試験の束の CMakeLists.txt は差分を小さくする。要件 `#### GR57` の設計案のパス構成 1)、（2）〜（6）、フェーズ P2 と P4 の衝突、ロードマップ 1539・1553・1563 行。
 
 ## G7-GR57-GPU-DRAW: GPU の粒をワールドの空間の板・速度で伸ばした筋・面に沿う板として、ソフト・霧・環境光の色つきで TAA の前と後の段に描く
-- status: doing
+- status: done
 - after: G7-GR57-GPU-SIMULATION, G7-GR51-HEIGHTFOG-INCLUDE, G5-GR25-STAGE-REGISTRY, G5-GR25-EXTENSION-DATA, G5-GR25-SHADOW-CASTER-STAGE, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR57
 - needs-gr: GR25, GR30
