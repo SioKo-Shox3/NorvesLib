@@ -7624,7 +7624,7 @@
 - notes: GR52 の P1 の (c)（要件 5182 行）。選定課題 G11-S7（雲間の光の筋の作り方。ロードマップ 4554 行）は推奨の (C) を採る: SunGap を主にし、雲の影のマスクを従にする。地面の直達に雲の影を掛けるかは見た目で決める選択制で既定は掛けない（掛けるとラスタと PT の方式差が増える）。要件の「ノイズの雲被覆（fBm の小さな compute）」は作らず、今ある雲の層（SCN-CLOUDS・SCN-WL-CLOUD-* で Cycles に合わせた体積の雲）の密度から作る: 空に見える雲と光の筋の位置が合い、雲の式を 2 つ持たない。雲の層は今は太陽を遮らず IBL にも入らない（SkyAtmosphere.h:95-101）。マスクは霧の散乱と（選んだときの）地面の直達だけに掛け、空由来 IBL には入れない。局所霧と雲の影は PT・RT・DDGI が知らない（方式差として記録。ロードマップ 2011 行）。雲の層の値は SceneRevision に入っている（RenderingCoordinator.cpp:230-236）が、マスクの欄は入れない。危険地帯（volumetrics・lighting.frag・CloudLayerPass）。評価者の反証を省かない。共有のファイル（CloudLayerPass.inl・lighting.frag・SceneView.cpp）は差分を小さくする。試験を足す理由: 反証する契約は「SunGap の所に筋が出て、無効で消える」「雲の影の写しの向き」。向きの誤りは筋が雲の切れ間からずれて出る形で、撮影 1 枚では見分けにくく黙って起きる。ロードマップ 1986・1997 行。
 
 ## G11-GR52-LOCAL-FOG: Entity に付けて動かせる楕円体の局所霧（最大 8）を、密度の解析の線積分と、風で流れる濃淡で霧の経路と前向きの描画に入れる
-- status: done
+- status: doing
 - after: G11-GR52-FOG-STEPS, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR51-HEIGHTFOG-INCLUDE, G7-GR51-FORWARD-FOG
 - gr: GR52
 - needs-gr: GR46, GR49, GR51
