@@ -1,9 +1,9 @@
 ﻿"""Blender の資産を段階的に処理し、入出力のハッシュを記録する。
 
 使い方:
-    python -B Scripts/Blender/pipeline.py --input PATH --out DIR --logical STEM
-        [--stages NAMES] [--spec PATH] [--blender PATH] [--assetcook PATH]
-        [--python PATH] [--settings PATH] [--dry-run]
+    python -B Scripts/Blender/pipeline.py --out DIR [--config PATH]
+        [--input PATH] [--logical STEM] [--stages NAMES] [--spec PATH]
+        [--blender PATH] [--assetcook PATH] [--python PATH] [--settings PATH] [--dry-run]
 
 段は rebuild、weights、export、validate、cook の順に実行する。
 終了コードは、0 が成功、1 が実行前の確認または処理の失敗、2 が引数の誤り。
@@ -20,6 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common
+import rig_core
 
 
 @dataclass(frozen=True)
@@ -32,9 +33,9 @@ class Stage:
 
 
 STAGES = (
-    Stage("rebuild", "blender", "rebuild_on_base.py", "rebuild/{stem}.glb", True),
-    Stage("weights", "blender", "transfer_weights.py", "weights/{stem}.glb", True),
-    Stage("export", "blender", "export_gltf.py", "export/{stem}.gltf", True),
+    Stage("rebuild", "blender", "rebuild_on_base.py", "rebuild/{stem}.blend", True),
+    Stage("weights", "blender", "transfer_weights.py", "weights/{stem}.blend", True),
+    Stage("export", "blender", "export_gltf.py", "export/{stem}{extension}", True),
     Stage("validate", "python", "validate_rig.py", "validate/report.json", False),
     Stage("cook", "assetcook", None, "cooked", False),
 )
@@ -70,7 +71,7 @@ def parse_arguments():
     parser.add_argument("--out")
     parser.add_argument("--logical")
     parser.add_argument("--stages")
-    parser.add_argument("--spec", default=common.DEFAULT_SPEC_PATH)
+    parser.add_argument("--spec")
     parser.add_argument("--blender", default=common.DEFAULT_BLENDER)
     parser.add_argument(
         "--assetcook",
@@ -82,16 +83,13 @@ def parse_arguments():
         ),
     )
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--config")
     parser.add_argument("--settings")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
-def read_settings(path: str | None) -> dict:
-    if path is None:
-        return {}
-
-    settings = common.read_json(path)
+def validate_settings(settings) -> dict:
     if not isinstance(settings, dict):
         raise ValueError("設定 JSON のルートはオブジェクトにしてください。")
 
@@ -109,11 +107,44 @@ def read_settings(path: str | None) -> dict:
     return settings
 
 
+def read_settings(path: str | None) -> dict:
+    return {} if path is None else validate_settings(common.read_json(path))
+
+
+def read_config(path: str) -> dict:
+    config = common.read_json(path)
+    if not isinstance(config, dict):
+        raise ValueError("設定ファイルのルートはオブジェクトにしてください。")
+
+    allowed = {"input", "logical", "spec", "stages", "settings"}
+    unknown = sorted(key for key in config if key not in allowed)
+    if unknown:
+        raise ValueError(f"設定ファイルに不明な鍵があります: {', '.join(unknown)}")
+
+    for name in ("input", "logical", "spec"):
+        if name in config and not isinstance(config[name], str):
+            raise ValueError(f"{name} は文字列にしてください。")
+    for name in ("input", "spec"):
+        if name in config and not config[name]:
+            raise ValueError(f"{name} は空でないパスにしてください。")
+    if "stages" in config and (
+        not isinstance(config["stages"], list)
+        or any(not isinstance(name, str) for name in config["stages"])
+    ):
+        raise ValueError("stages は文字列の配列にしてください。")
+    if "settings" in config:
+        validate_settings(config["settings"])
+    return config
+
+
 def make_invocations(args, stages: tuple[Stage, ...], settings: dict) -> list[Invocation]:
     invocations = []
     current_input = args.input
     for stage in stages:
-        output = absolute_path(os.path.join(args.out, stage.output.format(stem=args.logical)))
+        extension = rig_core.export_extension(settings["export"]) if stage.name == "export" else ""
+        output = absolute_path(
+            os.path.join(args.out, stage.output.format(stem=args.logical, extension=extension))
+        )
         if stage.kind == "blender":
             config = {
                 "stage": stage.name,
@@ -125,9 +156,11 @@ def make_invocations(args, stages: tuple[Stage, ...], settings: dict) -> list[In
             }
             argv = [
                 args.blender,
-                "-b",
+                "--background",
                 "--factory-startup",
-                "-P",
+                "--python-exit-code",
+                "1",
+                "--python",
                 absolute_path(os.path.join(common.SCRIPT_DIR, stage.script)),
                 "--",
                 json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
@@ -164,7 +197,7 @@ def make_invocations(args, stages: tuple[Stage, ...], settings: dict) -> list[In
     return invocations
 
 
-def preflight(args, invocations: list[Invocation]) -> list[str]:
+def preflight(args, invocations: list[Invocation], settings: dict) -> list[str]:
     errors = []
     if not (os.path.isfile(args.input) or os.path.isdir(args.input)):
         errors.append(f"入力の資産がありません: {args.input}")
@@ -179,6 +212,12 @@ def preflight(args, invocations: list[Invocation]) -> list[str]:
                 errors.append(f"{stage.name} 段のスクリプトがまだありません: {script}")
             if not os.path.isfile(args.blender):
                 errors.append(f"{stage.name} 段の Blender 実行ファイルがありません: {args.blender}")
+            if stage.name == "rebuild" and not os.path.isfile(settings["rebuild"]["base"]):
+                errors.append(f"rebuild 段の土台ファイルがありません: {settings['rebuild']['base']}")
+            if stage.name == "weights" and settings["weights"]["mode"] == "transfer":
+                donor = settings["weights"]["donor"]
+                if not os.path.isfile(donor):
+                    errors.append(f"weights 段の転送元ファイルがありません: {donor}")
         elif stage.kind == "python":
             script = absolute_path(os.path.join(common.SCRIPT_DIR, stage.script))
             if not os.path.isfile(script):
@@ -198,8 +237,8 @@ def report_io_error(message: str, error: OSError) -> None:
     print(f"{message}{detail}", file=sys.stderr)
 
 
-def run_pipeline(args, invocations: list[Invocation]) -> int:
-    errors = preflight(args, invocations)
+def run_pipeline(args, invocations: list[Invocation], settings: dict) -> int:
+    errors = preflight(args, invocations, settings)
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
@@ -254,8 +293,7 @@ def run_pipeline(args, invocations: list[Invocation]) -> int:
             "blender_version": None,
         }
         try:
-            if os.path.exists(invocation.output_path):
-                stage_record["outputs"].append(common.path_entry(invocation.output_path))
+            outputs = None
             if stage.kind == "blender":
                 version_path = absolute_path(os.path.join(args.out, stage.name, "record.json"))
                 if os.path.exists(version_path):
@@ -263,6 +301,14 @@ def run_pipeline(args, invocations: list[Invocation]) -> int:
                     if not isinstance(stage_details, dict):
                         raise ValueError("段の記録はオブジェクトではありません。")
                     stage_record["blender_version"] = stage_details.get("blender_version")
+                    if "outputs" in stage_details:
+                        outputs = stage_details["outputs"]
+                        if not isinstance(outputs, list):
+                            raise ValueError("段の出力記録は配列ではありません。")
+            if outputs is not None:
+                stage_record["outputs"] = outputs
+            elif os.path.exists(invocation.output_path):
+                stage_record["outputs"].append(common.path_entry(invocation.output_path))
         except OSError as error:
             report_io_error(f"{stage.name} 段の出力または記録を読み取れません。", error)
             succeeded = False
@@ -291,6 +337,33 @@ def main() -> int:
     if args.help:
         print(__doc__.strip())
         return 0
+    if args.config is not None and args.settings is not None:
+        return argument_error("--config と --settings は同時に指定できません。")
+
+    for name in ("config", "settings"):
+        if getattr(args, name) is not None:
+            setattr(args, name, absolute_path(getattr(args, name)))
+    settings_path = args.config if args.config is not None else args.settings
+    base_dir = os.path.dirname(settings_path) if settings_path is not None else os.getcwd()
+    try:
+        config = read_config(args.config) if args.config is not None else {}
+        settings = config.get("settings", {}) if args.config is not None else read_settings(args.settings)
+    except OSError as error:
+        detail = f"（エラー番号: {error.errno}）" if error.errno is not None else ""
+        return argument_error(f"設定ファイルを読み取れません: {settings_path}{detail}")
+    except ValueError as error:
+        return argument_error(str(error))
+
+    if args.input is None and "input" in config:
+        args.input = absolute_path(os.path.join(base_dir, config["input"]))
+    if args.logical is None:
+        args.logical = config.get("logical")
+    if args.spec is None:
+        args.spec = (
+            absolute_path(os.path.join(base_dir, config["spec"]))
+            if "spec" in config
+            else common.DEFAULT_SPEC_PATH
+        )
     for name in ("input", "out", "logical"):
         if not getattr(args, name):
             return argument_error(f"--{name} を指定してください。")
@@ -298,7 +371,11 @@ def main() -> int:
         return argument_error("--logical の形式が正しくありません。")
 
     names = {stage.name for stage in STAGES}
-    selected = [stage.name for stage in STAGES] if args.stages is None else args.stages.split(",")
+    selected = (
+        config.get("stages", [stage.name for stage in STAGES])
+        if args.stages is None
+        else args.stages.split(",")
+    )
     unknown = [name for name in selected if name not in names]
     if unknown:
         return argument_error(f"不明な段があります: {', '.join(unknown)}")
@@ -308,13 +385,11 @@ def main() -> int:
 
     for name in ("input", "out", "spec", "blender", "assetcook", "python"):
         setattr(args, name, absolute_path(getattr(args, name)))
-    if args.settings is not None:
-        args.settings = absolute_path(args.settings)
     try:
-        settings = read_settings(args.settings)
-    except OSError as error:
-        report_io_error(f"設定ファイルを読み取れません: {args.settings}", error)
-        return 2
+        settings = dict(settings)
+        for name in rig_core.STAGE_NAMES:
+            if name in settings or name in selected:
+                settings[name] = rig_core.validate_stage_settings(name, settings.get(name, {}), base_dir)
     except ValueError as error:
         return argument_error(str(error))
 
@@ -326,7 +401,7 @@ def main() -> int:
                 {"index": index, "name": invocation.stage.name, "argv": invocation.argv},
             )
         return 0
-    return run_pipeline(args, invocations)
+    return run_pipeline(args, invocations, settings)
 
 
 if __name__ == "__main__":
