@@ -842,6 +842,10 @@ namespace NorvesLib::Core::Particle
                         const Container::String& childName = module.Values[static_cast<uint32_t>(childIndex)].Name;
                         if (childName.empty())
                         {
+                            if (bSpawnChild && std::strcmp(parameter, "ChildEmitter") == 0)
+                            {
+                                return Fail(outError, "unknown_child_emitter", schema.Name, parameter);
+                            }
                             continue;
                         }
                         bool bFound = false;

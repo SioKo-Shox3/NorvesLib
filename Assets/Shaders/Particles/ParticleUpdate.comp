@@ -148,6 +148,11 @@ void SpawnCollisionChildAt(uint childIndex, vec3 hitPosition, vec3 normal)
 void SpawnCollisionChildren(GpuEmitterParams parent, GpuParticle particle,
     GpuCollisionParams collision, GpuCollisionChildParams childParams, vec3 hitPosition, vec3 normal)
 {
+    // 有効でない粒は子の生成予算に含まれない。
+    if ((particle.meta.z & kGpuParticleFlagActive) == 0u)
+    {
+        return;
+    }
     uint serial = ParticleCollisionRandomSerial(parent, particle);
     if (!(VfxCounterUnitFloat(parent.poolCapacitySeedFlags.z, serial, kVfxRandomDrawChildSpawn) <
         collision.childProbability))
@@ -164,6 +169,11 @@ void SpawnCollisionChildren(GpuEmitterParams parent, GpuParticle particle,
 // 屋根の下の深度の命中では、普通の子とは別の確率で滴りを生む。
 void SpawnShelterChild(GpuEmitterParams emitter, GpuParticle particle, vec3 hitPosition, vec3 normal)
 {
+    // 有効でない粒は子の生成予算に含まれない。
+    if ((particle.meta.z & kGpuParticleFlagActive) == 0u)
+    {
+        return;
+    }
     float roofY;
     if (!ParticleSampleRoofY(hitPosition, roofY) || !(roofY - hitPosition.y > emitter.shelterMinClearance))
     {
@@ -192,9 +202,10 @@ bool ReturnParticleToCameraBoxTop(GpuEmitterParams emitter, vec3 hitPosition,
     {
         particle.posAge.y = top;
         particle.meta.z &= ~kGpuParticleFlagSheltered;
+        ClassifyParticleAtPlacement(emitter, particle);
         returnedToCameraBoxTop = true;
     }
-    return true;
+    return (particle.meta.z & kGpuParticleFlagAlive) != 0u;
 }
 
 // 死んだときは false、残ったときは true を返し、箱の上面へ戻したかを渡す。
