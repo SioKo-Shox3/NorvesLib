@@ -10,6 +10,7 @@
 #include "VolumetricFog.h"
 #include "PaleFlatShading.h"
 #include "Wind.h"
+#include "RainModel.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
@@ -209,6 +210,13 @@ namespace NorvesLib::Core::Rendering
         /** @brief 世界共通の風を次の FramePacket へ値で公開する（GameThread）。 */
         void SetWindParameters(const WindParameters& parameters);
 
+        /**
+         * @brief 雨の調整の値を設定する（GameThread）。シーンに入ったときに一度渡す。
+         * 値が同じなら共有の値を使い回し、次の FramePacket からポインタで写る。
+         * シーンの revision には入らない。
+         */
+        void SetRainTuning(const RainTuning& tuning);
+
         /** @brief 天気と時刻の環境の値を次の FramePacket へ値で公開する（GameThread）。 */
         void SetEnvironmentParameters(const EnvironmentParameters& parameters);
 
@@ -329,6 +337,9 @@ namespace NorvesLib::Core::Rendering
          * 空の一覧で描かなくなる。一覧は作った後に書き換えない共有の値で、写しは参照を数えるだけ。
          */
         void SetDecals(const DecalScene& decals);
+
+        /** @brief GPU の粒の写しを設定する。GameThread 専用。毎フレーム呼び、写しは次のパケットだけで使う。 */
+        void SetGpuParticleFrame(const GpuParticleScene& frame);
 
         /**
          * @brief 拡張の値を設定する（GameThread 専用、SetFoliageSource と同じ規約でロック無し）。

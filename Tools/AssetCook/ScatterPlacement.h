@@ -47,6 +47,12 @@ namespace NorvesLib::Tools::AssetCook
         bool bCollision = false;
         double WindStiffness = 1.0;
         uint64_t WindPhaseSeed = 0;
+        uint32_t SkyOccluderShape = 0;
+        bool bSkyOccluderCanopy = false;
+        double SkyOccluderRadiusMeters = 0.0;
+        double SkyOccluderHeightMeters = 0.0;
+        double SkyOccluderBaseRatio = 0.0;
+        double SkyOccluderKappa = 0.0;
     };
 
     struct ScatterPlacementParams

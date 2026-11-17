@@ -340,6 +340,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetWindParameters(parameters);
     }
 
+    void RenderWorld::SetRainTuning(const RainTuning& tuning)
+    {
+        m_RenderingCoordinator.SetRainTuning(tuning);
+    }
+
     void RenderWorld::SetEnvironmentParameters(const EnvironmentParameters& parameters)
     {
         m_RenderingCoordinator.SetEnvironmentParameters(parameters);
@@ -452,6 +457,11 @@ namespace NorvesLib::Core::Rendering
     void RenderWorld::SetDecals(const DecalScene& decals)
     {
         m_RenderingCoordinator.SetDecals(decals);
+    }
+
+    void RenderWorld::SetGpuParticleFrame(const GpuParticleScene& frame)
+    {
+        m_RenderingCoordinator.SetGpuParticleFrame(frame);
     }
 
     void RenderWorld::SetExtensionBytes(Identity name, uint64_t layoutHash, uint32_t elementSize, uint32_t count, const void* data)

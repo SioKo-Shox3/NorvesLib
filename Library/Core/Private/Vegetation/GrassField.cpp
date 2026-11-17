@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace NorvesLib::Core::Vegetation
@@ -349,6 +350,111 @@ namespace NorvesLib::Core::Vegetation
     float GrassField::GetCameraClearance(const Math::Vector3& position) const
     {
         return Sample(position.x, position.z).HeightMeters;
+    }
+
+    bool GrassField::BuildSkyOcclusionUndergrowth(Rendering::SkyOcclusionFieldLayout& outLayout,
+        Container::VariableArray<Rendering::SkyOcclusionUndergrowthTexel>& outTexels,
+        float texelMeters, uint32_t maxResolution) const
+    {
+        if (m_Chunks.empty() || !std::isfinite(m_Desc.ChunkSizeMeters) || m_Desc.ChunkSizeMeters <= 0.0f ||
+            !std::isfinite(texelMeters) || texelMeters <= 0.0f || maxResolution == 0u)
+        {
+            return false;
+        }
+
+        int32_t minChunkX = INT32_MAX;
+        int32_t minChunkZ = INT32_MAX;
+        int32_t maxChunkX = INT32_MIN;
+        int32_t maxChunkZ = INT32_MIN;
+        for (const auto& entry : m_Chunks)
+        {
+            const GrassChunkCoord coord = entry.second.Coord;
+            minChunkX = std::min(minChunkX, coord.X);
+            minChunkZ = std::min(minChunkZ, coord.Z);
+            maxChunkX = std::max(maxChunkX, coord.X);
+            maxChunkZ = std::max(maxChunkZ, coord.Z);
+        }
+
+        const double minX = static_cast<double>(minChunkX) * m_Desc.ChunkSizeMeters;
+        const double minZ = static_cast<double>(minChunkZ) * m_Desc.ChunkSizeMeters;
+        const double maxX = static_cast<double>(static_cast<int64_t>(maxChunkX) + 1) * m_Desc.ChunkSizeMeters;
+        const double maxZ = static_cast<double>(static_cast<int64_t>(maxChunkZ) + 1) * m_Desc.ChunkSizeMeters;
+        const double maxFloat = std::numeric_limits<float>::max();
+        if (std::abs(minX) > maxFloat || std::abs(minZ) > maxFloat ||
+            std::abs(maxX) > maxFloat || std::abs(maxZ) > maxFloat)
+        {
+            return false;
+        }
+
+        Rendering::SkyOcclusionFieldLayout layout{};
+        layout.OriginX = static_cast<float>(minX);
+        layout.OriginZ = static_cast<float>(minZ);
+        // 丸めで最小の角が内側に入らないよう、必要な場合だけ外側へ寄せる。
+        if (static_cast<double>(layout.OriginX) > minX)
+        {
+            layout.OriginX = std::nextafter(layout.OriginX, -std::numeric_limits<float>::infinity());
+        }
+        if (static_cast<double>(layout.OriginZ) > minZ)
+        {
+            layout.OriginZ = std::nextafter(layout.OriginZ, -std::numeric_limits<float>::infinity());
+        }
+        if (!std::isfinite(layout.OriginX) || !std::isfinite(layout.OriginZ))
+        {
+            return false;
+        }
+
+        const double extentX = maxX - layout.OriginX;
+        const double extentZ = maxZ - layout.OriginZ;
+        const uint32_t resolutionLimit = std::min(maxResolution, 8192u);
+        const double requiredTexelMeters = std::max(static_cast<double>(texelMeters),
+            std::max(extentX, extentZ) / static_cast<double>(resolutionLimit));
+        if (!std::isfinite(requiredTexelMeters) || requiredTexelMeters > maxFloat)
+        {
+            return false;
+        }
+        layout.TexelMeters = static_cast<float>(requiredTexelMeters);
+        // 格子の右端が範囲の内側にならず、指定された解像度も超えないようにする。
+        if (static_cast<double>(layout.TexelMeters) < requiredTexelMeters)
+        {
+            layout.TexelMeters = std::nextafter(layout.TexelMeters, std::numeric_limits<float>::infinity());
+        }
+        if (!std::isfinite(layout.TexelMeters))
+        {
+            return false;
+        }
+        const double width = std::ceil(extentX / layout.TexelMeters);
+        const double height = std::ceil(extentZ / layout.TexelMeters);
+        if (width < 1.0 || height < 1.0 || width > resolutionLimit || height > resolutionLimit)
+        {
+            return false;
+        }
+        layout.Width = static_cast<uint32_t>(width);
+        layout.Height = static_cast<uint32_t>(height);
+        if (!Rendering::IsValidSkyOcclusionFieldLayout(layout))
+        {
+            return false;
+        }
+
+        Container::VariableArray<Rendering::SkyOcclusionUndergrowthTexel> texels(
+            static_cast<size_t>(layout.Width) * layout.Height);
+        for (uint32_t j = 0u; j < layout.Height; ++j)
+        {
+            const double z = static_cast<double>(layout.OriginZ) + (static_cast<double>(j) + 0.5) * layout.TexelMeters;
+            for (uint32_t i = 0u; i < layout.Width; ++i)
+            {
+                const double x = static_cast<double>(layout.OriginX) + (static_cast<double>(i) + 0.5) * layout.TexelMeters;
+                if (std::abs(x) > maxFloat || std::abs(z) > maxFloat)
+                {
+                    continue;
+                }
+                const GrassSample sample = Sample(static_cast<float>(x), static_cast<float>(z));
+                texels[static_cast<size_t>(j) * layout.Width + i] =
+                    Rendering::ComputeSkyOcclusionUndergrowthLayer(sample.Density, sample.HeightMeters);
+            }
+        }
+        outTexels.swap(texels);
+        outLayout = layout;
+        return true;
     }
 
     Container::TSharedPtr<const Rendering::GrassFieldRenderData> GrassField::BuildRenderData() const

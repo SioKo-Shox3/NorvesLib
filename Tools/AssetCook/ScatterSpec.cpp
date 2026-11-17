@@ -271,11 +271,49 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        bool SkyOccluder(JsonValue value, ScatterSpeciesRule& rule, AnsiString& error)
+        {
+            if (!Keys(value, {"shape", "class", "radius_m", "height_m", "base_ratio", "kappa"}, error))
+            {
+                return false;
+            }
+            AnsiString shape, occluderClass;
+            if (!Text(value.FindMember("shape"), shape, error) || (shape != "ellipsoid" && shape != "box"))
+            {
+                return Fail(error, u8"散布の sky_occluder.shape は ellipsoid または box が必要です");
+            }
+            if (!Text(value.FindMember("class"), occluderClass, error) ||
+                (occluderClass != "solid" && occluderClass != "canopy"))
+            {
+                return Fail(error, u8"散布の sky_occluder.class は solid または canopy が必要です");
+            }
+            if (!Number(value.FindMember("radius_m"), 0, 256, rule.SkyOccluderRadiusMeters, error) ||
+                !Number(value.FindMember("height_m"), 0, 256, rule.SkyOccluderHeightMeters, error) ||
+                rule.SkyOccluderRadiusMeters <= 0.0 || rule.SkyOccluderHeightMeters <= 0.0)
+            {
+                return Fail(error, u8"散布の遮蔽物の半径と高さは有限の (0, 256] が必要です");
+            }
+            if (!OptionalNumber(value, "base_ratio", 0, 0.95, rule.SkyOccluderBaseRatio, error))
+            {
+                return Fail(error, u8"散布の sky_occluder.base_ratio は有限の 0〜0.95 が必要です");
+            }
+            rule.bSkyOccluderCanopy = occluderClass == "canopy";
+            rule.SkyOccluderKappa = 1.0;
+            if (rule.bSkyOccluderCanopy
+                    ? !Number(value.FindMember("kappa"), 0, 1, rule.SkyOccluderKappa, error)
+                    : !OptionalNumber(value, "kappa", 0, 1, rule.SkyOccluderKappa, error))
+            {
+                return Fail(error, u8"散布の sky_occluder.kappa は有限の 0〜1 が必要で、canopy では省略できません");
+            }
+            rule.SkyOccluderShape = shape == "ellipsoid" ? 1u : 2u;
+            return true;
+        }
+
         bool Species(JsonValue value, ScatterSpeciesRule& rule, AnsiString& error)
         {
             if (!Keys(value, {"name", "render_path", "lods", "mesh_radius_m", "min_spacing_m", "density", "base_density_per_m2",
                               "height_band_m", "slope_band_deg", "exclude", "scale_range", "slope_follow", "brightness_variation",
-                              "dry_from_mask", "collision", "wind"}, error))
+                              "dry_from_mask", "collision", "wind", "sky_occluder"}, error))
             {
                 return false;
             }
@@ -366,6 +404,10 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     return false;
                 }
+            }
+            if (value.HasMember("sky_occluder") && !SkyOccluder(value.FindMember("sky_occluder"), rule, error))
+            {
+                return false;
             }
             if (value.HasMember("wind"))
             {

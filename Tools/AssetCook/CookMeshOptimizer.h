@@ -52,6 +52,11 @@ namespace NorvesLib::Tools::AssetCook
                                              CookSimplifyResult& outResult,
                                              Core::Container::AnsiString& error);
 
+    // 三角形の集合と各三角形の頂点を変えず、頂点キャッシュに合わせて並べ替える。
+    [[nodiscard]] bool OptimizeVertexCacheTriangles(Core::Container::VariableArray<uint32_t>& indices,
+                                                    size_t vertexCount,
+                                                    Core::Container::AnsiString& error);
+
     // 三角形の辺のうち、位置が同じ頂点をひとつに数えたうえで 1 枚の三角形にしか属さないものの両端を 1 にした
     // フラグ(頂点数と同じ大きさ)を返す。開いたメッシュの縁を簡略化で動かさないための固定に使う。
     [[nodiscard]] Core::Container::VariableArray<uint8_t> FindBoundaryVertices(const float* positions,

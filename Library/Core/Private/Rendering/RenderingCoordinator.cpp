@@ -4604,6 +4604,7 @@ namespace NorvesLib::Core::Rendering
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
         packet.Scene.SetPaleFlatParameters(m_PaleFlat);
         packet.Scene.SetWindParameters(m_Wind);
+        packet.Scene.RainTuningSnapshot = m_RainTuning;
         packet.Scene.SetEnvironmentParameters(m_Environment);
         packet.bVertexAnimationTestDisplacement = m_bVertexAnimationTestDisplacement;
         packet.Scene.SetSkyOcclusionParameters(m_SkyOcclusion);
@@ -4638,6 +4639,9 @@ namespace NorvesLib::Core::Rendering
         // 帯はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
         m_RibbonTrails.Clear();
         packet.Scene.Decals = m_Decals;
+        packet.Scene.GpuParticles = m_GpuParticles;
+        // GPU の粒はこのパケットだけで使い、配列の容量は次のフレームにも再利用する。
+        m_GpuParticles.Clear();
         m_ExtensionData.SnapshotTo(packet.Scene.Extensions);
         packet.Scene.Distortions = m_Distortions;
         packet.bRTGIEnabled = m_bRTGIEnabled && !m_bRayTracingForcedOff;
@@ -6708,6 +6712,17 @@ namespace NorvesLib::Core::Rendering
         m_Wind = SanitizeWindParameters(parameters);
     }
 
+    void RenderingCoordinator::SetRainTuning(const RainTuning& tuning)
+    {
+        const RainTuning sanitized = SanitizeRainTuning(tuning);
+        if (std::memcmp(m_RainTuning.get(), &sanitized, sizeof(RainTuning)) == 0)
+        {
+            return;
+        }
+
+        m_RainTuning = Container::MakeShared<RainTuning>(sanitized);
+    }
+
     void RenderingCoordinator::SetEnvironmentParameters(const EnvironmentParameters& parameters)
     {
         m_Environment = SanitizeEnvironmentParameters(parameters);
@@ -6853,6 +6868,11 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetDecals(const DecalScene& decals)
     {
         m_Decals = decals;
+    }
+
+    void RenderingCoordinator::SetGpuParticleFrame(const GpuParticleScene& frame)
+    {
+        m_GpuParticles = frame;
     }
 
     void RenderingCoordinator::SetDistortions(const DistortionScene& distortions)

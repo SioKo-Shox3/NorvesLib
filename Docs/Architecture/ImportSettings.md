@@ -35,6 +35,7 @@ rootはobject、version: 1が必須。省略時にv1と推測しない。
 - `material`・`materials`: 元の材質の取り込み設定。実装済みで、詳細は [MaterialImportDocument.md](MaterialImportDocument.md) を参照する。
 - 骨格の一様 scale: 独立した節はなく、`units` の scale/fit が骨格にも効く。詳細は「骨格の一様scale/fit」を参照する。
 - `clip`: クリップの取り込み時の補正。詳細は「clip 節（GR78・GR82）」を参照する。
+- `skinnedLod`: スキンメッシュの LOD の取り込み設定。詳細は「skinnedLod 節（GR63）」を参照する。
 - `audio`: 音の取り込み設定（G16 の GR95）のための予約。現状は省略または空 object だけを受理し、非空または他の型は `UnsupportedFeature` で拒否する。
 - `repair`・`lod`・`collision`: 予約。省略または空 object だけを受理し、非空または他の型は `UnsupportedFeature` で拒否する。実装する GR で許すキーと既定値を決め、黙って無視しない。
 
@@ -69,6 +70,27 @@ typed値ではfit未使用時のFitMetersは1、fit使用時のScaleは1に固�
 - `root_joint` の名前が骨格に無い場合は、`--rig-split` と asset-set の model では `split_clip_root_not_found`、asset-set の animation では `clip_root_not_found` で拒否する。
 - リターゲット（`--retarget-clip`、asset-set の animation の `skeleton_path`/`role_profile`）は非空の `clip` を `retarget_clip_settings` で拒否する。補正は Role Profile の `output_fps`・`loop_mode` が持つ。
 - 静的モデル（NVMESH v1 の clustered cook）は非空の `clip` を拒否し、材質の計画の読み込みで `static_model_clip_settings` を返す。旧経路は上記のとおり `UnsupportedFeature` で拒否する。
+
+## skinnedLod 節（GR63）
+
+`skinnedLod` はスキンメッシュの LOD の取り込み設定を指定する。読むのは `--rig-split` と asset-set の skeletal（`kind: model`、`RigSplitCook`）だけである。
+
+| キー | 型・値 | 省略時の既定 |
+|---|---|---|
+| `parts` | 整数 2 つの配列 `[min, max]`。1 ≤ min ≤ max ≤ 256 | `[16, 64]` |
+| `targets` | number の配列、1〜8 個。先頭は 1、狭義の減少、各値は有限で 0 より大きく 1 以下。LOD ごとの三角形数の LOD0 に対する比 | `[1, 0.4, 0.12, 0.03]` |
+| `thetaRef` | number。有限で 0 < θ ≤ π（3.141592653589793）。スキンの変位の誤差に使う基準の回転角（rad） | `0.5` |
+
+節が object なら取り込みを要求する（`bRequested = true`）。空 object（`"skinnedLod": {}`）も既定値で要求する。節を省略した場合は要求しない。既定値はすべて仮であり、データに応じて変える。
+
+object 以外は `InvalidType`、未知のキーは `UnknownField`、重複は `DuplicateField`。各値の型違いは `InvalidType`、配列の要素数・値の範囲・順序の違反と整数でない `parts` は `InvalidValue`。解析は成功時だけ出力を置き換える。
+旧 `ParseSettings` の経路では空 object だけを受理し、非空または他の型は `UnsupportedFeature` で拒否する。
+
+節があると cook が部位に分けて LOD を焼き、NVSKEL の SkinnedMesh に `LODS`・`PART` を足す。書式は [RigSplitV1Wire.md](RigSplitV1Wire.md) を参照する。
+LOD を焼くと stderr に `skinned_lod_report=` に続く JSON を 1 行出す。`parts` は部位数、`zero_weight_vertices` は重みの合計が 0 の頂点数、`degenerate_triangles` と `duplicate_triangles` は除去した退化三角形数と重複三角形数である。`lods` は LOD 順の配列で、各要素の `triangles`・`target_triangles` は実際と目標の三角形数、`max_error` は `position_error`（位置誤差）と `skin_error`（スキン誤差）の大きい方を表す。
+
+節が無い cook の出力と `source_hash` は従来と同じである。節を変えると sidecar の bytes が `source_hash` に入っているため再 cook になる。節があるときは算法の印 `norves.skinned-lod.v1` に続けて `MinParts`・`MaxParts`・`Targets` の数・各 `Targets`・`ThetaRef` をこの順で `source_hash` に連結する。印は長さ付き文字列、数と各値の bit 列は 64 bit little endian で、`Targets` と `ThetaRef` は IEEE 754 binary64 を使う。
+`skinnedLod` は geometry の正規化 bytes（下記の 52 byte）には入れず、hash は sidecar の bytes と cook が足す算法の印で決まる。
 
 ## 正規化bytes
 

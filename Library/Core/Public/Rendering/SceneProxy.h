@@ -12,11 +12,13 @@
 #include "VolumetricFog.h"
 #include "PaleFlatShading.h"
 #include "Wind.h"
+#include "RainModel.h"
 #include "EnvironmentParameters.h"
 #include "SkyOcclusion.h"
 #include "FoliageTypes.h"
 #include "RibbonTrailTypes.h"
 #include "DecalTypes.h"
+#include "Rendering/GpuParticle/GpuParticleFrame.h"
 #include "RenderExtension/RenderExtensionData.h"
 #include "DistortionTypes.h"
 #include "AutoExposure.h"
@@ -620,6 +622,12 @@ namespace NorvesLib::Core::Rendering
         PaleFlatParameters PaleFlat = MakeDefaultPaleFlatParameters();
         // 世界で共通の風。SceneRevision には含めない。
         WindParameters Wind = MakeDefaultWindParameters();
+        /**
+         * @brief RenderThread が雨の写像の評価に使う調整の値。
+         * 値が変わったときだけ新しい共有の値になり、パケットへはポインタだけを写す。
+         * SceneRevision に入れない。
+         */
+        Container::TSharedPtr<const RainTuning> RainTuningSnapshot;
         // 天気と時刻の環境の値。SceneRevision には DiscontinuityId だけを含める。
         EnvironmentParameters Environment = MakeDefaultEnvironmentParameters();
         SkyOcclusionParameters SkyOcclusion = MakeDefaultSkyOcclusionParameters();
@@ -652,6 +660,8 @@ namespace NorvesLib::Core::Rendering
         RibbonTrailScene RibbonTrails;
         // 箱で投影するデカールの一覧。DecalPass が GBuffer の色と法線へ描く
         DecalScene Decals;
+        // GPU の実行先のエミッタの写し。GpuParticleSimulationPass が読む。毎フレーム入れ直し、SceneRevision には含めない。
+        GpuParticleScene GpuParticles;
 
         /** @brief 拡張データの表。共有ポインタを写すだけで、変わらないフレームはデータの写しが 0。 */
         RenderExtensionDataSet Extensions;
@@ -681,6 +691,7 @@ namespace NorvesLib::Core::Rendering
             VolumetricFog = MakeDefaultVolumetricFogParameters();
             PaleFlat = MakeDefaultPaleFlatParameters();
             Wind = MakeDefaultWindParameters();
+            RainTuningSnapshot = nullptr;
             Environment = MakeDefaultEnvironmentParameters();
             SkyOcclusion = MakeDefaultSkyOcclusionParameters();
             SkyOccluders.clear();
@@ -696,6 +707,7 @@ namespace NorvesLib::Core::Rendering
             Foliage = FoliageScene{};
             RibbonTrails.Clear();
             Decals = DecalScene{};
+            GpuParticles.Clear();
             Extensions.clear();
             Distortions = DistortionScene{};
         }

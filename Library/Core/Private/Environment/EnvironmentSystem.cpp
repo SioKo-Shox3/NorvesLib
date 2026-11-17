@@ -59,6 +59,8 @@ namespace NorvesLib::Core::Environment
 
     void EnvironmentSystem::Enable(const EnvironmentState& initial, const EnvironmentSceneBase& base)
     {
+        m_RainTuning = Rendering::LoadRainTuningFile(Rendering::DefaultRainTuningPath);
+        m_bRainTuningPublishPending = true;
         m_SceneBase = base;
         m_BaseState = SanitizeEnvironmentState(initial);
         ClearTransitions();
@@ -141,6 +143,38 @@ namespace NorvesLib::Core::Environment
         }
         RebuildEffective();
         Notify(EEnvironmentChange::TargetSet);
+    }
+
+    void EnvironmentSystem::SetPresetRoot(const Container::String& rootDirectory)
+    {
+        m_PresetRoot = rootDirectory;
+    }
+
+    const Container::String& EnvironmentSystem::GetPresetRoot() const
+    {
+        return m_PresetRoot;
+    }
+
+    bool EnvironmentSystem::ApplyPreset(const Container::String& name)
+    {
+        if (!m_bEnabled)
+        {
+            WarnDisabledCommand("ApplyPreset");
+            return false;
+        }
+        EnvironmentTarget target;
+        Container::String error;
+        if (!LoadEnvironmentPreset(m_PresetRoot, name, target, &error))
+        {
+#ifdef UNICODE
+            LOG_WARNING("EnvironmentSystem のプリセットを読み込めません: %ls", error.c_str());
+#else
+            LOG_WARNING("EnvironmentSystem のプリセットを読み込めません: %s", error.c_str());
+#endif
+            return false;
+        }
+        SetTarget(target);
+        return true;
     }
 
     void EnvironmentSystem::SetImmediate(const EnvironmentTarget& target)
@@ -256,9 +290,16 @@ namespace NorvesLib::Core::Environment
         return m_SceneBase;
     }
 
+    const Rendering::RainTuning& EnvironmentSystem::GetRainTuning() const
+    {
+        return m_RainTuning;
+    }
+
     EnvironmentResolved EnvironmentSystem::Resolve() const
     {
-        return ResolveEnvironment(m_EffectiveState, m_SceneBase);
+        EnvironmentResolved resolved = ResolveEnvironment(m_EffectiveState, m_SceneBase);
+        resolved.Fog.DensityAtBaseHeight += Rendering::MakeRainFogBoost(m_EffectiveState.RainIntensity, m_RainTuning);
+        return resolved;
     }
 
     bool EnvironmentSystem::PushOverride(EnvironmentOverrideScope scope, const EnvironmentTarget& target)
@@ -313,6 +354,12 @@ namespace NorvesLib::Core::Environment
     {
         if (m_bEnabled)
         {
+            if (m_bRainTuningPublishPending)
+            {
+                renderWorld.SetRainTuning(m_RainTuning);
+                m_bRainTuningPublishPending = false;
+            }
+
             const EnvironmentResolved resolved = Resolve();
             renderWorld.SetSkyAtmosphere(resolved.Sky);
             renderWorld.SetVolumetricFogParameters(resolved.Fog);
