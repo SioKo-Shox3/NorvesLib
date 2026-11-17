@@ -262,6 +262,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/GpuParticle/GpuParticleSpawnPlanner.cpp
     Private/Rendering/GpuParticle/GpuParticleEmitterAllocator.cpp
     Private/Rendering/GpuParticle/GpuParticleSimulationPass.cpp
+    Private/Rendering/GpuParticle/GpuParticleDrawPass.cpp
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
     Private/Rendering/CanvasView.cpp
@@ -758,6 +759,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/GpuParticle/GpuParticleTypes.h
     Public/Rendering/GpuParticle/GpuParticleFrame.h
     Public/Rendering/GpuParticle/GpuParticleSimulationPass.h
+    Public/Rendering/GpuParticle/GpuParticleDrawPass.h
+    Public/Rendering/GpuParticle/GpuParticleDraw.h
     Public/Rendering/TextureAssetTypes.h
     Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h

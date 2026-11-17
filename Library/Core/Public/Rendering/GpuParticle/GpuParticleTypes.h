@@ -79,7 +79,8 @@ namespace NorvesLib::Core::Rendering
     /// シフト前の曲線キー数のマスク。0 は曲線なし。
     inline constexpr uint32_t kGpuCurveKeyCountMask = 0xFFu;
 
-    /// GPU の粒。xyz は位置・速度、w は年齢・寿命。Meta は通し番号・エミッタのスロット・状態の旗・予約 0。
+    /// GPU の粒。xyz は位置・速度、w は年齢・寿命。Meta[0..2] は通し番号・エミッタのスロット・状態の旗。
+    /// Meta[3] は命中の法線（八面体 15+15 bit、bit 31 が法線あり。0 は法線なし。GLSL の GpuParticlePackNormal）。
     struct alignas(16) GpuParticle
     {
         float PosAge[4];

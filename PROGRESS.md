@@ -11994,18 +11994,27 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: 混ぜの道具（永続の出力の作成 `CreateSkyCloudBlendOutputTexture` と、記述子・定数をフレームの持ち主から借りて全ミップをディスパッチする `SkyCloudBlendRecorder`）は paths の内の `IblGeneration.{h,cpp}` に置いた。放射輝度 LUT の混ぜの単位曇天の入力は、同じ大きさの単位曇天の環境（1 ミップ）を使う。混ぜが使えない文脈（記録器の初期化の失敗・フレームの持ち主の無い手組みの文脈）では晴天の入力をそのまま公開する（雲量は空の LUT・IBL に効かない）。
 - Notes: 既知の限界: スイープの開始のフレームは、雲量 0 を当てた同じフレームで 1/frames まで進む。単位曇天の入力が作れなかったときは重みを (1,0) にして晴天を写す（警告 1 回）。
 
-- U1 空の遮蔽のクリップマップに樹冠だけの組を足し、RTGI・DDGI の拡散に掛ける: 着地(直し 0 回)
-- U2 instance mask 0x04 を定義し、印を DrawParams・バッチの鍵・TLAS の mask・RT の影の光線へ通す: 着地(直し 0 回)
-- U3 散布の樹冠の種と手置きの物に印を立て、Game をビルドする: 着地(直し 0 回)
-- U4 空の遮蔽が無効のフレームは樹冠の印を TLAS の mask に使わず、0x01 のまま光線に当てる: 着地(直し 0 回)
+- U1 粒に命中の法線を残す（SurfaceAligned の向き）: 着地(直し 0 回)
+- U2 描画の定数・結合番号・GLSL の共通部を決める: 着地(直し 0 回)
+- U3 ParticleDraw.vert（板・筋・面に沿う板）: 着地(直し 0 回)
+- U4 ParticleDraw.frag（形・ソフト・霧・環境光・出力）: 着地(直し 0 回)
+- U5 GpuParticleDrawPass（PreTAA と PostTAA の 2 インスタンス）と登録: 着地(直し 0 回)
+- U6 PreTAA の被覆率を Scene.Reactive へ書き、全体を確かめる: 着地(直し 0 回)
 
-## G11-GR56-SKY-OCC-RT 樹冠だけの空の遮蔽で RTGI・DDGI の拡散を補い、樹冠を instance mask 0x04 で TLAS へ入れる（2026-11-17、run 20261117-113256）
-- Done: 空の遮蔽のクリップマップの可視率の画像を max(2 × 段の数, 2) 層にし、層 N+k に「樹冠だけ」の L1 の組を `Integrate.comp` が全種別の組と同じ歩みで積分して書く（樹冠の区間だけを数え、地面の高さより下に入った向きはそこまでの樹冠の厚さで止める）。`lighting.frag` は空の遮蔽が公開され RTGI か DDGI が使えるフレームだけ、`EvaluateSkyCanopyVisibility`（`Common/SkyOcclusion.glsl`）の可視率を `rtgiDiffuseRadiance`（`EvaluateRTGIEndpoint` の拡散）と `ddgiIrradiance`（DDGI の照度）に掛ける。鏡面は円錐のまま。UBO・binding は変えず、`GpuLayoutRegistry.md` に層の並びを書いた。
-- Done: `RayTracingInstanceMaskSkyMapProxy = 0x04`（`FramePacket.h`・`Common/RayTracingInstanceMask.glsl`）。`MeshProxy`・`MegaGeometryProxy`・`DrawParams`・`MeshBatch`（バッチの鍵の bit 1）に `bSkyMapProxy` を足し、`BuildFrameSnapshot` と MegaGeometry の席（全量・写しの経路）の mask を「影を落とさない物 0x02 / 印つきの影を落とす物 0x04 / ほか 0x01」にした。proxy の hash・instanced の物体 ID の照合にも入れた。RT の影の光線の cull mask を 0x05 にし、RT の影のパスの fallback は `HasRayTracingShadowCasters()`（0x01|0x04）で判定する。DDGI・RTGI の光線（0x01、拡散の 0x03）と PT（0xFF）は変えていない。
-- Done: 印を立てる側。`MeshComponent` の `PROPERTY(bool, bSkyMapProxy)`（`SetSkyMapProxy`・`IsSkyMapProxy`。派生の `MegaGeometryComponent` も proxy へ写す）と、`MegaGeometryScatterComponent` の同じ PROPERTY・行の Flags の bit 2。`ScatterSystem` は Mega の経路の種で、空の遮蔽が有効かつ樹冠の種別なら印を立てる。空の遮蔽が無効のフレーム（既定）は印があっても 0x01 で TLAS に入れ、光線が樹冠を解く。
-- 証拠: `.harness/runs/20261117-113256/verify-G11-GR56-SKY-OCC-RT-U3.txt`（`lighting.frag`・`SkyOcclusion/Integrate.comp`・`forward_transparent.frag`・`RayTracing/RayTracingShadowRayGen.glsl`・`RTGI/DiffuseIndirect.comp`・`DDGI/ProbeRadiance.comp` が glslangValidator（Vulkan 1.2。BOM を外し include の拡張を足した写し）で EXIT=0、`cmake --build build --config Debug --target Game -- /m:1` が BUILD_EXIT=0）と `verify-G11-GR56-SKY-OCC-RT-U4.txt`（全単位を着地させた木で同じ Game のビルドが終了コード 0・Game.exe までリンク、numstat の 2 通りが一致）。verify の ctest の行が選ぶ試験は回さない決まりの試験（Vulkan・Golden）なので回していない。done-when の試験の追加（RTGI・DDGI・PT の mask 0x04 のケース、樹冠の場面の RTGI 有効の変種）は試験を作らない決まりで作っていない。
-- 人が見るときの見どころ: 今の散布で樹冠の種別の種は草原の低木（Foliage の経路で TLAS に入らない）だけなので、ランチャーと各シーン（Rendering3DTest・草原・荒野）の TLAS と見た目は変わらない。Mega の経路の樹木に樹冠の空の遮蔽を付けた森で `--sky-occlusion` と RTGI か DDGI を有効にしたとき、樹冠の下の地面が RTGI を切ったときと近い暗さになること（二重に暗くならないこと）と、樹木の RT の影が落ちることを見る。
-- 採った判断: done-when の「0x02|0x04」から 0x02 を外し、樹冠は 0x04 だけにした（0x02 を立てると `SetRTGINonShadowCasterOcclusion` の拡散の光線 0x03 に当たり、樹冠の下が二重に暗くなる）。影を落とさない物は印があっても 0x02 のまま。空の遮蔽が無効のフレームは補いが働かないので、印つきの物も 0x01 に戻す。樹冠の照り返し（`skyOcclusionBounce`）は RT の経路に足していない。下草の層は樹冠だけの組に入れていない（要件の「樹冠の種別だけ」）。
-- 既知の限界: RTGI・DDGI の当たりの点の太陽の影の問い合わせ（`DiffuseIndirect.comp`・`ProbeRadiance.comp`・`ProbeEmitterSampling.glsl` の 0x01）は樹冠を見ないので、光線が当たった樹冠の下の地面は日なたとして照り返しを返す。CPU の正解（`SkyOcclusionReference`）に樹冠だけの組は無い。半透明（`forward_transparent.frag`）は樹冠だけの組を使わない。空の遮蔽の公開を見送ったフレーム（遮蔽物の列の上限超え）は、TLAS は 0x04 のまま照明の補いだけが抜ける。
-- Next: ランナーの評価者の反証（RT の契約・lighting.frag・Public API の危険地帯）。起動と GPU 時間の確かめは G11-GR56-SKY-OCC-CHECK。
-- Notes: 統合ブランチ（feature/scene-launcher）の取り込みの後、TEST-REMOVE-1114 で試験のターゲットが消えて元の verify のビルドの行は MSBuild が MSB1009 で落ちる（取り込み直後の 1 回目は同時に走るほかの枠のビルドで MSBuild が OutOfMemoryException）。verify を残るターゲットの Game のビルド 1 行に揃えた（done-when は変えていない）。取り込み後の `cmake --build build --config Debug --target Game -- /m:1` は EXIT=0・エラー 0 件（`.harness/runs/20261117-113256/sync-rebuild-game.txt`）。
+### G7-GR57-GPU-DRAW GPU の粒の描画（板・筋・面に沿う板、TAA の前と後）（2026-11-17、run 20261117-103233・反復 1、完了）
+
+- Done: `GpuParticleDrawPass`（IViewPass と IRenderGraphPass）を足し、`GpuParticleDrawPreTAA`（Transparent の段。ForwardPass の後・DistortionPass の前、SSRSceneColor か SceneColor へ Load/Store）と `GpuParticleDrawPostTAA`（PostTemporalAA の段。`ResolveHdrChainHead` の HDR の色、ジッタを外したカメラ）の 2 インスタンスを `RegisterGpuParticleSimulationExtension` から登録した。レンダーパスは色 1 枚（深度の添付なし）で、Scene.Depth はシェーダー資源で読む。描画はエミッタごとの `DrawInstanced(6, Capacity, 0, PoolOffset)`、ブレンドごとに premultiplied（One・InvSrcAlpha）と加算（One・One）のパイプライン。GPU のエミッタが 0 件・その段のエミッタが 0 件のフレームは何も宣言・記録しない。
+- Done: シミュレーションのプールを `GpuParticle.Pool` の名前でレンダーグラフへ公開し、描画のパスが読む。グラフ上は UAV の読みとして宣言し、描画の前後で `UAV → GenericRead → UAV` の barrier を置く（compute の書き込みと頂点の読みの同期と、次のフレームの `ImportBuffer(UnorderedAccess)` の前提を両立）。
+- Done: `Assets/Shaders/Particles/ParticleDraw.{glsl,vert,frag}` を足した。頂点は `gl_InstanceIndex` でスロットを引き、Billboard（カメラの右・上）・VelocityStretch（頭 P・尾 P − v_rel×StreakShutterSeconds×伸び。ニア面で切ってから投影し、画面の向きに直交する幅、幅 1px 未満は 1px にして不透明度を幅の比で下げる）・SurfaceAligned（命中の法線に沿う板。法線が無ければ Billboard）。v_rel のカメラの速度は前のカメラが連続でないフレームは 0。大きさ・色・不透明度・伸びは寿命の折れ線（CPU の `UpdateOverLife` と同じ意味）。断片は手続きの丸・筋、ソフト = saturate((場面の線形深度 − 粒の線形深度)/SoftDistance)、奥の棄却、近距離のフェード、AmbientTinted（拡散の放射照度を視線の側で引く。資源が無ければ Scene の環境光）、`EvaluateHeightFogForward` の霧（FogInfluence で寄せる）、プリエクスポージャを掛けた出力。
+- Done: 粒の `Meta[3]` に衝突で留まった・跳ねた面の法線を八面体 15+15 bit で残す（bit 31 が法線あり、0 は法線なし）。PreTAA の premultiplied の粒は被覆率を `ReactiveTargetBinder` で Scene.Reactive へ書く（加算と PostTAA の粒は書かない）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` がエラー 0、`ParticleDraw.vert`・`ParticleDraw.frag`・`ParticleUpdate.comp`・`ParticleSpawn.comp` を逆 Z と標準 Z の両方で glslc（vulkan1.2、BOM を除いた写し）にかけて 8 本とも通った。done-when の試験（`GpuParticlePassOrderTest`・`GpuParticleShaderCompileTest`・`GpuParticleRenderVulkanTest` と閾値の表）は試験を作らない決まりで作っていない。撮影・GPU の計測の確かめは回さない決まり。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread・パスの並び・TAA の入力）。間接の描画は G7-GR57-GPU-INDIRECT。人が見るときの見どころ: 今は Executor=Gpu の効果を使うシーンが無いので、既存のシーン（Rendering3DTest の天球・地面・球・岩、ランチャーの各シーン）の見た目が変わらないことを見る。GPU の効果を置いたときは、雨・しぶきの筋（PostTAA・VelocityStretch）の長さと幅がカメラを動かしても破綻しないこと、灰・埃（PreTAA・premultiplied）が地面との交わりで柔らかく消え TAA の残像が出ないこと、AmbientTinted の粒が空の色に追随すること、霧の奥で粒が霧に沈むこと。
+- Notes: 既知の限界: テクスチャと GR136 のフリップブックの UV は、フレームの写し（`GpuParticleEmitterFrame`）にテクスチャの情報が無いので使っていない（手続きの形だけ）。粒の深度の並べ替えはしない（重なりの順はスロットの順）。空が無効のシーンでも AmbientTinted は既定の環境の IBL（grasslands_sunset）の放射照度を引くので夕焼けの色が着く。VelocityStretch の筋の端の幅のずらしに対応するワールド位置は端の深度での画素の大きさで近似している（霧と深度の比較だけに使い、ずれは幅の半分以下）。
+- U7 描画の拡張の名前を Ext.Engine. の形にして段へ登録されるようにする（差し戻しの直し）: 着地(直し 0 回)
+
+### G7-GR57-GPU-DRAW 差し戻しの直し（2026-11-17、run 20261117-103233・反復 2、完了）
+
+- Done: 描画の拡張の名前を `Ext.Engine.GpuParticleDrawPreTAA`・`Ext.Engine.GpuParticleDrawPostTAA` にした（定数は `GpuParticleDraw.h`、登録と `GetName` の両方で使う）。`RenderExtensionRegistry::Register` は名前が `Ext.` で始まらないと拒否するため、反復 1 の名前では 2 つの描画パスがどちらの段にも入らず、起動のたびに「GPU の粒の更新拡張を登録できませんでした」の警告が出ていた。これで Transparent の段（ForwardPass の後・DistortionPass の前）と PostTemporalAA の段（TemporalAA の後）へ登録される。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0・エラー 0（`Core.lib` と `Game.exe` ができた）。`"GpuParticleDrawPreTAA"`・`"GpuParticleDrawPostTAA"` の裸の文字列は grep で 0 件。行末は `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。試験は作らない決まりで作っておらず、ctest も回していない。撮影・GPU の計測・Game の起動の確かめは回さない決まり。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread・パスの並び・TAA の入力）。人が見るときの見どころ: Game の起動のログに `拡張 'GpuParticleDraw...' の登録を拒否しました` と「GPU の粒の更新拡張を登録できませんでした」が出ないこと。既存のシーン（Rendering3DTest の天球・地面・球・岩、ランチャーの各シーン）は GPU のエミッタが 0 件なので見た目が変わらないこと。
+- Notes: 反復 1 の Done の行にある `GpuParticleDrawPreTAA`・`GpuParticleDrawPostTAA` は、今は `Ext.Engine.` の付いた名前。
