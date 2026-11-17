@@ -10,6 +10,7 @@ namespace NorvesLib::Core::Rendering
      *
      * 風の値は持たない（風は WindParameters）。revision のハッシュには DiscontinuityId だけを入れ、
      * 雨量・濡れ・雲量・時刻は入れない。これらが変わるたびに RTGI の履歴が捨てられることを防ぐ。
+     * 太陽の高度・方位を revision に入れるときの量子化の幅も渡す。
      */
     struct EnvironmentParameters
     {
@@ -27,12 +28,15 @@ namespace NorvesLib::Core::Rendering
         uint32_t Seed = 0;
         /// 天気の不連続（瞬時の切り替え・読み込み）のたびに進め、時間の履歴を切る印。
         uint32_t DiscontinuityId = 0;
+        /// シーンの revision に入れる空の太陽の高度・方位の量子化の幅（度、0 以上）。0 は量子化せずそのまま入れる。
+        /// 時計が太陽を連続に動かすときに正の幅を渡し、幅をまたいだフレームだけ RTGI の履歴を切る。
+        float SunRevisionQuantizationDegrees = 0.0f;
     };
 
     /// 環境の値を描画が使わない既定の設定を返す。
     EnvironmentParameters MakeDefaultEnvironmentParameters();
 
-    /// 非有限値を既定値に戻し、雨量・濡れ・雲量を [0, 1]、時刻を 0 以上に整える。
+    /// 非有限値を既定値に戻し、雨量・濡れ・雲量を [0, 1]、時刻と太陽の量子化の幅を 0 以上に整える。
     EnvironmentParameters SanitizeEnvironmentParameters(const EnvironmentParameters& in);
 
     static_assert(std::is_trivially_copyable_v<EnvironmentParameters>);
