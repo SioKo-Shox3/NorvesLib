@@ -7672,7 +7672,7 @@
 - notes: GR36 の (C)(D)（要件 3835-3841 行）。段階をまたぐ注意（ロードマップ 4386・4452・4473 行）に従い、表面の点は `SurfaceSampleTable`、位置だけのスキニングは G3 の `SkinPosition`（G3-GR12 で done。SkeletalPoseBounds.h:43）を使い、自前で作らない。`SurfaceSampleTable` は GR57 の P6 が G10 の GR60 へ移った（4431 行の案のとおり。G10-GR60-SKIN-SURFACE-EMITTER）ので、G10 の GR60 を needs-gr に入れた（G11 は G10 を段階として待たないが、この項目だけは表を待つ）。放出の列 `GpuParticleBurstQueue` と効果の形は G7 の項目の名前（G7-GR57-GPU-SIMULATION・G7-GR57-GPU-DEFINITION）に合わせた。要件の「表面のサンプル点を自前で選ぶ（最寄りの頂点の簡易版）」は作らない。UniRig の 14 関節では耳・頬の揺れからの飛散は出ない（要件のリスク。共通の骨格 GR103 で良くなる）。動画由来の BVH は 1 コマ 1/30 秒と書かれるが入力の動画は 16fps なので、取り込みの時間の直しは G2 の範囲（速度の差分に直接効く）。点の数（128〜512）と上限は要件の案で、根拠は要件だけ。試験を足す理由: 反証する契約は「表面の点の速度が回転の解析値に合う」「濡れていない・止まっているときに出ない」「上限を守る」。速度の誤りは水滴の飛ぶ向きの不自然さとしてしか見えず、数の超過は後のフレーム時間として出るので黙って起きる。ロードマップ 1985・1996 行。
 
 ## G12-GR47-PLACEMENT-COOK: 手で置く森・岩の配置の一覧を NVSCT に cook し、散布に空間の照会・1 本の非表示の保存・RT に入れるかの指定を足す
-- status: todo
+- status: done
 - after: G5-GR90-SCATTER-RUNTIME, G12-GR47-INSTANCE-VARIATION, G5-GR90-SCATTER-BAKE
 - gr: GR47
 - needs-gr: GR90
@@ -10881,3 +10881,12 @@
   - 1 つ目: G11-GR59-PUDDLES の done-when (5) が「犬の毛の当たり方も遮蔽物の形から屋根を求めて渡す(`RainShelterVolume` と重なるときは小さい方)」を求めている(TASKS.md 7583 行)。しかし `FurCoatComponent` がまだ無かったので繋がれていない(PROGRESS.md 12069 行の既知の限界)。
   - 2 つ目: G6-GR35-WETNESS-STATE の notes は、樹冠の下の遮蔽を GR59 が入れる前提にしている(ロードマップ 1461 行)。ところが GR59 の残りの項目(RAIN-HIT・FOOT-SPLASH)にも、G11-GR36-WETNESS-DYNAMICS にもこの作業は無い。
   - 3 つ目: CPU の判定 `ComputeOverheadRainExposure` は実装済みだが、遮蔽物の一覧を GameThread から読む公開の口が無い。今の `RenderingCoordinator` には `GetSkyOccluderCount` しか無く、散布の遮蔽物は拡張データで RenderThread へ出ているだけ。
+
+## G11-GR52-CLOUD-SHAFTS-P1: GPU の粒子・インポスター・剣のトレイルの前向きの霧に、局所霧を掛ける
+- status: todo
+- done-when: (1) `Assets/Shaders/Particles/ParticleDraw.glsl` の描画定数の UBO の末尾に `LocalFogParams localFog` を足す。C++ 側は `GpuParticleDraw.h` の定数の型の末尾に `GPULocalFogParams` を足し、offset と大きさを `static_assert` で固定する。`GpuParticleDrawPass.cpp` は `BuildLocalFogGpuParams` でこの欄を埋める（`context.SnapshotScene->LocalFogVolumes` から。`VolumetricsPass.cpp:758` と同じ呼び方）。`ParticleDraw.frag` は `forward_transparent.frag`・`world_board.frag` と同じ順と関数で `EvaluateLocalFogForward` を評価し、高さフォグの後に掛ける。掛け方はブレンドで分け、アルファは `ApplyLocalFogPremultiplied`、加算は `ApplyLocalFogAdditive` を使う。(2) `impostor.frag` の `WorldBoardForwardData` に `LocalFogParams localFog` を足し、同じ形で掛ける。置き場は C++ の `WorldBoardForwardUBO` と同じ offset 288 で、C++ 側は既に埋めているので触らない。(3) `RibbonTrailRenderer.h` の `RibbonTrailHeightFog` に `GPULocalFogParams` の欄を足す。`RibbonTrailRenderer.cpp` はその値を UBO の末尾へ写す（`static_assert` 付き）。`ForwardPass.cpp` の `RibbonTrailHeightFog` を作る所（1796 行付近）で、既にある `localFogParams` を渡す。`ribbon_trail.frag` は加算とアルファの別に合わせて局所霧を掛ける。(4) 局所霧が 0 個のときは、3 つのシェーダーとも出力が今と同じになる（`EvaluateLocalFogForward` が恒等になる経路を通る）。`rain_curtain.frag` は対象外。霧の放射輝度を幕の色に使っているだけで、前向きの霧の透過は掛けていないため。(5) Debug で Game のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Assets/Shaders/Particles/ParticleDraw.glsl, Assets/Shaders/Particles/ParticleDraw.frag, Assets/Shaders/impostor.frag, Assets/Shaders/ribbon_trail.frag, Library/Core/Public/Rendering/GpuParticle/GpuParticleDraw.h, Library/Core/Private/Rendering/GpuParticle/GpuParticleDrawPass.cpp, Library/Core/Public/Rendering/RibbonTrailRenderer.h, Library/Core/Private/Rendering/RibbonTrailRenderer.cpp, Library/Core/Private/Rendering/ForwardPass.cpp, TASKS.md, PROGRESS.md
+- effort: high
+- from: G11-GR52-CLOUD-SHAFTS
+- notes: G11-GR52-LOCAL-FOG の done-when (3)（TASKS.md 7631 行）の取りこぼし。要件は「`Common/HeightFog.glsl` に同じ項を足し、半透明・板・粒子（GR51 が霧を掛ける前向きの描画）にも局所霧が効く」。ところが局所霧を掛けているのは `forward_transparent.frag` と `world_board.frag` だけで、`ParticleDraw.frag`・`impostor.frag`・`ribbon_trail.frag` は高さフォグしか掛けていない（`LocalFog` を grep しても当たらない）。インポスターは板と同じ UBO を使い、C++ 側は局所霧を offset 288 に既に詰めているので、変更はシェーダーの宣言と呼び出しだけで済む。局所霧は危険地帯（半透明・volumetrics）で、`ForwardPass.cpp` は共有のファイルなので、差分は呼び出しの 1 か所に絞る。試験は足さない（決まり）。

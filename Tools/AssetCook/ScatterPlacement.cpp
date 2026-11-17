@@ -13,6 +13,26 @@ namespace NorvesLib::Tools::AssetCook
     using Core::Container::VariableArray;
     namespace Asset = Core::Asset;
 
+    uint64_t MixScatterSeed(uint64_t value)
+    {
+        // splitmix64 の全単射で、入力の各ビットを決定的に拡散する。
+        value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ull;
+        value = (value ^ (value >> 27)) * 0x94d049bb133111ebull;
+        return value ^ (value >> 31);
+    }
+
+    uint64_t ScatterSpeciesKey(const AnsiString& name)
+    {
+        // 種表の番号ではなく名前のバイト列を FNV-1a64 にし、表の並べ替えに依存させない。
+        uint64_t hash = Asset::CookedTextureFormatV0::Fnv1a64OffsetBasis;
+        for (char value : name)
+        {
+            hash ^= static_cast<uint8_t>(value);
+            hash *= Asset::CookedTextureFormatV0::Fnv1a64Prime;
+        }
+        return hash;
+    }
+
     namespace
     {
         constexpr double Pi = 3.1415926535897932384626433832795;
@@ -31,19 +51,11 @@ namespace NorvesLib::Tools::AssetCook
             return std::isfinite(value) && value >= 0.0 && value <= 1.0;
         }
 
-        uint64_t Mix(uint64_t value)
-        {
-            // splitmix64 の全単射で、入力の各ビットを決定的に拡散する。
-            value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ull;
-            value = (value ^ (value >> 27)) * 0x94d049bb133111ebull;
-            return value ^ (value >> 31);
-        }
-
         uint64_t Next(uint64_t& state)
         {
             // 呼び出し元のセル専用状態だけを進め、共有の乱数生成器を持たない。
             state += 0x9e3779b97f4a7c15ull;
-            return Mix(state);
+            return MixScatterSeed(state);
         }
 
         double Unit(uint64_t value)
@@ -52,25 +64,13 @@ namespace NorvesLib::Tools::AssetCook
             return static_cast<double>(value >> 11) * 0x1.0p-53;
         }
 
-        uint64_t SpeciesKey(const AnsiString& name)
-        {
-            // 種表の番号ではなく名前のバイト列を FNV-1a64 にし、表の並べ替えに依存させない。
-            uint64_t hash = Asset::CookedTextureFormatV0::Fnv1a64OffsetBasis;
-            for (char value : name)
-            {
-                hash ^= static_cast<uint8_t>(value);
-                hash *= Asset::CookedTextureFormatV0::Fnv1a64Prime;
-            }
-            return hash;
-        }
-
         uint64_t CellState(uint64_t seed, uint64_t species, int64_t x, int64_t z)
         {
             // 符号付き座標を合同な uint64 として畳み、負のセルでも未定義の演算を使わない。
-            uint64_t state = Mix(seed + 0x9e3779b97f4a7c15ull);
-            state = Mix(state ^ species);
-            state = Mix(state ^ static_cast<uint64_t>(x));
-            return Mix(state ^ static_cast<uint64_t>(z));
+            uint64_t state = MixScatterSeed(seed + 0x9e3779b97f4a7c15ull);
+            state = MixScatterSeed(state ^ species);
+            state = MixScatterSeed(state ^ static_cast<uint64_t>(x));
+            return MixScatterSeed(state ^ static_cast<uint64_t>(z));
         }
 
         uint8_t Byte(double value)
@@ -582,7 +582,7 @@ namespace NorvesLib::Tools::AssetCook
         {
             return Fail(error, "散布の調査セル数が uint64 の範囲外です");
         }
-        PlacementContext context{params, rule, terrain, SpeciesKey(rule.Name), cellSize, diskArea};
+        PlacementContext context{params, rule, terrain, ScatterSpeciesKey(rule.Name), cellSize, diskArea};
         ScatterPlacementStats result;
         const double spacingSquared = spacing * spacing;
         for (int64_t z = bz; z <= ez; ++z)

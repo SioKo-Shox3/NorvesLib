@@ -1178,6 +1178,8 @@ namespace Game
         m_ParallelPoseMinCount = 0;
         m_ParallelPoseGrain = 0;
         m_GrasslandScatterStressCount = 0;
+        m_bGrasslandForest = true;
+        m_bGrasslandForestSet = false;
         m_bGrasslandStreaming = false;
         m_bStreamingSnapTest = false;
         m_StreamingSnapTestX = 0.0f;
@@ -2422,6 +2424,22 @@ namespace Game
                     return false;
                 }
                 m_bGrasslandWitherRoundtrip = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], TEXT("--grassland-forest="), sceneValue))
+            {
+                if (m_bGrasslandForestSet)
+                {
+                    LOG_ERROR("--grassland-forest が重複しています");
+                    return false;
+                }
+                if (sceneValue != TEXT("on") && sceneValue != TEXT("off"))
+                {
+                    LOG_ERROR("--grassland-forest は on または off で指定してください");
+                    return false;
+                }
+                m_bGrasslandForest = sceneValue == TEXT("on");
+                m_bGrasslandForestSet = true;
                 continue;
             }
             if (TryStripPrefix(args[i], TEXT("--grassland-scatter-stress="), sceneValue))
@@ -6207,7 +6225,8 @@ namespace Game
             [mapCapture = &m_MapCapture, viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
              pathTime = m_CameraPathTime,
              bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu,
-             scatterStressCount = m_GrasslandScatterStressCount, bStreaming = m_bGrasslandStreaming,
+             scatterStressCount = m_GrasslandScatterStressCount, bForestPlacement = m_bGrasslandForest,
+             bStreaming = m_bGrasslandStreaming,
              bSnapTest = m_bStreamingSnapTest, snapTestX = m_StreamingSnapTestX, snapTestZ = m_StreamingSnapTestZ,
              bWither = m_bGrasslandWither, witherX = m_GrasslandWitherX, witherZ = m_GrasslandWitherZ,
              witherRadius = m_GrasslandWitherRadius, bWitherRoundtrip = m_bGrasslandWitherRoundtrip,
@@ -6216,6 +6235,7 @@ namespace Game
                 auto mode = MakeUnique<GrasslandMode>();
                 mode->GetData().m_Rig.SetMapCapture(mapCapture);
                 mode->GetData().m_ScatterStressCount = scatterStressCount;
+                mode->GetData().m_bForestPlacement = bForestPlacement;
                 mode->GetData().m_bStreaming = bStreaming || bSnapTest;
                 mode->GetData().m_bStreamingSnapTest = bSnapTest;
                 mode->GetData().m_StreamingSnapTestX = snapTestX;

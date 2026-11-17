@@ -1464,7 +1464,7 @@ namespace NorvesLib::Core::Rendering
         for (uint32_t index = 0; index < static_cast<uint32_t>(megaProxies.size()); ++index)
         {
             const MegaGeometryProxy& proxy = megaProxies[index];
-            if (!proxy.IsValid() || !IsFiniteRayTracingTransform(proxy.WorldTransform))
+            if (!proxy.bRayTracing || !proxy.IsValid() || !IsFiniteRayTracingTransform(proxy.WorldTransform))
             {
                 continue;
             }
@@ -1659,7 +1659,7 @@ namespace NorvesLib::Core::Rendering
                                                      MegaSlotEntry& entry)
     {
         entry = MegaSlotEntry{};
-        if (!proxy || !proxy->IsValid() || !IsFiniteRayTracingTransform(proxy->WorldTransform))
+        if (!proxy || !proxy->bRayTracing || !proxy->IsValid() || !IsFiniteRayTracingTransform(proxy->WorldTransform))
         {
             return;
         }

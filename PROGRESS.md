@@ -12158,22 +12158,37 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 半透明とワールドの板の前向きの描画に局所霧を掛ける: 着地(直し 0 回)
 - U3 Entity に付けて動かせる LocalFogVolumeComponent を足し、全体のビルドとシェーダーの検査で仕上げる: 着地(直し 1 回)
 
-## G11-GR55-NIGHT 太陽が地平線の下（−20° まで）でも空・照明が壊れず暗くなり、月明かりの方向光と夜の露出の下限で夜が見えるようにする（2026-11-17、run 20261117-185438 の反復 1〜2）
-- Done: `SanitizeSkyAtmosphereParameters` の太陽高度を −20〜90 度に広げた（`SkySunMinAltitudeDegrees`）。高度が負のときはモデルの地表の太陽の透過率・`ComputeSunGroundTransmittance`・`ComputeSunGroundIlluminance` を 0 にする。正の高度の式・演算の順は変えていない。`SkyAtmosphereParameters` に月明かり（`MoonIlluminanceLux`・`MoonAltitudeDegrees`・`MoonAzimuthDegrees`・`MoonColor`・`bMoonCastShadows`）と自動露出の下限の上書き（`bOverrideAutoExposureMinEV100`・`AutoExposureMinEV100`）の欄を足した（等価判定・晴天の鍵・SceneRevision には入れない）。
-- Done: 空のキーフレームの既定の表の先頭に −20〜−0.5 度の高度を足した。太陽高度が負のときは放射輝度 LUT の円盤の印と太陽の円盤のテクスチャを 0 にする。
-- Done: `Assets/Data/Environment/NightLight.json`（形式 1。月の照度 0.2 lux・色 0.75/0.85/1.0・影なし・強さを上げる太陽高度 0〜−6 度・月の最低の高度 30 度・夜の MinEV100 −1）と `SunPath.{h,cpp}` の `NightLightSettings`・`LoadNightLight`・`EvaluateNightLight` を足した。重みは smoothstep、月の向きは太陽の方位の反対で、高度は「太陽高度の符号を反転した値」を最低の高度〜90 度に収めたもの。露出の下限は既定の −4 から夜の値へ同じ重みで寄せる。`EnvironmentSystem` は Enable で読み、`Resolve` で上書き後の太陽から月明かりと露出の上書きを空へ書く。
-- Done: `AutoExposureSettings` に `bOverrideMinEV100`・`MinEV100Override` を足し、`ComputeAutoExposureFromHistogram` は上書きがあれば下限をその値（上限以下）にする。`AutoExposurePass::Execute` が毎フレーム空のスナップショットから写す。
-- Done: `MakeSkySunLightProxy` は太陽高度が負なら false。`SkyMoonLightId`・`IsSkyMoonLight`・`MakeSkyMoonLightProxy`・`MakeSkyDirectionalLightProxy`（太陽を優先し、無ければ月）を足し、`ReplaceSkySunLight` と `RenderingCoordinator::UpdatePacketLights` は空の方向光（太陽か月の 1 灯）を置く。影を落とす方向光が無いフレームでは、VSM（`VirtualShadowMapClipmap.cpp` が無効なクリップマップを返す）・CSM（`CascadedShadowLightMatrices.cpp` が無効な結果を返す）とも影を描かず、`lighting.frag`・`forward_transparent.frag` は選ばれた方向光だけに影を掛ける（読んで確かめた）。
-- Done: `--sun-elevation` の受け付け・`ConvertLightControllerAnglesToSkySun` の丸め・`CaptureStartupScene.ps1` の `-SunElevations` を −20〜90 度へ、Rendering3DTest の毎フレームの丸め（ピッチ 20 度まで）と仰角のスライダーも −20〜90 度へ広げた。
-- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた版。`Core.lib` と `Game.exe` まで）。編集したファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。
-- Next: ランナーの評価者の反証（危険地帯: 空の Sanitize は全シーンに効く・光源表）。夜の露出の下限の値（仮の −1）は G11-GR55-NIGHT-CHECK で決めてデータへ書く。撮影・計測の確かめは回さない決まり。人が見るときの見どころ: `--scene=rendering3dtest --clock --time-of-day=0`、Rendering3DTest で矢印キーか ImGui の仰角のスライダーで太陽を地平線の下へ、`--sun-elevation=-10 --rain=0`。空が黒や白の点・縞を出さずに暗くなること、太陽の円盤が地平線の下で消えること、0〜−6 度で地面に青白い弱い方向光が増えること、夜でも昼のように明るく持ち上がらず暗いまま形が見えること。`--sun-elevation` を付けない起動画面が前と同じに見えること。
-- Notes: 試験は作らない決まり（絶対規則 11）なので `SkyAtmosphereModelTest`・`EnvironmentClockSkipTest`・`AutoExposureMathTest` のケースは足していない。`RenderingGolden*`・`R2SkyGoldenCurrentModelTest`・`PathTracingOutdoorVulkanTest` も回していない。変えた API の既存の呼び出しは引数の形を変えていない（足した欄は既定値つき、位置指定の初期化は無い）。
-- Notes: 判断: paths の外を最小に触った。`RenderingCoordinator.cpp` は `UpdatePacketLights` の呼び出し 1 行とコメント、`SkySunLight.h` は月の宣言、Rendering3DTest の `Rendering3DTestRoutine.cpp`・`DirectionalLightEditSubRoutine.cpp` は太陽の操作の範囲（`--sun-elevation`・矢印キーの範囲が Rendering3DTest で効くため）。月明かりと露出の下限は空のパラメータの欄で FramePacket 越しに運ぶ。月の LightId は `SkySunLightId - 1`。
-- Notes: 既知の限界: 月の影を有効にしても、影を落とせる方向光がほかにあると影の選び方（`DirectionalShadowLightMatrices.cpp`）は月を選ばない。パストレーサーは月を普通の方向光として数える。`NORVES_STARTUP_SUN_STEP`（Rendering3DTestRoutine.cpp）は今も負の高度を拒む。`CaptureStartupScene.ps1` の露出の表は負の高度で 0〜3 度の区間から外挿する（−20 度で約 EV100 7.67）。`IblGeneration.cpp` の 505 行付近は、ごく暗い一様の入力で FP16 の丸めが相対誤差の許容を超えて IBL の生成が失敗する見込みがある（夜の空で起きるかは未確認）。`sky_atmosphere.frag` へ渡る円盤の輝度の均一変数の経路は読み切っていない（背景とパストレーサーは 0 にした円盤のテクスチャを引く）。
-- U1 空の sanitize を −20〜90° に広げ、負の高度の直達を 0 にし、月明かりと露出の上書きの欄を足す: 着地(直し 0 回)
-- U3 空のキーフレームの表に負の高度を足し、太陽が地平線の下のとき円盤を消す: 着地(直し 0 回)
-- U6 Game の引数・Rendering3DTest の太陽操作・撮影の台本の太陽高度の範囲を −20〜90 へ広げる: 着地(直し 0 回)
-- U4 夜の光のデータ（NightLight.json）と月明かりの規則を足し、EnvironmentSystem の解決で空へ書く: 着地(直し 1 回)
-- U5 自動露出の MinEV100 を上書きする口を足し、パスが空のスナップショットから毎フレーム当てる: 着地(直し 1 回)
-- U7 Rendering3DTest の太陽の操作（毎フレームの丸めと仰角のスライダー）を −20〜90 度へ広げる: 着地(直し 1 回)
-- U2 太陽は地平線の下で方向光を作らず、月明かりの方向光を作る関数を足して描画の光源表へつなぐ（最後）: 着地(直し 0 回)
+- U1 NVSCT v0 に種の印・衝突の形の表・個体差の種の配列を足す: 着地(直し 0 回)
+- U2 SceneView の RT の除外の印と、TLAS の選択からの除外: 着地(直し 0 回)
+- U4 ScatterSystem が色味・個体差の種・影・RT の印を描画先へ渡す: 着地(直し 0 回)
+- U3 AssetCook に配置の一覧（JSON）の cook を足す: 着地(直し 0 回)
+- U5 ScatterSystem に空間の照会・1 本の非表示・非表示の集合の保存と復元を足す: 着地(直し 0 回)
+- U6 grassland の森の配置の見本を足して焼く: 着地(直し 0 回)
+- U7 grassland が森の配置を規則の散布と並べて置き、開発引数で外せるようにする: 着地(直し 1 回)
+
+## G12-GR47-PLACEMENT-COOK 手で置く森・岩の配置の一覧を NVSCT に焼き、散布に空間の照会・1 本の非表示・RT の指定を足す（2026-11-16、run 20261116-141756）
+- Done: NVSCT v0 に入力の口を足した（新しい形式は作らない）。種の Flags の bit1 = TLAS に入れない・bit2 = 影を落とさない、種ごとの衝突の形の表（幹のカプセルなど。種のローカル）、個体差の種の配列。新しい欄がすべて 0 のときは旧の予約欄と同じ並びで、規則で焼くファイルはバイト単位で今と同じ。`Docs/Architecture/NVSCTv0.md` を合わせた。
+- Done: AssetCook の散布の入口（`--kind world --format nvsct.v0.inst16`）が、規則の spec のほかに配置の一覧の JSON（種の表: メッシュの論理パス・描く経路・影・`ray_tracing`（既定 真）・衝突の形の一覧、個体の列: 種・位置・ヨー・拡大・色味・種）を読み、地形の格子のチャンクに位置で分けて同じ書き手で焼く（`Tools/AssetCook/ScatterPlacementList.{h,cpp}`）。量子化は NVSCT v0 の規則に従い、範囲外の拡大・NaN・未知の種・チャンクの寸法の不正を種別つきで拒否する。
+- Done: `ScatterSystem` が NVSCT の色味・個体差の種を `MegaScatterInstance` へ渡し、種の印で影と TLAS への参加を切り替える（TLAS は `SceneView` が ComponentId ごとの除外の印を持ち、公開の時に `MegaGeometryProxy::bRayTracing` を付けて SCN-MEGA-RT-SELECT の選択から外す。既存の散布は印が無いので今どおり入る）。`ForEachInstanceInRadius`（常駐のチャンクだけを AABB で先に捨てて走り、範囲が全部常駐かを返す）、`SetInstanceHidden`・`IsInstanceHidden`（`ScatterInstanceId` = 散布・チャンク・チャンク内の番号。チャンクの解放と読み直しをまたいで覚え、常駐のたびに当て直す）、`SerializeHiddenInstances`・`RestoreHiddenInstances`（セーブへ渡す口。結線は GR76 の側）を足した。
+- Done: `Assets/Scatter/grassland.forest.placement.json`（針葉樹 14000・枯れ木 4000（`ray_tracing` 偽）・岩 2000 の 2 万本、仮のメッシュ）を足し、資産の一覧 `GrasslandTerrain.json` で `Assets/Terrain/Grassland/GrasslandForest.nvsct` に焼く。grassland は地形の準備ができたら森を別の散布 `grassland_forest`（距離の常駐。木 384 m・岩 256 m）として規則の散布と並べて置き、シーンの終了・入場の失敗で外す。開発ビルドだけ `--grassland-forest=off` で森だけを外せる（既定 on。重複・不正な値は起動を止める）。
+- 証拠: `.harness/runs/20261116-141756/verify-G12-GR47-PLACEMENT-COOK-U7.txt`（`cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT=0、Game.exe までリンク。CookAssets で森を焼いて `SCATTER_COOKED chunks=204 species=3 instances=20000`・`COOK_ASSETS cooked=1 skipped=0`・EXIT=0）。
+- 回さなかったもの: done-when の `ScatterSystemQueryTest` の新設と `CookedScatterTest` のケースの追加は、試験を作らない決まり（絶対規則 11）で作っていない。verify の ctest の行も回していない。撮影・アプリの起動はしない決まり。
+- Next: ランナーの評価者の反証（危険地帯: アセットのクック・Public API の `ScatterSystem`・TLAS の選択）。人が見るときの見どころ: grassland（ランチャーの草原）で規則の散布（岩・倒木・低木・草花）と並んで針葉樹・枯れ木・岩の森が出ること、枯れ木だけが RT の反射・影の光線に映らないこと、`--grassland-forest=off` で森だけが消えて規則の散布は残ること、遠くへ動くと森が 384 m（岩は 256 m）で出入りすること。ほかのシーン（Rendering3DTest・荒野のバナナ・岩の散布）は見た目が変わらないこと。
+- Notes: `--grassland-forest=` の解析とモードへの受け渡しは置き場が `Game/GameApplicationHandler.{h,cpp}`（paths の外）にしか無いため、引数 1 つの解析とメンバ 2 つ・キャプチャ 1 つだけを足した。
+- Notes: （2026-11-17、判断役の判断で再開）verify の 3 行目を `CookAssets.ps1 -OnlyLogicalPath` から AssetCook で森の配置を直接焼く形に替え、試験の行を外した。全体のクック（`-OnlyLogicalPath` なしの CookAssets と `.harness/relay/precook` の系）は止めて再開しない。枠 NorvesLib-2 の `build/CookedAssets` に残る途中の全体のクック（14 項目の manifest）は使わない。manifest が無いときの `-OnlyLogicalPath` の拒否は SCN-MEGA-RT-SELECT-P1 で扱う。
+- U8 配置の一覧の種の表で空の遮蔽物の欄を規則の種の表と同じ読み手で受け、タスクの verify を回す: 着地(直し 0 回)
+
+## G12-GR47-PLACEMENT-COOK 統合ブランチの取り込みと仕上げ（2026-11-17、run 20261117-203902）
+- Done: 統合ブランチ feature/scene-launcher を取り込み、10 ファイルの衝突を解いた。NVSCT v0 の種の記録は統合ブランチの形（84〜96 は空の遮蔽物の欄）のまま残し、種ごとの衝突の形の範囲 {first, count} は衝突の表の節（ヘッダ 176）の頭に種の数だけ並べる形へ移した。形が 1 つも無いファイルは節ごと書かないので、新しい欄を使わない規則の散布のファイルは統合ブランチの出力と同じ並びになる。`Docs/Architecture/NVSCTv0.md` を合わせた。
+- Done: `SceneProxy` は `bRayTracing` と `bSkyMapProxy` を両方持ち、ハッシュにも両方入れる。`ray_tracing` が偽の種は TLAS の選択から外し、樹冠の空の遮蔽の組（instance mask 0x04）にも入れない。`ScatterSystem` は隠した個体を空の遮蔽物の配列にも入れず、常駐中に `SetInstanceHidden` で切り替えたときと `RestoreHiddenInstances` で集合を戻したときは、そのチャンクの遮蔽物の配列を作り直して公開する（常駐・解放のときは非表示の当て直しと同じ場所で配列を作る）。
+- Done: 配置の一覧の種の表で任意の `sky_occluder` を受ける。規則の散布 spec と同じ `ScatterSpecInput::SkyOccluder` で読み、種への写しは `CopyScatterSkyOccluder`（ScatterBaker と共有）で行う。欄の無い森の配置の出力はバイト単位で変わらない（SHA256 一致）。
+- 証拠: `.harness/runs/20261117-203902/verify-final.txt`（`cmake --build build --config Debug --target AssetCook Game -- /m:1` が EXIT=0。AssetCook で森の配置を直接焼いて `SCATTER_COOKED chunks=204 species=3 instances=20000`・EXIT=0）。取り込み直後のビルドは `.harness/runs/20261117-203902/merge-build-1.txt`（EXIT=0）。
+- 回さなかったもの: 試験は作らない・回さない決まりで、ctest の行は回していない。撮影・アプリの起動はしない決まり。
+- Next: ランナーの評価者の反証（危険地帯: アセットのクック・Public API の `ScatterSystem`・TLAS の選択）。人が見るときの見どころ: grassland（ランチャーの草原）で規則の散布と並んで針葉樹・枯れ木・岩の森が出ること、枯れ木だけが RT の反射・影の光線に映らないこと、`--grassland-forest=off` で森だけが消えること、森が 384 m（岩は 256 m）で出入りすること。規則の散布の樹冠の空の遮蔽（統合ブランチで入った見た目）が取り込みの前と変わらないこと。
+- Notes: 判断役が決めた 2 点（衝突の形の範囲を種の記録の外に置く・`ray_tracing` 偽を樹冠の 0x04 より優先する）をそのまま採った。森の配置の見本には `sky_occluder` を付けていない（欄は任意）。
+- Notes: verify の `CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` は回していない。全体のクックの manifest がこの枠に無く「対象外の項目が既存の manifest に無い」で落ちることを反復 2 に再現済みで、Debug の全体のクックは何時間もかかる。代わりに `worlds` を Grassland の 3 項目に絞った一時の資産の一覧（`-SpecDir`）で焼いた出力を証拠にした。
+- Notes: 要起票: 枠に全体のクックの manifest が無いと `CookAssets.ps1 -OnlyLogicalPath` の verify が「対象外の項目が既存の manifest に無い（先に全体をクック）」で EXIT=1 になる（反復 2、NorvesLib-2-u2 で地形を 14 分焼いたあと GrasslandGrassField.nvgfld で落ちた）。
+- Notes: （2026-11-17、run 20261117-103230）verify の `CookAssets.ps1 -OnlyLogicalPath` が前提にする全体のクック（cook_assets が真の 14 の一覧）を、この枠の `build/CookedAssets` へ RelWithDebInfo の AssetCook（`powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe`）で焼いている途中。焼いた項目は `.cookstate` の印で次の実行が飛ばすので、同じコマンドで続きから再開できる。15:55 の時点で荒野の地形の近景のタイル 66/100 が済み（崖のタイルは 1 件 40〜90 分、ほかは 1 件 20 秒前後）、近景の残り 34 件・地平の 98 件・`WastelandTerrainCliffOff` の 67 件が残る。全体が通って `manifest.json` が全項目になったら verify の 3 行を回して done にする。
+- Notes: 全体のクックを再開すると、焼き始めるまでの約 15〜20 分は済んだ項目の印の照合（元の画像・高さのハッシュ）だけで進む。途中で切ると毎回この分を失うので、次は 1 回の実行で最後まで焼く（16:22 の時点で近景 67/100）。
+- Notes: （2026-11-17 19:06、run 20261117-103230 の反復 3）全体のクックの続き: 荒野の地形の残りを 2 系に分けて同時に焼いた（`-SpecDir` に一覧の項目をそのまま写した部分の一覧、`-SkipPlacementGround`。印は全体の実行と同じで、焼いた項目は全体の実行で飛ばされる）。崖のある近景の 4 件（7_6・6_7・7_7・8_7）は計 8 分で済み、遅いのは地平のタイル（1 件 1〜3 分）だった。残りは `WastelandTerrain` の 29 件（崖の近景 7_8・8_8、外周 14・縁 8・継ぎ目 5）だけで、`WastelandTerrainCliffOff` は全部済んだ。続きは `.harness/relay/precook/rest1`・`rest2` の 2 系を同時に回し（各約 20 分の見込み）、そのあと RelWithDebInfo で全体を 1 回回して `manifest.json` を全項目にし（印の照合で約 15〜20 分）、verify を回す。
+- Notes: （2026-11-17 19:18）全体のクックの残りは `WastelandHorizon_outer_2_4` の 1 件だけ（`rest2` の系を回せば済む）。そのあと RelWithDebInfo で全体を 1 回回して `manifest.json` を全項目にし、verify を回す。

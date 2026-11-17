@@ -593,6 +593,7 @@ namespace NorvesLib::Core::Rendering
             }
             const bool bHiddenByImpostor = current.bHiddenByImpostor;
             current = proxy;
+            current.bRayTracing = proxy.bRayTracing && IsMegaGeometryRayTracing(proxy.ComponentId);
             current.bHiddenByImpostor = bHiddenByImpostor;
             NoteMegaChanged(indexIt->second);
             return;
@@ -600,6 +601,7 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t index = static_cast<uint32_t>(m_MegaGeometryProxies.size());
         m_MegaGeometryProxies.push_back(proxy);
+        m_MegaGeometryProxies.back().bRayTracing = proxy.bRayTracing && IsMegaGeometryRayTracing(proxy.ComponentId);
         m_MegaGeometryProxyIndex[proxy.ObjectId] = index;
         if (!IsMegaScatterProxyKey(proxy.ObjectId))
         {
@@ -750,12 +752,40 @@ namespace NorvesLib::Core::Rendering
             }
             const bool bHiddenByImpostor = current.bHiddenByImpostor;
             current = proxy;
+            current.bRayTracing = proxy.bRayTracing && IsMegaGeometryRayTracing(proxy.ComponentId);
             current.bHiddenByImpostor = bHiddenByImpostor;
             NoteMegaChanged(indexIt->second);
             return;
         }
 
         AddMegaGeometryProxy(proxy);
+    }
+
+    void SceneView::SetMegaGeometryRayTracing(uint64_t componentId, bool bRayTracing)
+    {
+        if (bRayTracing)
+        {
+            m_RayTracingExcludedMegaComponentIds.erase(componentId);
+        }
+        else
+        {
+            m_RayTracingExcludedMegaComponentIds.insert(componentId);
+        }
+
+        for (uint32_t index = 0; index < static_cast<uint32_t>(m_MegaGeometryProxies.size()); ++index)
+        {
+            MegaGeometryProxy& proxy = m_MegaGeometryProxies[index];
+            if (proxy.ComponentId == componentId && proxy.bRayTracing != bRayTracing)
+            {
+                proxy.bRayTracing = bRayTracing;
+                NoteMegaChanged(index);
+            }
+        }
+    }
+
+    bool SceneView::IsMegaGeometryRayTracing(uint64_t componentId) const
+    {
+        return m_RayTracingExcludedMegaComponentIds.find(componentId) == m_RayTracingExcludedMegaComponentIds.end();
     }
 
     void SceneView::NoteMegaChanged(uint32_t index)
