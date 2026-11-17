@@ -346,6 +346,7 @@ namespace NorvesLib::Core::Rendering
         result.OvercastTint.x = ClampFinite(parameters.OvercastTint.x, 0.0f, 4.0f, result.OvercastTint.x);
         result.OvercastTint.y = ClampFinite(parameters.OvercastTint.y, 0.0f, 4.0f, result.OvercastTint.y);
         result.OvercastTint.z = ClampFinite(parameters.OvercastTint.z, 0.0f, 4.0f, result.OvercastTint.z);
+        result.bDebugLogSunSweep = parameters.bDebugLogSunSweep;
         return result;
     }
 
@@ -404,6 +405,21 @@ namespace NorvesLib::Core::Rendering
         result.SunDiskHiddenAboveCover = defaults.SunDiskHiddenAboveCover;
         result.OvercastTint = defaults.OvercastTint;
         return result;
+    }
+
+    SkyAtmosphereParameters MakeSkyKeyframeSetKey(const SkyAtmosphereParameters& parameters)
+    {
+        SkyAtmosphereParameters result = MakeSkyAtmosphereClearKey(parameters);
+        result.SunAltitudeDegrees = 0.0f;
+        result.SunAzimuthDegrees = 0.0f;
+        result.bDebugLogSunSweep = false;
+        return result;
+    }
+
+    bool AreSkyKeyframeSetKeysEqual(const SkyAtmosphereParameters& lhs,
+                                   const SkyAtmosphereParameters& rhs)
+    {
+        return AreSkyAtmosphereClearKeysEqual(MakeSkyKeyframeSetKey(lhs), MakeSkyKeyframeSetKey(rhs));
     }
 
     SkyAtmosphereModel::SkyAtmosphereModel(const SkyAtmosphereParameters& parameters)
@@ -480,14 +496,24 @@ namespace NorvesLib::Core::Rendering
     SkyCloudBlendWeights ComputeSkyCloudBlendWeights(const SkyAtmosphereModel& clearModel,
                                                     const SkyAtmosphereParameters& parameters)
     {
+        if (!clearModel.GetParameters().bEnabled)
+        {
+            return {};
+        }
+        return ComputeSkyCloudBlendWeightsFromIlluminance(clearModel.GetClearHorizontalIlluminance(), parameters);
+    }
+
+    SkyCloudBlendWeights ComputeSkyCloudBlendWeightsFromIlluminance(
+        const Math::Vector3& clearHorizontalIlluminance, const SkyAtmosphereParameters& parameters)
+    {
         const SkyAtmosphereParameters sanitized = SanitizeSkyAtmosphereParameters(parameters);
         SkyCloudBlendWeights result;
-        if (!sanitized.bEnabled || !clearModel.GetParameters().bEnabled || sanitized.CloudCover <= 0.0f)
+        if (!sanitized.bEnabled || sanitized.CloudCover <= 0.0f)
         {
             return result;
         }
 
-        const Math::Vector3 illuminance = clearModel.GetClearHorizontalIlluminance() *
+        const Math::Vector3 illuminance = clearHorizontalIlluminance *
                                           sanitized.OvercastIlluminanceFraction;
         const Math::Vector3 zenith = ComputeOvercastZenithRadiance(
             illuminance, sanitized.OvercastZenithToHorizonRatio);
