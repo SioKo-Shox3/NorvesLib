@@ -11934,3 +11934,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 粒に命中の法線を残す（SurfaceAligned の向き）: 着地(直し 0 回)
 - U2 描画の定数・結合番号・GLSL の共通部を決める: 着地(直し 0 回)
 - U3 ParticleDraw.vert（板・筋・面に沿う板）: 着地(直し 0 回)
+- U4 ParticleDraw.frag（形・ソフト・霧・環境光・出力）: 着地(直し 0 回)
