@@ -2,6 +2,8 @@
 #include "Logging/LogMacros.h"
 #include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/RenderResources.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/ICommandList.h"
@@ -52,8 +54,9 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::DescriptorSetDesc desc;
             const RHI::ResourceBindType types[] = {
-                RHI::ResourceBindType::RWTexture, RHI::ResourceBindType::ConstantBuffer};
-            for (uint32_t binding = 0u; binding < 2u; ++binding)
+                RHI::ResourceBindType::RWTexture, RHI::ResourceBindType::ConstantBuffer,
+                RHI::ResourceBindType::CombinedImageSampler};
+            for (uint32_t binding = 0u; binding < 3u; ++binding)
             {
                 RHI::DescriptorBinding entry;
                 entry.binding = binding;
@@ -197,7 +200,37 @@ namespace NorvesLib::Core::Rendering
                         pipelineDesc.computeShader = m_PuddleShader;
                         pipelineDesc.descriptorSetLayouts.push_back(layoutDesc);
                         m_PuddlePipeline = m_Device->CreateComputePipeline(pipelineDesc);
-                        m_bPuddleReady = m_PuddlePipeline && EnsurePuddleTexture();
+                        if (m_PuddlePipeline && EnsurePuddleTexture())
+                        {
+                            RHI::SamplerDesc samplerDesc;
+                            samplerDesc.filterMin = RHI::FilterMode::Linear;
+                            samplerDesc.filterMag = RHI::FilterMode::Linear;
+                            samplerDesc.filterMip = RHI::FilterMode::Point;
+                            samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+                            samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+                            samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+                            m_PuddleTerrainSampler = m_Device->CreateSampler(samplerDesc);
+
+                            // 2 枚にすると、地形が無いときも 2D 配列ビューとして束ねられる。
+                            RHI::TextureDesc fallbackDesc;
+                            fallbackDesc.Width = 1u;
+                            fallbackDesc.Height = 1u;
+                            fallbackDesc.ArraySize = 2u;
+                            fallbackDesc.MipLevels = 1u;
+                            fallbackDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+                            fallbackDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+                            fallbackDesc.DebugName = "WorldField.PuddleTerrainFallback";
+                            m_PuddleFallbackTexture = m_Device->CreateTexture(fallbackDesc);
+                            if (m_PuddleTerrainSampler && m_PuddleFallbackTexture)
+                            {
+                                const uint8_t pixel[4] = {};
+                                for (uint32_t layer = 0u; layer < fallbackDesc.ArraySize; ++layer)
+                                {
+                                    m_PuddleFallbackTexture->Update(pixel, sizeof(pixel), sizeof(pixel), 0u, layer);
+                                }
+                                m_bPuddleReady = true;
+                            }
+                        }
                     }
                 }
             }
@@ -208,6 +241,8 @@ namespace NorvesLib::Core::Rendering
             if (!m_bPuddleReady)
             {
                 m_PuddleTexture.reset();
+                m_PuddleFallbackTexture.reset();
+                m_PuddleTerrainSampler.reset();
                 m_PuddlePipeline.reset();
                 m_PuddleShader.reset();
                 m_PuddleDescriptorSetLayout.reset();
@@ -229,7 +264,11 @@ namespace NorvesLib::Core::Rendering
         m_DrynessShader.reset();
         m_DrynessDescriptorSetLayout.reset();
         m_PuddleSet.reset();
+        m_PreparedPuddleTerrain = {};
+        m_PuddleTerrain = {};
         m_PuddleTexture.reset();
+        m_PuddleFallbackTexture.reset();
+        m_PuddleTerrainSampler.reset();
         m_PuddlePipeline.reset();
         m_PuddleShader.reset();
         m_PuddleDescriptorSetLayout.reset();
@@ -540,12 +579,41 @@ namespace NorvesLib::Core::Rendering
         m_bPuddlePrepared = false;
         m_bPuddleAvailable = false;
         m_PuddleSet.reset();
+        m_PreparedPuddleTerrain = {};
         const CameraProxy* camera = context.GetActiveCamera();
         const auto* sources = context.SnapshotWorldFieldPuddleSources;
         if (!m_bEnabled || !m_bPuddleReady || !context.CommandList || !camera ||
-            (context.MainCamera && camera->CameraId != context.MainCamera->CameraId) ||
-            !sources || sources->empty())
+            (context.MainCamera && camera->CameraId != context.MainCamera->CameraId))
         {
+            return false;
+        }
+
+        PuddleTerrainState terrainState;
+        const auto* terrain = context.FindExtension(Terrain::kTerrainPuddleRenderKey);
+        if (terrain && terrain->bValid && terrain->SplatArrayTexture.IsValid() && context.Resources.Textures)
+        {
+            const float width = terrain->SplatMaxXZ[0] - terrain->SplatMinXZ[0];
+            const float depth = terrain->SplatMaxXZ[1] - terrain->SplatMinXZ[1];
+            if (std::isfinite(terrain->SplatMinXZ[0]) && std::isfinite(terrain->SplatMinXZ[1]) &&
+                std::isfinite(terrain->SplatMaxXZ[0]) && std::isfinite(terrain->SplatMaxXZ[1]) &&
+                std::isfinite(width) && std::isfinite(depth) && width > 0.0f && depth > 0.0f &&
+                std::isfinite(1.0f / width) && std::isfinite(1.0f / depth))
+            {
+                const RHI::TexturePtr texture = context.Resources.Textures->GetRHITexturePtr(terrain->SplatArrayTexture);
+                if (texture && !texture->IsCubemap() && texture->GetArraySize() >= 2u)
+                {
+                    terrainState.Texture = texture;
+                    terrainState.MinXZ[0] = terrain->SplatMinXZ[0];
+                    terrainState.MinXZ[1] = terrain->SplatMinXZ[1];
+                    terrainState.MaxXZ[0] = terrain->SplatMaxXZ[0];
+                    terrainState.MaxXZ[1] = terrain->SplatMaxXZ[1];
+                }
+            }
+        }
+        if (!terrainState.Texture && (!sources || sources->empty()))
+        {
+            m_PuddleState = {};
+            m_PuddleTerrain = {};
             return false;
         }
 
@@ -557,11 +625,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         // スナップショットは整形済み。上限を超えても GPU に渡す先頭分だけを比較する。
-        const uint32_t sourceCount = static_cast<uint32_t>(sources->size() < WorldFieldPuddleMaxSources ?
-            sources->size() : WorldFieldPuddleMaxSources);
-        const uint64_t sourceHash = HashPuddleSources(sources->data(), sourceCount);
+        const uint32_t sourceCount = sources ? static_cast<uint32_t>(sources->size() < WorldFieldPuddleMaxSources ?
+            sources->size() : WorldFieldPuddleMaxSources) : 0u;
+        const uint64_t sourceHash = HashPuddleSources(sources ? sources->data() : nullptr, sourceCount);
         if (m_PuddleState.bValid && m_PuddleState.OriginXZ[0] == scroll.OriginXMeters &&
-            m_PuddleState.OriginXZ[1] == scroll.OriginZMeters && m_PuddleSourceHash == sourceHash)
+            m_PuddleState.OriginXZ[1] == scroll.OriginZMeters && m_PuddleSourceHash == sourceHash &&
+            m_PuddleTerrain == terrainState)
         {
             m_bPuddleAvailable = true;
             return true;
@@ -576,6 +645,16 @@ namespace NorvesLib::Core::Rendering
         params.OriginXZ[1] = static_cast<float>(scroll.OriginZMeters);
         params.TexelSize = WorldFieldPuddleDefaultTexelMeters;
         params.SourceCount = sourceCount;
+        if (terrainState.Texture)
+        {
+            params.TerrainMap[0] = terrainState.MinXZ[0];
+            params.TerrainMap[1] = terrainState.MinXZ[1];
+            params.TerrainMap[2] = 1.0f / (terrainState.MaxXZ[0] - terrainState.MinXZ[0]);
+            params.TerrainMap[3] = 1.0f / (terrainState.MaxXZ[1] - terrainState.MinXZ[1]);
+            params.TerrainMaxXZ[0] = terrainState.MaxXZ[0];
+            params.TerrainMaxXZ[1] = terrainState.MaxXZ[1];
+            params.TerrainEnabled = 1u;
+        }
         for (uint32_t index = 0u; index < sourceCount; ++index)
         {
             params.Sources[index] = (*sources)[index];
@@ -591,6 +670,9 @@ namespace NorvesLib::Core::Rendering
         setAllocation.Set->BindStorageTexture(0u, m_PuddleTexture);
         setAllocation.Set->BindConstantBuffer(1u, paramsAllocation.Buffer,
             paramsAllocation.GetOffset32(), paramsAllocation.GetSize32());
+        // 地形の配列は他の材質パスと同じ常駐テクスチャとして直接束ねる。
+        setAllocation.Set->BindTexture(2u, terrainState.Texture ? terrainState.Texture : m_PuddleFallbackTexture);
+        setAllocation.Set->BindSampler(2u, m_PuddleTerrainSampler);
         setAllocation.Set->Update();
 
         m_PreparedPuddle.OriginXZ[0] = scroll.OriginXMeters;
@@ -600,6 +682,7 @@ namespace NorvesLib::Core::Rendering
         m_PreparedPuddle.TexelSizeMeters = WorldFieldPuddleDefaultTexelMeters;
         m_PreparedPuddle.bValid = true;
         m_PreparedPuddleSourceHash = sourceHash;
+        m_PreparedPuddleTerrain = terrainState;
         m_PuddleSet = setAllocation.Set;
         m_bPuddlePrepared = true;
         m_bPuddleAvailable = true;
@@ -896,9 +979,10 @@ namespace NorvesLib::Core::Rendering
         commandList->TextureBarrier(m_PuddleTexture, RHI::ResourceState::UnorderedAccess,
                                     RHI::ResourceState::ShaderResource);
 
-        // 実際に記録した画像の座標と源だけを、次のフレームの比較に使う。
+        // 実際に記録した画像の座標・源・地形を、次のフレームの比較に使う。
         m_PuddleState = m_PreparedPuddle;
         m_PuddleSourceHash = m_PreparedPuddleSourceHash;
+        m_PuddleTerrain = m_PreparedPuddleTerrain;
         m_bPuddlePrepared = false;
     }
 

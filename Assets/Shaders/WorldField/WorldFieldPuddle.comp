@@ -1,4 +1,4 @@
-﻿// 手置きの楕円から世界空間の水たまりの凹み度を焼く。
+﻿// 手置きの楕円と地形の地図から世界空間の水たまりの凹み度を焼く。
 #version 460
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -15,14 +15,21 @@ struct WorldFieldPuddleSourceGpu
     vec4 Reserved1;
 };
 
-// 原点は 0、テクセル幅は 8、件数は 12、源の配列は 16 バイト目。
+// 原点は 0、テクセル幅は 8、件数は 12、地形の地図は 16、源の配列は 48 バイト目。
 layout(std140, set = 0, binding = 1) uniform WorldFieldPuddleParams
 {
     vec2 OriginXZ;
     float TexelSize;
     uint SourceCount;
+    vec4 TerrainMap;
+    uint TerrainEnabled;
+    float TerrainMaxX;
+    float TerrainMaxZ;
+    uint TerrainPadding;
     WorldFieldPuddleSourceGpu Sources[WORLD_FIELD_PUDDLE_MAX_SOURCES];
 } uParams;
+
+layout(set = 0, binding = 2) uniform sampler2DArray uTerrainSplat;
 
 void main()
 {
@@ -35,6 +42,16 @@ void main()
     ivec2 pixel = ivec2(globalPixel);
     vec2 local = (vec2(pixel) + vec2(0.5)) * uParams.TexelSize;
     float result = 0.0;
+    if (uParams.TerrainEnabled != 0u && textureSize(uTerrainSplat, 0).z >= 3)
+    {
+        vec2 worldXZ = uParams.OriginXZ + local;
+        if (all(greaterThanEqual(worldXZ, uParams.TerrainMap.xy)) &&
+            all(lessThanEqual(worldXZ, vec2(uParams.TerrainMaxX, uParams.TerrainMaxZ))))
+        {
+            vec2 uv = (worldXZ - uParams.TerrainMap.xy) * uParams.TerrainMap.zw;
+            result = textureLod(uTerrainSplat, vec3(uv, 2.0), 0.0).r;
+        }
+    }
     uint sourceCount = min(uParams.SourceCount, uint(WORLD_FIELD_PUDDLE_MAX_SOURCES));
     for (uint index = 0u; index < sourceCount; ++index)
     {

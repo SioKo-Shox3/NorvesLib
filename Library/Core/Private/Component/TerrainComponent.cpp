@@ -453,6 +453,14 @@ namespace NorvesLib::Core::Component
         }
 
         LoadSplatMaterial(*heightField, bOuterReady);
+        Rendering::Terrain::TerrainPuddleRenderData puddleData{};
+        puddleData.SplatArrayTexture = m_Splat.SplatArrayTexture;
+        puddleData.SplatMinXZ[0] = m_Splat.SplatMinXZ[0];
+        puddleData.SplatMinXZ[1] = m_Splat.SplatMinXZ[1];
+        puddleData.SplatMaxXZ[0] = m_Splat.SplatMaxXZ[0];
+        puddleData.SplatMaxXZ[1] = m_Splat.SplatMaxXZ[1];
+        puddleData.bValid = m_Splat.bEnabled && m_Splat.SplatArrayTexture.IsValid();
+        m_TerrainSystem->SetPuddleRenderData(m_TerrainHandle, puddleData);
         m_TileCountX = parsed.Terrain.TileCountX;
         m_TileCountZ = parsed.Terrain.TileCountZ;
         m_TileCells = parsed.Terrain.TileCells;
@@ -717,6 +725,10 @@ namespace NorvesLib::Core::Component
 
     void TerrainComponent::ReleaseSplatTextures()
     {
+        if (m_TerrainSystem && m_TerrainHandle.IsValid())
+        {
+            m_TerrainSystem->SetPuddleRenderData(m_TerrainHandle, {});
+        }
         if (m_RenderResources)
         {
             auto& textures = m_RenderResources->Textures();
