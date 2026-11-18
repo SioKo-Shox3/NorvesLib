@@ -12567,3 +12567,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 表面の型（SurfaceTypes.h）と物理の結果の Surface 欄: 着地(直し 0 回)
 - U3 SceneQuery の表面の照会: 着地(直し 0 回)
 - U2 表面の登録簿 SurfaceRegistry: 着地(直し 1 回)
+- U4 Engine の持ち物・Game の起動での読み込み・語彙のデータ・契約の文書: 着地(直し 0 回)
