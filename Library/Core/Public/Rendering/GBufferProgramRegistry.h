@@ -41,6 +41,7 @@ namespace NorvesLib::Core::Rendering
         bool bAlphaClip = false; ///< Masked または視界確保の遮蔽物用の切り抜きの変種。
         RHI::PolygonMode Polygon = RHI::PolygonMode::Fill;
         bool bSkinned = false;
+        bool bLodCrossfade = false; ///< 段の遷移のディザの変種（gbuffer_crossfade.frag）。
 
         bool operator==(const GBufferPipelineKey& other) const = default;
 
@@ -55,6 +56,7 @@ namespace NorvesLib::Core::Rendering
                 hash = (hash ^ static_cast<uint32_t>(key.bAlphaClip)) * prime;
                 hash = (hash ^ static_cast<uint32_t>(key.Polygon)) * prime;
                 hash = (hash ^ static_cast<uint32_t>(key.bSkinned)) * prime;
+                hash = (hash ^ static_cast<uint32_t>(key.bLodCrossfade)) * prime;
                 return static_cast<size_t>(hash);
             }
         };

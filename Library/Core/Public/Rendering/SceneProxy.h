@@ -90,6 +90,10 @@ namespace NorvesLib::Core::Rendering
         int8_t ForcedLODLevel = -1; // -1は自動、0以上はその段に固定。
         // SceneView が前のフレームに選んだ段。proxy の内容ではないため hash に含めない。
         uint8_t LODSelectionState = 0;
+        // SceneView が持つ段の遷移の状態。proxy の内容ではないため hash に含めない。
+        LODCrossfadeState LODCrossfade;
+        // このフレームに描く写しのフェードの値。SceneView が書く。hash に含めない。
+        float LODCrossfadeValue = 0.0f;
 
         // ========================================
         // トランスフォーム
@@ -269,6 +273,9 @@ namespace NorvesLib::Core::Rendering
         // SceneView がインポスターへ切り替えた元を抑える印。World が公開する proxy では常に false。
         // proxy の内容ではないため hash に含めない。
         bool bHiddenByImpostor = false;
+        // SceneView がインポスターとの遷移中に書くフェードの値。World が公開する proxy では常に0。
+        // proxy の内容ではないため hash に含めない。
+        float LODCrossfadeValue = 0.0f;
 
         bool IsValid() const
         {
@@ -305,6 +312,10 @@ namespace NorvesLib::Core::Rendering
         float LODSwitchScreenSize = 0.0f;
         // SceneView が前のフレームに選んだ段（0は元のメッシュ、1はインポスター）。hash には含めない。
         uint8_t LODSelectionState = 0;
+        // SceneView が持つ遷移の状態。0は元のメッシュ、1はインポスター。hash に含めない。
+        LODCrossfadeState LODCrossfade;
+        // このフレームに描く写しのフェードの値。SceneView が書く。hash に含めない。
+        float LODCrossfadeValue = 0.0f;
         uint32_t ImpostorCellResolution = 0;
         uint32_t ImpostorAxisCellCountX = 0;
         uint32_t ImpostorAxisCellCountY = 0;
