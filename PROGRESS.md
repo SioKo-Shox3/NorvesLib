@@ -12354,3 +12354,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 反復 4（判断役の判断に従う）: 試験の verify 行（`BlenderStagesCoreTest.py`・`RigValidateTest.py`）は絶対規則 11 に従って外し、構文の確かめ `python -B -m py_compile Scripts/Blender/bpy_stage.py Scripts/Blender/common.py Scripts/Blender/export_gltf.py Scripts/Blender/pipeline.py Scripts/Blender/rebuild_on_base.py Scripts/Blender/rig_core.py Scripts/Blender/transfer_weights.py` に置き換えた。87cc8f15 で終了コード 0（`.harness/runs/20261118-063226/G6-GR103-BLENDER-STAGES-iter4-verify.txt`）。`Scripts/Blender/` と文書は変えていない。
 - Notes: Blender の上での 3 段の確かめ（ベイク・ウェイトの転送・書き出しの実際の動き）は G6-GR103-BLENDER-CHECK で行う。
 - U1 SDK に依らない撮影の受け付け・進行・完了イベントの組み立て(BridgeCaptureProtocol)を作る: 着地(直し 0 回)
+
+## GAME-GR137-CAPTURE-WIRE 決定的な撮影を Bridge へつなぐ（2026-11-18、run 20261118-082637）
+
+- In progress: `Game/Bridge/BridgeCaptureProtocol.h/.cpp`（SDK に依らない受け付け・場所の検査・captureId・専有・毎フレームの駆動・`.png.tmp` → `.png` の書き出し・PNG を RGBA8 に戻した画素の要約値・完了イベントの構造体）を入れた。SDK なしの構成で Debug の Game のビルドは終了コード 0。
+- Next: Adapter（`viewportCaptureDeterministic` の上書き・`viewport.capture` の広告・サムネイルの busy の拒否・完了イベントの送信）と `GameApplicationHandler::OnPostRender` からの毎フレームの駆動をつなぐ。確かめは SDK 入りの構成（`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp`）のビルド。仕上げの前にこの枠の `build` も SDK 入りで構成し直して Game を一度組む（今の枠の `build` は SDK なしで、Bridge のコードが空でコンパイルされる）。
+- Notes: verify の 1 行目は `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を読むが、この機械にそのパスは無い（同じ検査を `C:/Users/oreor/Documents/NorvesEditor/...` で回すと `viewportCaptureDeterministic` があり通る。NorvesEditor の 8e99e4b が SDK に入口と DTO を足している）。行を直さない限り再検証の 1 行目は落ちる。
+- Notes: 存在しないディレクトリは done-when に従って受け付けで拒否する（`ENGINE_INVALID_PARAMS`・理由 `capture_dir_not_found`）。NorvesEditor の仕様文書（`bridge/spec/docs/message-payloads.md`・`docs/memory-buffer-policy.md`）は「受け付けた後に `OUTPUT_WRITE_FAILED` で完了」と書いており食い違う。受け付けの後に書けなかったときは `OUTPUT_WRITE_FAILED` で完了する。
+- Notes: 完了イベントの欄は schema に合わせた。done-when の PixelHash・PngHash のうち、schema にあるのは `pixelDigest`（PNG を RGBA8 に戻した画素の FNV-1a 64。エディタが PNG を復号して数える値と同じ）と `fileBytes` で、PngHash の欄は無い（additionalProperties: false）。`frame` は schema のとおり要求の settleFrames。
+- Notes: 既存の `ValidateBridgeDeterministicCaptureRequest` は settleFrames 0 を拒否する（schema は 0〜600）。done-when の「寸法の上限は既存の検査を使う」に従い、そのまま使った。
