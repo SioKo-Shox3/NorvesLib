@@ -10888,3 +10888,27 @@
 - effort: high
 - from: G11-GR52-CLOUD-SHAFTS
 - notes: G11-GR52-LOCAL-FOG の done-when (3)（TASKS.md 7631 行）の取りこぼし。要件は「`Common/HeightFog.glsl` に同じ項を足し、半透明・板・粒子（GR51 が霧を掛ける前向きの描画）にも局所霧が効く」。ところが局所霧を掛けているのは `forward_transparent.frag` と `world_board.frag` だけで、`ParticleDraw.frag`・`impostor.frag`・`ribbon_trail.frag` は高さフォグしか掛けていない（`LocalFog` を grep しても当たらない）。インポスターは板と同じ UBO を使い、C++ 側は局所霧を offset 288 に既に詰めているので、変更はシェーダーの宣言と呼び出しだけで済む。局所霧は危険地帯（半透明・volumetrics）で、`ForwardPass.cpp` は共有のファイルなので、差分は呼び出しの 1 か所に絞る。試験は足さない（決まり）。
+
+## G6-GR34-COAT-SCENE-P1: 毛の断片シェーダーが GBuffer の粗さを、領域の表の一つ目のローブの指数から書くようにする
+- status: todo
+- done-when: `Assets/Shaders/skinned_fur_gbuffer.frag` が Material の粗さを、材質の値 1 つ（今の `mvp.furShellParams.w`。187 行）ではなく、画素の領域（82 行の `region`）の一つ目のローブの指数（`FurMaterialGpuRegion::Lobes` の z。C++ の `FurRegion::PrimaryExponent`）から書く。指数から粗さへの変換には、`Common/FurShading.glsl` の `FurStrandExponentFromRoughness`（73 行。e = 2/α⁴ − 2）の逆関数 roughness = (2/(e + 2))^(1/4) を同じファイルの隣に置いて使う（断片シェーダーから include できない場合は、断片シェーダーに同じ式で置く）。こうすると、照明が GBuffer の粗さから求める e1 が、領域の表の PrimaryExponent に一致する（1〜2048 で頭打ち）。殻 0 の皮膚面も Fur の ID を書くので同じ扱いにする。二つ目の指数は、GBuffer の粗さの枠が 1 つしかないため今の照明の定数（`secondaryExponentScale`）の倍率のままにする。この限界とローブの指数から粗さへの対応を `Docs/Architecture/FurRendering.md` に書く。濡れによる粗さの低下（G6-GR35-WET-LOOK）は、この値の上に掛かる形を崩さない。Debug の Game がビルドできる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Assets/Shaders/skinned_fur_gbuffer.frag, Assets/Shaders/Common/FurShading.glsl, Docs/Architecture/FurRendering.md, TASKS.md, PROGRESS.md
+- effort: high
+- from: G6-GR34-COAT-SCENE
+
+---
+
+TASK にした理由（判断の根拠）:
+- **G6-GR34-FUR-LIGHTING の done-when の前提が満たされていない。** done-when の 8060 行は「ローブの指数は GBuffer の粗さ（Fur の FS が領域の表から書く）から」としている。notes の 8064 行も、領域ごとのハイライトの違いはこの経路で運ぶと決めている。
+- **断片シェーダーは材質の値 1 つを書いている。** `skinned_fur_gbuffer.frag:186-187` が Material に書いているのは `mvp.furShellParams.w` で、`FurStrand.glsl:34` のコメントでは「皮膚と毛の粗さ」とされている。
+- **照明は GBuffer の粗さからしか指数を出さない。** `FurShading.glsl:115` は `FurStrandExponentFromRoughness(strandRoughness)` で e1 を求める。そのため、領域の表の `PrimaryExponent` / `SecondaryExponent`（`FurTypes.h:60-61`、GPU 側は `Lobes.zw`）はどこからも読まれていない。
+- **受け持つタスクがどこにも無い。**
+  - G6-GR34-SHELL-PASS（done）の done-when で、領域の表を使うのは色だけ。
+  - G6-GR34-FUR-LIGHTING（done）の paths に、この断片シェーダーが入っていない。
+  - G6-GR34-COAT-SCENE の paths にあるのは `.vert` だけ。
+  - G6-GR35-WET-LOOK は濡れによる粗さの低下だけを扱う。
+
+この判断のために読んだのはファイルだけで、ビルドや試験は回していません。
+
+新しいタスクは G6-GR35-WET-LOOK と `skinned_fur_gbuffer.frag`・`FurShading.glsl` の paths が重なるので、2 つが同時には走りません。
