@@ -12527,3 +12527,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 実装は変えていない（`afc92c72`・`256b6334` で着地した `BridgeAssetEditProtocol.{h,cpp}` と `NorvesLibBridgeAdapter` の 3 メソッドと能力 `asset.edit` の広告のまま）。統合ブランチでは項目が todo のままで実装が未統合だったので、確かめ直して done に戻した。
 - 確かめ: verify の 1 行目をこのマシンで回して終了コード 0（`.harness/runs/20261118-113224/GAME-GR137-ASSET-EDIT-WIRE-verify1.txt`）。ビルドの行は試験のターゲットを外した `cmake --build build --config Debug --target Game -- /m:1` で終了コード 0、error の行 0（`GAME-GR137-ASSET-EDIT-WIRE-build.txt`）。この枠の `build` は SDK なしの構成なので、アダプタの新しい経路のコンパイルの証拠は run 20261118-080412 の SDK 入りの Debug のビルド（`GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`、終了コード 0）のまま。ctest の行は試験を回さない決まりで回していない。
 - Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
+- U1 ループの平滑で近傍を格子の時刻で取り、周期で折り返す: 着地(直し 0 回)
