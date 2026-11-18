@@ -26,6 +26,7 @@
 #include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/VirtualShadowMapChunk.glsl"
 #include "Common/FoliagePlacement.glsl"
+#include "Common/ImpostorShadowCard.glsl"
 #include "Common/VertexAnimation.glsl"
 // binding 5: スライスの表（ページの一辺・texel・投影の行列）
 #define VSM_SLICE_BINDING 5
@@ -175,85 +176,115 @@ void main()
     const bool bMega = instance.x >= params.counts.x;
     const uint megaIndex = instance.x - params.counts.x;
     const VisibilityDrawRecord record = bMega ? megaChunks[megaIndex].record : chunks[instance.x].record;
-    if (!VisRecordHasAddresses(record))
-    {
-        return;
-    }
-
-    // reference 型の変数には const を付けられない
-    VisIndexWords indices = VisIndexWords(VisRecordIndexAddress(record));
-    VisVertexArray vertices = VisVertexArray(VisRecordVertexAddress(record));
-    const uint vertexIndex = VisLoadTriangleVertexIndex(record, indices, triangle, corner);
-#ifdef VSM_ALPHA_CLIP
-    // MegaGeometry・草の株・不透明な塊は標本しない。透視の分岐で戻る前に UV と材質の値を渡す。
-    if (!bMega && VisRecordKind(record) != VIS_KIND_FOLIAGE_CHUNK && (record.header.z & 0x7FFFFFFFu) != 0u)
-    {
-        outTexCoord = vec2(vertices.vertices[vertexIndex].u, vertices.vertices[vertexIndex].v);
-        const bool bSparse = (record.header.z & 0x80000000u) != 0u;
-        outAlphaClip = vec3(uintBitsToFloat(record.header.y), uintBitsToFloat(record.previous.w), bSparse ? 3.0 : 1.0);
-        const uint e = record.source.z - 1u;
-        if (e < uint(vsmDissolve.length()))
-        {
-            const VsmDissolveEntry entry = vsmDissolve[e];
-            const bool bSkinned = entry.params.z > 0.5;
-            if (entry.params.w > 0.5 && (!bSkinned || any(notEqual(entry.skin.xy, uvec2(0u)))))
-            {
-                if (bSkinned)
-                {
-                    // 出力の頂点 i は入力の頂点 i に対応する。位置はバインド姿勢から取り、骨の保護率も同じ頂点で求める。
-                    VsmDissolveSkinVertexWords skinVertices = VsmDissolveSkinVertexWords(entry.skin.xy);
-                    const uint base = vertexIndex * 16u;
-                    outDissolvePosition = uintBitsToFloat(uvec3(skinVertices.words[base], skinVertices.words[base + 1u], skinVertices.words[base + 2u]));
-                    const uvec4 boneIndices = uvec4(skinVertices.words[base + 8u], skinVertices.words[base + 9u], skinVertices.words[base + 10u], skinVertices.words[base + 11u]);
-                    const vec4 boneWeights = uintBitsToFloat(uvec4(skinVertices.words[base + 12u], skinVertices.words[base + 13u], skinVertices.words[base + 14u], skinVertices.words[base + 15u]));
-                    outDissolveProtect = DissolveProtect(boneIndices, boneWeights, entry.protectBones);
-                }
-                else
-                {
-                    outDissolvePosition = vec3(vertices.vertices[vertexIndex].px,
-                                               vertices.vertices[vertexIndex].py,
-                                               vertices.vertices[vertexIndex].pz);
-                }
-                const float p0 = uintBitsToFloat(record.previous.x);
-                const float threshold = p0 >= 0.0 ? clamp(p0, 0.0, 1.0) : entry.params.y;
-                outDissolveSweep = entry.sweep;
-                outDissolveParams = vec3(1.0, entry.params.x, threshold);
-            }
-        }
-    }
-#endif
     const vec4 world0 = bMega ? megaChunks[megaIndex].world0 : chunks[instance.x].world0;
     const vec4 world1 = bMega ? megaChunks[megaIndex].world1 : chunks[instance.x].world1;
     const vec4 world2 = bMega ? megaChunks[megaIndex].world2 : chunks[instance.x].world2;
     vec3 world;
-    if (!bMega && VisRecordKind(record) == VIS_KIND_FOLIAGE_CHUNK)
+    if (!bMega && VisRecordKind(record) == VIS_KIND_IMPOSTOR_CARD)
     {
-        // 草・低木の株: 頂点は FoliageVertex、World は株の置き方
-        world = VsmPlaceFoliageVertex(record, vertexIndex, world0, world1, world2);
+#ifdef VSM_ALPHA_CLIP
+        // 太陽の段だけに描く。材質の無い板は不透明な四角として描かない。
+        if (uint(vsmSlices[instance.y & 255u].extra.z) == VSM_SLICE_PROJECTION_PERSPECTIVE ||
+            (record.header.z & 0x7FFFFFFFu) == 0u)
+        {
+            return;
+        }
+        const vec3 axisZ = uintBitsToFloat(uvec3(record.source.y, record.source.w, record.previous.x));
+        const mat3 objectToWorld = mat3(world1.xyz, vec3(world1.w, world2.xy), axisZ);
+        const vec2 atlasSize = vec2(float(record.previous.y & 0x7FFFFFFFu), float(record.previous.z));
+        const int layoutMode = int(record.previous.y >> 31u);
+        vec2 atlasUV;
+        // lightDirection は光の進む向きなので、その反対が光源へ向かう向き。
+        if (!ImpostorShadowCardVertex(uint(gl_VertexIndex), world0.xyz, world0.w, objectToWorld,
+                                      -params.lightDirection.xyz, world2.zw, atlasSize, layoutMode, world, atlasUV))
+        {
+            return;
+        }
+        outTexCoord = atlasUV;
+        const bool bSparse = (record.header.z & 0x80000000u) != 0u;
+        outAlphaClip = vec3(uintBitsToFloat(record.header.y), uintBitsToFloat(record.previous.w), bSparse ? 3.0 : 1.0);
+#else
+        return;
+#endif
     }
     else
     {
-        const vec4 local = vec4(vertices.vertices[vertexIndex].px,
-                                vertices.vertices[vertexIndex].py,
-                                vertices.vertices[vertexIndex].pz,
-                                1.0);
-        world = vec3(dot(world0, local), dot(world1, local), dot(world2, local));
-        // 手続きとスキンの塊は、影の記録が前フレーム用の欄に生の値を持つ。MegaGeometry は未指定。
-        const vec4 instanceParams = bMega ? vec4(-1.0) : uintBitsToFloat(record.previous);
-        const vec4 animParams = VertexAnimationParamsForFrame(instanceParams, params.vertexAnimTime);
-        vec4 material0 = vec4(0.0);
-        vec4 material1 = vec4(0.0);
-        if (!bMega)
+        if (!VisRecordHasAddresses(record))
         {
-            material0 = chunkVertexAnim[2u * instance.x];
-            material1 = chunkVertexAnim[2u * instance.x + 1u];
+            return;
         }
-        const VertexAnimationMaterial material = MakeVertexAnimationMaterial(material0, material1);
-        const VertexAnimationWind wind = MakeVertexAnimationWind(params.vertexAnimWindA, params.vertexAnimWindB);
-        if (!VertexAnimationIsIdentity(animParams, material, wind))
+
+        // reference 型の変数には const を付けられない
+        VisIndexWords indices = VisIndexWords(VisRecordIndexAddress(record));
+        VisVertexArray vertices = VisVertexArray(VisRecordVertexAddress(record));
+        const uint vertexIndex = VisLoadTriangleVertexIndex(record, indices, triangle, corner);
+#ifdef VSM_ALPHA_CLIP
+        // MegaGeometry・草の株・不透明な塊は標本しない。透視の分岐で戻る前に UV と材質の値を渡す。
+        if (!bMega && VisRecordKind(record) != VIS_KIND_FOLIAGE_CHUNK && (record.header.z & 0x7FFFFFFFu) != 0u)
         {
-            const vec3 origin = vec3(world0.w, world1.w, world2.w);
-            world = ApplyVertexAnimation(world, local.xyz, animParams, material, wind, origin, params.vertexAnimTime.x);
+            outTexCoord = vec2(vertices.vertices[vertexIndex].u, vertices.vertices[vertexIndex].v);
+            const bool bSparse = (record.header.z & 0x80000000u) != 0u;
+            outAlphaClip = vec3(uintBitsToFloat(record.header.y), uintBitsToFloat(record.previous.w), bSparse ? 3.0 : 1.0);
+            const uint e = record.source.z - 1u;
+            if (e < uint(vsmDissolve.length()))
+            {
+                const VsmDissolveEntry entry = vsmDissolve[e];
+                const bool bSkinned = entry.params.z > 0.5;
+                if (entry.params.w > 0.5 && (!bSkinned || any(notEqual(entry.skin.xy, uvec2(0u)))))
+                {
+                    if (bSkinned)
+                    {
+                        // 出力の頂点 i は入力の頂点 i に対応する。位置はバインド姿勢から取り、骨の保護率も同じ頂点で求める。
+                        VsmDissolveSkinVertexWords skinVertices = VsmDissolveSkinVertexWords(entry.skin.xy);
+                        const uint base = vertexIndex * 16u;
+                        outDissolvePosition = uintBitsToFloat(uvec3(skinVertices.words[base], skinVertices.words[base + 1u], skinVertices.words[base + 2u]));
+                        const uvec4 boneIndices = uvec4(skinVertices.words[base + 8u], skinVertices.words[base + 9u], skinVertices.words[base + 10u], skinVertices.words[base + 11u]);
+                        const vec4 boneWeights = uintBitsToFloat(uvec4(skinVertices.words[base + 12u], skinVertices.words[base + 13u], skinVertices.words[base + 14u], skinVertices.words[base + 15u]));
+                        outDissolveProtect = DissolveProtect(boneIndices, boneWeights, entry.protectBones);
+                    }
+                    else
+                    {
+                        outDissolvePosition = vec3(vertices.vertices[vertexIndex].px,
+                                                   vertices.vertices[vertexIndex].py,
+                                                   vertices.vertices[vertexIndex].pz);
+                    }
+                    const float p0 = uintBitsToFloat(record.previous.x);
+                    const float threshold = p0 >= 0.0 ? clamp(p0, 0.0, 1.0) : entry.params.y;
+                    outDissolveSweep = entry.sweep;
+                    outDissolveParams = vec3(1.0, entry.params.x, threshold);
+                }
+            }
+        }
+#endif
+        if (!bMega && VisRecordKind(record) == VIS_KIND_FOLIAGE_CHUNK)
+        {
+            // 草・低木の株: 頂点は FoliageVertex、World は株の置き方
+            world = VsmPlaceFoliageVertex(record, vertexIndex, world0, world1, world2);
+        }
+        else
+        {
+            const vec4 local = vec4(vertices.vertices[vertexIndex].px,
+                                    vertices.vertices[vertexIndex].py,
+                                    vertices.vertices[vertexIndex].pz,
+                                    1.0);
+            world = vec3(dot(world0, local), dot(world1, local), dot(world2, local));
+            // 手続きとスキンの塊は、影の記録が前フレーム用の欄に生の値を持つ。MegaGeometry は未指定。
+            const vec4 instanceParams = bMega ? vec4(-1.0) : uintBitsToFloat(record.previous);
+            const vec4 animParams = VertexAnimationParamsForFrame(instanceParams, params.vertexAnimTime);
+            vec4 material0 = vec4(0.0);
+            vec4 material1 = vec4(0.0);
+            if (!bMega)
+            {
+                material0 = chunkVertexAnim[2u * instance.x];
+                material1 = chunkVertexAnim[2u * instance.x + 1u];
+            }
+            const VertexAnimationMaterial material = MakeVertexAnimationMaterial(material0, material1);
+            const VertexAnimationWind wind = MakeVertexAnimationWind(params.vertexAnimWindA, params.vertexAnimWindB);
+            if (!VertexAnimationIsIdentity(animParams, material, wind))
+            {
+                const vec3 origin = vec3(world0.w, world1.w, world2.w);
+                world = ApplyVertexAnimation(world, local.xyz, animParams, material, wind, origin, params.vertexAnimTime.x);
+            }
         }
     }
 

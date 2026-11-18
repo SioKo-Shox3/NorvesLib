@@ -4,6 +4,7 @@
 #include "RHI/DeviceCapabilities.h"
 #include "DrawCommand.h"
 #include "Rendering/ImpostorBatch.h"
+#include "Rendering/LayerImpostor.h"
 #include "Rendering/DebugDrawQueue.h"
 #include "Rendering/EnvironmentGpuParams.h"
 #include "Rendering/RenderResourceContexts.h"
@@ -890,6 +891,10 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief FramePacket が所有するインポスターの束 */
         const Container::VariableArray<ImpostorBatch>* SnapshotImpostorBatches = nullptr;
+
+        /// FramePacket が所有する太陽の影の投影物とアトラス。
+        const Container::VariableArray<ImpostorShadowCaster>* SnapshotImpostorShadowCasters = nullptr;
+        const Container::VariableArray<ImpostorShadowAtlas>* SnapshotImpostorShadowAtlases = nullptr;
 
         /** @brief 互換経路で使う主ビューのインポスターの束の範囲 */
         CommandRange SnapshotImpostorBatchRange;

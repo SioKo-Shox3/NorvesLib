@@ -1,5 +1,6 @@
 ﻿#include "Rendering/ShadowMapPass.h"
 #include "Rendering/ShadowCasterCollection.h"
+#include "Rendering/LayerImpostor.h"
 #include "Rendering/SkinnedShadowComponentBindings.h"
 #include "Rendering/SkinnedShadowStorage.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
@@ -139,6 +140,40 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(ShadowAlphaClipUBO, dissolveSweep) == 240 && sizeof(ShadowAlphaClipUBO::dissolveSweep) == 16);
         static_assert(offsetof(ShadowAlphaClipUBO, dissolveParams) == 256 && sizeof(ShadowAlphaClipUBO::dissolveParams) == 16);
         static_assert(offsetof(ShadowAlphaClipUBO, dissolveProtectBones) == 272 && sizeof(ShadowAlphaClipUBO::dissolveProtectBones) == 16);
+
+        constexpr uint32_t CsmImpostorBatchCapacity = 64u;
+
+        // std140 の定数は 4272 バイトに収め、最小の UBO 上限でも 64 本をまとめる。
+        struct ImpostorShadowCardData
+        {
+            float CenterAndHalfSize[4];
+            float AxisX[4];
+            float AxisY[4];
+            float AxisZ[4];
+        };
+        struct ImpostorShadowUBO
+        {
+            float LightView[16];
+            float LightProjection[16];
+            float TowardLight[4];
+            float GridAndAtlasSize[4];
+            int32_t Layout[4];
+            ImpostorShadowCardData Cards[CsmImpostorBatchCapacity];
+        };
+        static_assert(sizeof(ImpostorShadowCardData) == 64);
+        static_assert(offsetof(ImpostorShadowUBO, Cards) == 176 && sizeof(ImpostorShadowUBO) == 4272);
+
+        struct ImpostorShadowAtlasBatch
+        {
+            const ImpostorShadowAtlas* Atlas = nullptr;
+            RHI::TexturePtr Albedo;
+            Container::VariableArray<const ImpostorShadowCaster*> Casters;
+        };
+
+        BoundingSphere MakeImpostorShadowBounds(const ImpostorShadowCaster& caster)
+        {
+            return {caster.Center[0], caster.Center[1], caster.Center[2], caster.HalfSize};
+        }
 
         // 材質の解決結果をカスケードと点光源の面の間で共有する。
         struct ShadowAlphaClipMaterial
@@ -965,6 +1000,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t LoggedPointExtensionMasked = 0;
         uint32_t LoggedPointExtensionFallback = 0;
         uint32_t LoggedPointExtensionOmitted = 0;
+        // インポスターが無い間は記録せず、描いた後に空になった変化も記録する。
+        uint32_t LoggedImpostorDraws[PhysicalLightingShadowCascadeCount] = {};
+        uint32_t LoggedImpostorCasters[PhysicalLightingShadowCascadeCount] = {};
+        uint32_t LoggedImpostorOmitted[PhysicalLightingShadowCascadeCount] = {};
 #endif
         // 同じ束の材質を CSM と点光源で共有する。描画が終わったら参照を手放す。
         Container::VariableArray<ShadowAlphaClipMaterial> ExtensionMaterials;
@@ -1335,6 +1374,48 @@ namespace NorvesLib::Core::Rendering
             m_AlphaClipUniformAllocator.Shutdown();
         }
 
+        m_ImpostorShadowVertexShader = context.ShaderMgr->LoadShader("impostor_shadow.vert", RHI::ShaderStage::Vertex);
+        m_ImpostorShadowFragmentShader = context.ShaderMgr->LoadShader("impostor_shadow.frag", RHI::ShaderStage::Pixel);
+        bool bImpostorReady = m_ImpostorShadowVertexShader && m_ImpostorShadowFragmentShader && m_AlphaClipSampler;
+        if (bImpostorReady)
+        {
+            RHI::DescriptorSetDesc impostorDesc;
+            RHI::DescriptorBinding uniformBinding;
+            uniformBinding.binding = 0;
+            uniformBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            uniformBinding.stages = RHI::ShaderStage::Vertex;
+            impostorDesc.bindings.push_back(uniformBinding);
+            RHI::DescriptorBinding atlasBinding;
+            atlasBinding.binding = 1;
+            atlasBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            atlasBinding.stages = RHI::ShaderStage::Pixel;
+            impostorDesc.bindings.push_back(atlasBinding);
+            bImpostorReady = m_ImpostorShadowUniformAllocator.Initialize(m_Device, sizeof(ImpostorShadowUBO), impostorDesc);
+            if (bImpostorReady)
+            {
+                // 既存の切り抜きと同じ深度・バイアス・ラスタ設定で、頂点入力だけを省く。
+                RHI::GraphicsPipelineDesc impostorPipelineDesc = pipelineDesc;
+                impostorPipelineDesc.vertexShader = m_ImpostorShadowVertexShader;
+                impostorPipelineDesc.pixelShader = m_ImpostorShadowFragmentShader;
+                impostorPipelineDesc.vertexBindings.clear();
+                impostorPipelineDesc.vertexAttributes.clear();
+                impostorPipelineDesc.descriptorSetLayouts.clear();
+                impostorPipelineDesc.descriptorSetLayouts.push_back(impostorDesc);
+                m_ImpostorShadowPipeline = m_Device->CreateGraphicsPipeline(impostorPipelineDesc);
+                bImpostorReady = static_cast<bool>(m_ImpostorShadowPipeline);
+            }
+        }
+        if (!bImpostorReady)
+        {
+#if NORVES_ENABLE_LOGGING
+            NORVES_LOG_WARNING("ShadowMapPass", "インポスターの CSM 用資源を作れないため、板の影を無効にします");
+#endif
+            m_ImpostorShadowPipeline.reset();
+            m_ImpostorShadowVertexShader.reset();
+            m_ImpostorShadowFragmentShader.reset();
+            m_ImpostorShadowUniformAllocator.Shutdown();
+        }
+
         m_bInitialized = true;
         NORVES_LOG_INFO("ShadowMapPass", "ShadowMapPass initialized");
         return true;
@@ -1342,6 +1423,10 @@ namespace NorvesLib::Core::Rendering
 
     void ShadowMapPass::Shutdown()
     {
+        m_ImpostorShadowPipeline.reset();
+        m_ImpostorShadowVertexShader.reset();
+        m_ImpostorShadowFragmentShader.reset();
+        m_ImpostorShadowUniformAllocator.Shutdown();
         m_AlphaClipPipeline.reset();
         m_SkinnedAlphaClipPipeline.reset();
         m_AlphaClipVertexShader.reset();
@@ -1617,6 +1702,36 @@ namespace NorvesLib::Core::Rendering
                             fogBudgetDropped);
         }
 
+        // MegaGeometry と同じ影の持ち主の判断を使う。元のメッシュが全て隠れていても VSM に任せる。
+        const bool bCanDrawImpostors = cascadedShadowMatrices.bEnabled && !bVsmOwnsSunShadow &&
+            m_ImpostorShadowPipeline && m_AlphaClipSampler && m_ImpostorShadowUniformAllocator.IsInitialized() &&
+            context.SnapshotImpostorShadowCasters && !context.SnapshotImpostorShadowCasters->empty();
+        Container::VariableArray<ImpostorShadowAtlasBatch> impostorBatches;
+        if (bCanDrawImpostors)
+        {
+            const size_t atlasCount = context.SnapshotImpostorShadowAtlases
+                ? context.SnapshotImpostorShadowAtlases->size() : 0u;
+            // 最後の束はアトラス番号が不正な個体を受け、省いた本数に含める。
+            impostorBatches.resize(atlasCount + 1u);
+            for (const ImpostorShadowCaster& caster : *context.SnapshotImpostorShadowCasters)
+            {
+                const size_t batchIndex = caster.AtlasIndex < atlasCount ? caster.AtlasIndex : atlasCount;
+                impostorBatches[batchIndex].Casters.push_back(&caster);
+            }
+            for (size_t atlasIndex = 0; atlasIndex < atlasCount; ++atlasIndex)
+            {
+                auto& batch = impostorBatches[atlasIndex];
+                batch.Atlas = &(*context.SnapshotImpostorShadowAtlases)[atlasIndex];
+                const auto& atlas = *batch.Atlas;
+                if (!batch.Casters.empty() && context.Resources.Textures && atlas.AlbedoAtlas.IsValid() &&
+                    atlas.AxisCellCountX > 0u && atlas.AxisCellCountY > 0u &&
+                    atlas.AtlasWidth >= atlas.AxisCellCountX && atlas.AtlasHeight >= atlas.AxisCellCountY)
+                {
+                    batch.Albedo = context.Resources.Textures->GetRHITexturePtr(atlas.AlbedoAtlas);
+                }
+            }
+        }
+
         // 境界の解決は影を落とす描画ごとに1回だけ行い、元の描画順のまま候補を保つ。
         Container::VariableArray<const DrawCommand*> casterCommands;
         Container::VariableArray<CascadedShadowDrawBounds> casterDrawBounds;
@@ -1657,6 +1772,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t extensionMaskedCount = 0;
         uint32_t extensionFallbackCount = 0;
         uint32_t extensionOmittedCount = 0;
+        uint32_t impostorDrawCounts[PhysicalLightingShadowCascadeCount] = {};
+        uint32_t impostorCasterCounts[PhysicalLightingShadowCascadeCount] = {};
+        uint32_t impostorOmittedCounts[PhysicalLightingShadowCascadeCount] = {};
 #endif
 
         // 4つのFramebufferで同じキャスターを記録するため、カスケードごとに別の定数と記述子セットを借りる。
@@ -1910,6 +2028,90 @@ namespace NorvesLib::Core::Rendering
                 }
             }
 
+            // 板も同じ深度へ書くため、既存の投影物の後・MegaGeometry の前に追加できる。
+            if (bCanDrawImpostors && cascadedShadowMatrices.Cascades[cascadeIndex].bEnabled)
+            {
+                const auto& cascade = cascadedShadowMatrices.Cascades[cascadeIndex];
+                for (const auto& batch : impostorBatches)
+                {
+                    ImpostorShadowUBO ubo = {};
+                    std::memcpy(ubo.LightView, lightViewData[cascadeIndex], sizeof(ubo.LightView));
+                    std::memcpy(ubo.LightProjection, lightProjData[cascadeIndex], sizeof(ubo.LightProjection));
+                    ubo.TowardLight[0] = -cascade.Direction.x;
+                    ubo.TowardLight[1] = -cascade.Direction.y;
+                    ubo.TowardLight[2] = -cascade.Direction.z;
+                    if (batch.Albedo)
+                    {
+                        ubo.GridAndAtlasSize[0] = static_cast<float>(batch.Atlas->AxisCellCountX);
+                        ubo.GridAndAtlasSize[1] = static_cast<float>(batch.Atlas->AxisCellCountY);
+                        ubo.GridAndAtlasSize[2] = static_cast<float>(batch.Atlas->AtlasWidth);
+                        ubo.GridAndAtlasSize[3] = static_cast<float>(batch.Atlas->AtlasHeight);
+                        ubo.Layout[0] = static_cast<int32_t>(batch.Atlas->Layout);
+                    }
+                    uint32_t cardCount = 0;
+                    const auto flushCards = [&]()
+                    {
+                        if (cardCount == 0u)
+                        {
+                            return;
+                        }
+                        const auto allocation = m_ImpostorShadowUniformAllocator.Allocate(context.FrameResources);
+                        if (allocation.IsValid())
+                        {
+                            allocation.Write(&ubo, sizeof(ubo));
+                            allocation.DescriptorSet->BindTexture(1, batch.Albedo);
+                            allocation.DescriptorSet->BindSampler(1, m_AlphaClipSampler);
+                            allocation.DescriptorSet->Update();
+                            DrawCommand command;
+                            command.Type = DrawCommandType::DrawInstanced;
+                            command.Pipeline = m_ImpostorShadowPipeline;
+                            command.DescriptorSet = allocation.DescriptorSet;
+                            // 頂点バッファなしの経路は VertexOffset を頂点数として読む。
+                            command.Draw.VertexOffset = 6u;
+                            command.Draw.bInstanced = true;
+                            command.Draw.InstanceCount = cardCount;
+                            shadowCommands->push_back(command);
+#if NORVES_ENABLE_LOGGING
+                            ++impostorDrawCounts[cascadeIndex];
+                            impostorCasterCounts[cascadeIndex] += cardCount;
+#endif
+                        }
+                        else
+                        {
+#if NORVES_ENABLE_LOGGING
+                            impostorOmittedCounts[cascadeIndex] += cardCount;
+#endif
+                        }
+                        cardCount = 0;
+                    };
+                    for (const ImpostorShadowCaster* caster : batch.Casters)
+                    {
+                        if (!CascadedShadowCascadeMayContainCaster(cascade, MakeImpostorShadowBounds(*caster)))
+                        {
+                            continue;
+                        }
+                        if (!batch.Albedo)
+                        {
+#if NORVES_ENABLE_LOGGING
+                            ++impostorOmittedCounts[cascadeIndex];
+#endif
+                            continue;
+                        }
+                        auto& card = ubo.Cards[cardCount++];
+                        std::memcpy(card.CenterAndHalfSize, caster->Center, sizeof(caster->Center));
+                        card.CenterAndHalfSize[3] = caster->HalfSize;
+                        std::memcpy(card.AxisX, caster->AxisX, sizeof(caster->AxisX));
+                        std::memcpy(card.AxisY, caster->AxisY, sizeof(caster->AxisY));
+                        std::memcpy(card.AxisZ, caster->AxisZ, sizeof(caster->AxisZ));
+                        if (cardCount == CsmImpostorBatchCapacity)
+                        {
+                            flushCards();
+                        }
+                    }
+                    flushCards();
+                }
+            }
+
             // MegaGeometryはカスケードの影の地図のXYにかかる物だけを描く。段は、影に指定された段を最も細かい段とし、
             // 誤差がそのカスケードの1テクセル以下の最も粗い段を使う（遠いカスケードほどテクセルが大きく粗い段になる）。
             if (bCanDrawMegaCasters)
@@ -1980,6 +2182,29 @@ namespace NorvesLib::Core::Rendering
         }
 
 #if NORVES_ENABLE_LOGGING
+        bool bImpostorCountsChanged = false;
+        for (uint32_t cascadeIndex = 0; cascadeIndex < PhysicalLightingShadowCascadeCount; ++cascadeIndex)
+        {
+            bImpostorCountsChanged = bImpostorCountsChanged ||
+                impostorDrawCounts[cascadeIndex] != m_FramePlan->LoggedImpostorDraws[cascadeIndex] ||
+                impostorCasterCounts[cascadeIndex] != m_FramePlan->LoggedImpostorCasters[cascadeIndex] ||
+                impostorOmittedCounts[cascadeIndex] != m_FramePlan->LoggedImpostorOmitted[cascadeIndex];
+            m_FramePlan->LoggedImpostorDraws[cascadeIndex] = impostorDrawCounts[cascadeIndex];
+            m_FramePlan->LoggedImpostorCasters[cascadeIndex] = impostorCasterCounts[cascadeIndex];
+            m_FramePlan->LoggedImpostorOmitted[cascadeIndex] = impostorOmittedCounts[cascadeIndex];
+        }
+        if (bImpostorCountsChanged)
+        {
+            NORVES_LOG_INFO("ShadowMapPass",
+                            "CSM_IMPOSTOR_CASTERS c0=%u/%u c1=%u/%u c2=%u/%u c3=%u/%u omitted=%u/%u/%u/%u",
+                            impostorDrawCounts[0], impostorCasterCounts[0],
+                            impostorDrawCounts[1], impostorCasterCounts[1],
+                            impostorDrawCounts[2], impostorCasterCounts[2],
+                            impostorDrawCounts[3], impostorCasterCounts[3],
+                            impostorOmittedCounts[0], impostorOmittedCounts[1],
+                            impostorOmittedCounts[2], impostorOmittedCounts[3]);
+        }
+
         bool bExtensionCountsChanged = extensionMaskedCount != m_FramePlan->LoggedExtensionMasked ||
             extensionFallbackCount != m_FramePlan->LoggedExtensionFallback ||
             extensionOmittedCount != m_FramePlan->LoggedExtensionOmitted;
@@ -2184,6 +2409,34 @@ namespace NorvesLib::Core::Rendering
             for (const RenderExtensionShadowCasterInstance& instance : extensionCasters->GetInstances())
             {
                 casterBounds.push_back(instance.WorldSphere);
+            }
+        }
+        // 元の Mega が隠れた個体も光源側の深度範囲に含め、板を near 面で欠けさせない。
+        if (m_ImpostorShadowPipeline && context.Resources.Textures && context.SnapshotImpostorShadowCasters &&
+            !context.SnapshotImpostorShadowCasters->empty() && context.SnapshotImpostorShadowAtlases)
+        {
+            const auto& atlases = *context.SnapshotImpostorShadowAtlases;
+            Container::VariableArray<uint8_t> atlasReady;
+            atlasReady.resize(atlases.size());
+            // 解決はアトラスごとに一度だけ行い、描けない板で既存の深度範囲を広げない。
+            for (size_t atlasIndex = 0; atlasIndex < atlases.size(); ++atlasIndex)
+            {
+                const auto& atlas = atlases[atlasIndex];
+                atlasReady[atlasIndex] = atlas.AlbedoAtlas.IsValid() &&
+                    atlas.AxisCellCountX > 0u && atlas.AxisCellCountY > 0u &&
+                    atlas.AtlasWidth >= atlas.AxisCellCountX && atlas.AtlasHeight >= atlas.AxisCellCountY &&
+                    context.Resources.Textures->GetRHITexturePtr(atlas.AlbedoAtlas) ? uint8_t{1} : uint8_t{0};
+            }
+            for (const ImpostorShadowCaster& caster : *context.SnapshotImpostorShadowCasters)
+            {
+                if (caster.AtlasIndex < atlasReady.size() && atlasReady[caster.AtlasIndex] != 0u)
+                {
+                    const BoundingSphere bounds = MakeImpostorShadowBounds(caster);
+                    if (IsDrawableMegaBounds(bounds))
+                    {
+                        casterBounds.push_back(bounds);
+                    }
+                }
             }
         }
         const CascadedShadowMatrixResult cascadedShadowMatrices =

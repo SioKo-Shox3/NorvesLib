@@ -12598,19 +12598,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命・撃破の通知の順）。
 - Notes: 既知の限界: 前の敵の撃破が保留中（保留の解消を待つ間）に同じ Id の敵が生成されると、その `Rearm` は決まりどおり無視されるので、前の撃破が完了した後に新しい敵を倒しても撃破ゲートに受け付けられない。シーンの入り直しでは前の World の破棄で保留が外れるが、完了は次の `DefeatGate::Update` なので、その前に新しい敵の BeginPlay が走る順だとこの経路に入る。退役した項目は消さずに残す（1 回の入り直しにつき Id 1 つ分）。
 
-## G12-GR93-PAINT 配置の画面のブラシで草の密度と枯れのマスクを地形の当たった位置に塗り、地形のマスクの cook へ渡せる PNG に書く（2026-11-18）
-- U1 マスクの層・円形ブラシ・R8 PNG の読み書き: 着地(直し 0 回)
-- U2 枯れの手続きの初期値（持ち場と枯れの源から smoothstep と雑音）: 着地(直し 0 回)
-- U3 LevelEditOperations にマスクを合わせる・塗る・消す・保存・読み直しを足す: 着地(直し 0 回)
-- U4 配置の画面にブラシの操作と枯れの初期値を足す: 着地(直し 0 回)
-- Done: `Gameplay/Level/LevelPaintMask.h`: 地形の高さ格子（`TerrainHeightField::GetGridLayout()`）に整列した 8bit のマスク 1 層（値と、消すときに戻す基準値）、円形ブラシ（半径・強さ・減衰。重み = 強さ × (1 − smoothstep(半径 × (1 − 減衰), 半径, 距離))）の塗る・消す、8bit グレースケール PNG の保存（一時ファイルから置換）と読み込み（寸法の照合・flip_z の行順）。
-- Done: 枯れの初期値 `BuildLevelDrynessBaseline`: 持ち場（`TerritoryMarkerComponent` の EngageRadius × 倍率）の円を外側へ smoothstep で減衰させた値と、`WitherSourceComponent`（形・半径・向き・減衰・DefaultLevel。再生中の登録と同じ渡し方）を一時の `DrynessMap` で評価した値の最大を取り、(seed, 格子) の整数ハッシュの値雑音で標本の位置をずらして縁を乱す。
-- Done: `LevelEditOperations`: `BindPaintMasks`（置き場の既存の PNG を読み、無い層は基準値で始める。読めない PNG があれば何も変えない）・`PaintMask`・`EraseMask`・`SavePaintMasks`・`LoadPaintMasks`・`SetPaintMaskBaseline`・`RegenerateDrynessBaseline`。
-- Done: `LevelEditView`（窓「配置の編集」の節「草の密度・枯れのペイント」）: 層・操作・半径・強さ・減衰・塗る値・置き場・flip_z の入力、地形に合わせる・1 回塗る・連続で塗る・保存・読み直す・枯れの初期値を作り直す、ブラシの円（外周と減衰の始まり）のデバッグ描画。
-- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`LevelPaintMask.cpp`・`LevelEditOperations.cpp`・`LevelEditView.cpp` のコンパイルを含む。`.harness/runs/20261118-161848/G12-GR93-PAINT-U4-verify-build-game.txt`）。
-- Next: ランナーの評価。地形の spec（`Assets/TerrainSpecs/Grassland/GrasslandTerrain.json`）の recipe.paint からこの PNG を指すのは、塗った絵を人が見てから決める（今回の paths の外）。
-- Notes: 判断: マスクの「タイル」は地形の高さ格子 1 枚分（Grassland は 513 × 513）。GR89 の cook（`Tools/AssetCook/TerrainMasks.cpp` の `ComputeTerrainMasks`）はペイント画像に高さ格子と同寸法の 8bit PNG を 1 枚求めるため、分割したタイルは cook がそのまま読めない（`Tools/AssetCook` は paths の外）。ファイルは `Assets/Levels/<地域>/Masks/grass_density.png`・`dry_grass.png`（recipe.paint の target 名と同じ）。
-- Notes: spec への書き方: `"paint": [{"target": "grass_density", "mode": "multiply", "path": "../../Levels/Sample/Masks/grass_density.png"}, {"target": "dry_grass", "mode": "override", "path": "../../Levels/Sample/Masks/dry_grass.png"}]`（パスは spec の場所が基準）。草の密度の基準値は 255（multiply で中立。塗って減らす）、枯れは手続きの初期値ごと override で入れる（spec の dry_grass の規則は置き換わる）。1 チャンネルなのでアルファは 255 として読まれる。spec の height_source.flip_z が true なら画面の「spec の flip_z と同じにする」を on にする。
-- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when (3) の `LevelEditOperationsTest` のブラシのケースと、この PNG を入力にした AssetCook の地形のマスクの試験は作っていない・回していない。PNG の形式（8bit・1 チャンネル・高さ格子と同寸法・flip_z の行順・値は最初のチャンネル）は cook の `DecodeTerrainPaintPng`・`ComputeTerrainMasks` の要件に合わせた。
-- Notes: 人が見るときの見どころ: `--scene=grassland --imgui` で窓「配置の編集」の「草の密度・枯れのペイント」を開き、草原の内側で「画面の中心の地形に合わせる」を押すと格子が 513 列 × 513 行・間隔 1 m と出る。地面に緑（外周）と黄（減衰の始まり）の円が出て、「画面の中心に塗る（1 回）」で変わった標本の数が出る。「保存」で `Assets/Levels/Sample/Masks/` に 2 枚の PNG ができ、画像で見ると塗った所が円になっている（草の密度は白地に黒い円、枯れは持ち場の周りが明るい）。spec に上の paint を足して `Scripts/CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` で焼くと、草の密度（GRS0）と枯れ草（MSK0 の G）に入る。
-- Notes: 既知の限界: ブラシの中心は画面の中心の光線だけ（マウスの位置では塗らない）。取り消しは無い（「消す」で基準値へ戻すか「読み直す」）。外周の環の上で「合わせる」と外周の粗い格子に合わさる（表示の間隔で分かるので、草原の内側で合わせ直す）。枯れの初期値に枯れの源を焼き込むと静的な下地として残り、シ者の撃破で戻るのは実行時の枯れ度の分だけになる（「枯れの源を使う」を切れば持ち場だけで作る）。
+- U1 ループの平滑で近傍を格子の時刻で取り、周期で折り返す: 着地(直し 0 回)
+### G4-GR128-PROCESSING-CASES-P1 ループの平滑の継ぎ目（2026-11-18、run 20261118-152431 の反復 1、完了）
+- Done: `SkeletalClipProcessing.cpp` の `SmoothChannels` に周期（格子の間隔の単位、`outputDuration * OutputFps`）を渡し、ループのクリップでは近傍 k を添字の剰余ではなく時刻 `i + k` を周期で `fmod` して取り、間のキーを補間（回転は Slerp・並進は線形）するようにした。周期が整数のコマにならず末尾の間隔が短い格子（例: 12.5 コマ）でも、継ぎ目をまたぐ近傍を等間隔とみなさない。端数が 0 のときは元のキーをそのまま使うので、整数の周期のクリップと継ぎ目から離れたキーの結果は前とビット単位で同じ。ループでないクリップの平滑は変えていない。
+- 確かめ: `cmake --build build --config Debug -- /m:1` 終了コード 0・エラーの行なし（`SkeletalClipProcessing.obj` は編集の後に再コンパイル）、numstat の 2 通りが一致（37 追加・6 削除）。証拠は `.harness/runs/20261118-152431/G4-GR128-PROCESSING-CASES-P1-u1-unit-verify.txt`。
+- 試験は作らない・回さない決まりにより、done-when の `MotionProcessingTest` の `TestSmoothing`（12.5 コマの合成クリップと `CheckLoop`）は作っていない（試験の .cpp は既に消えている）。ctest も回していない。
+- Next: ランナーの再検証と評価者の反証。人が見るときの見どころ: 周期が整数のコマにならないループの歩き・走りのクリップ（`SmoothingRadius` が 1 以上の role-profile で焼いたもの）を再生し、ループの継ぎ目で動きが一瞬速くなったり詰まったりしないこと。
+
+- U1 層のインポスターの契約（型・セルの帯の判定・影の板の GLSL）と FramePacket・ViewRenderContext の運び口: 着地(直し 0 回)
+- U2 SceneView に層のインポスターの登録と、セルの帯・個体ごとの段の選択・Mega の抑制と遷移の値を足す: 着地(直し 0 回)
+- U4 太陽の VSM へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U5 CSM（カスケード）へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U3 層のインポスターの個体を ImpostorBatch と影の投影物の一覧にして FramePacket へ運び、全体を確かめる（最後）: 着地(直し 1 回)
+### G12-GR48-LAYER-SHADOW（2026-11-18、run 20261118-135807）
+- Done: GR47 の散布（`MegaGeometryScatterComponent` が 1 本ごとに出す `MegaGeometryProxy`）を配置の層とし、Entity を作らずにインポスターの段を足した。`SceneView::SetMegaMeshImpostor` で MegaMesh ごとにアトラスを登録すると、層の個体を 64 m の XZ のセル（`LAYER_IMPOSTOR_CELL_SIZE_METERS`）に分け、セルの最短・最長の距離で全部メッシュ／全部インポスター／混在を決め、混在のセルだけ個体ごとに MESH-LOD-SELECT の画面の大きさの式とヒステリシスで段を選ぶ。インポスターの段の個体は Mega を抑え、CROSSFADE の遷移の値（1/127 の丸め）のディザでつなぐ。可視の個体はアトラスの組ごとに `ImpostorBatch` へ束ねて `ImpostorGBufferPass` で描く。影は遷移させず、Mega の元が遷移の終わりまで落とし、インポスターは Mega を隠したときだけ落とす。影を落とす個体は `ImpostorShadowCaster`・`ImpostorShadowAtlas` の一覧にしてメインのビューから `FramePacket` へ写し、太陽の VSM は新しい記録の種類（インポスターの板）を被覆で切り抜く版で描き（クリップマップの範囲と予算の内を近い順。キャッシュの無効化と統計付き）、CSM は VSM が太陽の影を持たないときだけ専用のパイプライン（`impostor_shadow.vert/.frag`）でカスケードごとに描く。影の到達距離（`MegaMeshImpostorDesc::ShadowDistance`）の外の個体と、種で影を切った個体（`MegaGeometryProxy::bCastShadow`）は投影物にしない。インポスターは TLAS に入れない。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）が、着地と同じ中身の作業ツリーで EXIT_CODE=0、`Game.exe` のリンクまで通った（`.harness/runs/20261118-135807/verify-G12-GR48-LAYER-SHADOW-U3-build.txt`）。このタスクで触ったシェーダー（`vsm_draw_alphaclip.vert`・`vsm_draw.vert`・`impostor_shadow.vert`・`impostor_shadow.frag`、`Common/ImpostorShadowCard.glsl` を include する入口）は `glslc` で全部終了コード 0。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致し、新規ファイルは BOM 付き・CRLF。verify の ctest の行と done-when (3) の試験（GR47 の層の試験のケース・`ImpostorShadowVulkanTest`）は人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: 散布の MegaMesh に `SetMegaMeshImpostor` でアトラスを登録した場面で、低い太陽のもと、遠景の木・岩がインポスターに替わる距離の前後へカメラを動かし、(a) 替わる帯にディザの抜け・ポップが無いこと、(b) 地面の影が遷移の間に二重・欠けにならないこと、(c) 影の形が被覆どおりに切り抜かれ（板の四角い影にならない）、影の到達距離の外の個体は影を落とさないこと。
+- Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
+- Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
+- 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。

@@ -8154,7 +8154,7 @@
 - notes: 設計はロードマップ 2363 行（GR93 の 5. 草の密度・枯れのペイント）。マスクの形式は GR42（草の場）・GR45（枯れ度の地図）・GR89（地形のマスクの cook）で決まるので needs-gr に入れた（ロードマップ 2761 行のリスク）。G5 の `G5-GR42-GRASS-FIELD-ASSET` と `G5-GR89-TERRAIN-MASKS` が採った層の名前と寸法に合わせ、新しい形式を作らない。作者の方針（企画で保留の提案もエンジンの機能として採る）により、『枯れた草地』も採る前提で枯れのマスクの初期値の生成を入れる。GR89 の cook の試験の名前は、その束が決めた名前で verify に足してよい。やらないこと: 草の描画（GR43）、枯れ度の実行時の評価（GR45）。
 
 ## G12-GR48-LAYER-SHADOW: 大規模の配置の層の遠い個体をインポスターで描き、インポスターが切り抜いた形の影を太陽の影へ落とす
-- status: todo
+- status: done
 - after: G12-GR48-CROSSFADE, G12-GR47-INSTANCE-VARIATION, G12-GR47-PLACEMENT-COOK, G12-GR47-SCATTER-COLLIDERS
 - gr: GR48
 - needs-gr: GR47
@@ -8263,7 +8263,7 @@
 - from: G8-GR17-ENEMY-COMPONENT
 
 ## G4-GR128-PROCESSING-CASES-P1: ループのときの平滑（`SmoothChannels`）で、近傍を時刻で取り、周期 P で折り返して、継ぎ目のキーをゆがめないようにする
-- status: todo
+- status: done
 - done-when: `SmoothChannels`（`Library/Core/Private/Animation/SkeletalClipProcessing.cpp` 91 行）がループのクリップで近傍のキーを添字ではなく時刻で選び、周期 P（`outputDuration`）で折り返す。こうすると、出力の格子の末尾の間隔が短いとき（`sample + 1 == samples` で `outputDuration` に置く 691 行の扱い）でも、等間隔とみなして折り返すことがなくなる。`MotionProcessingTest` の `TestSmoothing` で、周期が整数のコマにならない合成のクリップ（12.5 コマ）を `SmoothingRadius = 2` で処理し、その結果に `CheckLoop` を掛けて通す。`CheckLoop` が見るのは、先頭と末尾のキーが float32 で一致すること、継ぎ目の入りと出の角速度が全体の中央値の 1.5 倍以内であること（今は 2.32 倍で落ちる）。継ぎ目から離れた内側のキーは、直す前の値と 1e-6 rad 以内で一致する。ループでないクリップの平滑の結果は変えない。`MotionProcessingTest` の他の検査と、`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` は試験を変えずに通る。
 - verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(MotionProcessingTest|SkeletalBvhClipImportTest|SkeletalBvhClipTimeTest|BvhDecodeTest|BvhEvaluateTest|RigStaticRootFrameWireTest)$" --no-tests=error --output-on-failure --timeout 300`
@@ -10912,3 +10912,12 @@ TASK にした理由（判断の根拠）:
 この判断のために読んだのはファイルだけで、ビルドや試験は回していません。
 
 新しいタスクは G6-GR35-WET-LOOK と `skinned_fur_gbuffer.frag`・`FurShading.glsl` の paths が重なるので、2 つが同時には走りません。
+
+## G12-GR48-CHECK-P1: 散布の種に焼いたインポスターのアトラスを結び、`ScatterSystem` が `SceneView::SetMegaMeshImpostor` へ登録・解除する
+- status: todo
+- after: G12-GR48-LAYER-SHADOW
+- done-when: (1) `Scatter::ScatterSpeciesBinding`(`Library/Core/Public/Scatter/ScatterSystem.h`)に任意のインポスターの記述(`MegaMeshImpostorDesc`)を持たせる。`ScatterSystem::Load` は、記述が有効(`IsValid()`)な Mega の種の `MegaMesh` を、読み込み先の `World` の `SceneView::SetMegaMeshImpostor` へ登録する。散布を解放したとき(Unload・World の破棄・GameMode の終わり)は `ClearMegaMeshImpostor` で外す。同じ `MegaMesh` を複数の散布が使うときは、最後の解放まで登録を保つ。記述の無い種は今までどおり Mega だけで描く。(2) `Tools/ImpostorBaker` が書く `.impostor.json`(version 1。`layout`・`cellsX`/`cellsY`・`cellResolution`・`atlasWidth`/`atlasHeight`・`boundsCenter`・`boundsRadius`・`files` の cooked の 4 枚)を `Text/JsonDocument.h` で読み、cooked の NVTEX 4 枚をテクスチャにして `MegaMeshImpostorDesc` を作る口を Core に足す。切り替えの画面の大きさと影の距離は呼び出し側が渡す。版の違い・欄の欠け・テクスチャを読めないときは警告のログを出して記述を返さない(登録しない)。(3) Game の grassland の森(`LoadGrasslandForest`)と散布(`LoadGrasslandScatter`。`Game/GameModes/Grassland/GrasslandScatter.cpp`)の Mega の種は、種のメッシュに対応する焼いたアトラスがあるときだけ (2) で記述を作って binding に載せ、種の名前とアトラスの登録の成否をログに 1 行出す。今のリポジトリには焼いたアトラスが無いので、既定の起動画面とランチャーの各シーンの見た目は変わらない(絶対規則 7)。(4) `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0 で通る。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致し、新規ファイルは UTF-8 + BOM + CRLF。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Scatter/ScatterSystem.h, Library/Core/Private/Scatter/ScatterSystem.cpp, Library/Core/Public/Rendering/LayerImpostorAsset.h, Library/Core/Private/Rendering/LayerImpostorAsset.cpp, Library/Core/CMakeLists.txt, Game/GameModes/Grassland/GrasslandScatter.cpp, TASKS.md, PROGRESS.md
+- from: G12-GR48-CHECK
+- notes: 判断の根拠は 2 つ。(a) 計画の文書 `Docs/Plans/GameFeatureRequirements.md` の GR48 の構成要素(4876 行)に「配置層（GR47）との連携（InstanceGroupDesc の LOD 鎖とインポスター参照）」があるのに、一覧のどのタスクにも入っていない。(b) G12-GR48-LAYER-SHADOW の done-when (1) は「GR47 の配置の層の個体の最後の段を `ImpostorBatch` として描く」ことを求めている。ところが `SetMegaMeshImpostor` の呼び出し元は Library・Game のどこにも無く(定義は `SceneView.cpp:645` だけ)、`ScatterSpeciesBinding` を作るのは `GrasslandScatter.cpp` の 2 か所だけで、そこにもインポスターの欄が無い。このため、ゲームの場面では層の個体が一度もインポスターにならない。NVSCT の種の記録(96 バイトの固定長)の形式は変えず、実行時の binding で結ぶ。焼いたアトラスの置き場と、種の名前・メッシュとの対応の決め方(メッシュの論理パスの隣の `.impostor.json` など)は、この paths の中で決めて記録する。実の AI の木を焼いて置く作業・距離のスイープ・撮影は G12-GR48-CHECK のまま(回さない決まり)。危険地帯(RenderThread へ渡す値・資源の寿命)に当たるので、評価者を通す。
