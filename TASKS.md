@@ -8180,7 +8180,7 @@
 - notes: 要件 `#### GR48` の受け入れ確認の遷移のスイープ・検証レイヤー・記録（ロードマップ 2626・2627 行）と段取りの P5（実際の AI の木での見た目の調整。2283 行）。木の樹種（針葉樹・枯れ木）は画像の生成の指示の記述で、企画は未決なので見本の 2 種にする。AI の高ポリのメッシュの LOD の鎖（GR80、G17）がまだ無いときは、近景と中景を MegaGeometry のクラスタの LOD で描き（G12-GR48-MESH-LOD-SELECT の notes）、遠景だけをインポスターにする。重い処理（ComfyUI での 3D の生成）は GPU を使うので、Game の撮影と同時に走らせない。撮影を開いて目で確かめる。違ったら GR48 の各タスクの paths の範囲で直す。
 
 ## G12-GR40-SCENE-PAYLOAD: セルの中身にシーンの JSON の部分木を使えるようにし、読み・解析をワーカーで、生成を GameThread で予算ごとに行う
-- status: todo
+- status: done
 - after: G12-GR40-WORLD-PAYLOADS, G12-GR92-ASSETREF-SCENE-V3, G12-GR92-ASSET-BIND, G12-GR92-PREFAB-FILE, G12-GR92-BRIDGE-SCENE
 - gr: GR40
 - needs-gr: GR92
