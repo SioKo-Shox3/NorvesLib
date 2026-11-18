@@ -1,6 +1,7 @@
 ﻿#include "Rendering/GBufferProgramRegistry.h"
 
 #include "Rendering/SkinnedMeshTypes.h"
+#include "Rendering/FurShellLod.h"
 #include "Logging/LogMacros.h"
 #include "Text/IdentityPool.h"
 #include "Thread/Mutex.h"
@@ -65,6 +66,7 @@ namespace NorvesLib::Core::Rendering
         return IsSkinnedGhostOpacity(opacity) ||
                (material && (material->ProgramId != kStandardGBufferProgramId ||
                              material->Blend == BlendMode::Masked || material->bTwoSided ||
+                             material->Shading == ShadingModel::Fur ||
                              material->bViewClearanceOccluder));
     }
 
@@ -146,6 +148,12 @@ namespace NorvesLib::Core::Rendering
         dissolve.FragmentShader = "gbuffer_dissolve.frag";
         dissolve.SkinnedVertexShader = "skinned_gbuffer_dissolve.vert";
         (void)Register(dissolve);
+
+        GBufferProgramDesc furShell;
+        furShell.Name = FurShellGBufferProgramName;
+        furShell.FragmentShader = "skinned_fur_gbuffer.frag";
+        furShell.SkinnedVertexShader = "skinned_fur_gbuffer.vert";
+        (void)Register(furShell);
     }
 
     GBufferProgramRegistry::~GBufferProgramRegistry() = default;

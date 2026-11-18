@@ -12,6 +12,10 @@ layout(location = 5) in vec3 fragViewDir;
 layout(location = 6) flat in uint fragDebugPayload;
 layout(location = 7) in vec4 fragCurrentClip;
 layout(location = 8) in vec4 fragPreviousClip;
+#if defined(MEGAGEOMETRY_VIEW_CLEARANCE) || defined(MEGAGEOMETRY_LOD_CROSSFADE)
+layout(location = 9) flat in float fragLodCrossfade;
+#include "Common/LodCrossfade.glsl"
+#endif
 
 #include "Common/ViewClearance.glsl"
 
@@ -82,7 +86,7 @@ layout(set = 0, binding = 28) uniform sampler2D puddleField;
 #include "Common/SpecularAntiAliasing.glsl"
 #include "Common/SparseResidencySampling.glsl"
 #define VT_FEEDBACK_BINDING 7
-#ifdef MEGAGEOMETRY_VIEW_CLEARANCE
+#if defined(MEGAGEOMETRY_VIEW_CLEARANCE) || defined(MEGAGEOMETRY_LOD_CROSSFADE)
 #define NORVES_VT_FEEDBACK_LATE_DEPTH_TESTS 1
 #endif
 #include "Common/VirtualTextureFeedback.glsl"
@@ -273,6 +277,12 @@ void main()
 #ifdef MEGAGEOMETRY_VIEW_CLEARANCE
     // 画面微分を取り終えてから遮蔽物の画素を間引く。
     if (ViewClearanceShouldDiscard(mvp.viewClearance, fragWorldPos, floor(gl_FragCoord.xy)))
+    {
+        discard;
+    }
+#endif
+#if defined(MEGAGEOMETRY_VIEW_CLEARANCE) || defined(MEGAGEOMETRY_LOD_CROSSFADE)
+    if (LodCrossfadeShouldDiscard(fragLodCrossfade, floor(gl_FragCoord.xy)))
     {
         discard;
     }

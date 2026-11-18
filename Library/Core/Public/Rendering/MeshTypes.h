@@ -307,6 +307,112 @@ namespace NorvesLib::Core::Rendering
         return SelectLODByScreenSizeWithHysteresis(screenSize, thresholds, count, previousLevel, hysteresis);
     }
 
+    /// 段の切り替えをディザでつなぐ長さ（秒）。
+    constexpr float DEFAULT_LOD_CROSSFADE_SECONDS = 0.25f;
+
+    /**
+     * @brief 段の遷移（クロスフェード）の状態。描画の側（SceneView）が持つ。
+     * FromLevel から ToLevel へ Progress（0→1）で移る。IsActive() が偽なら ToLevel の1段だけを描く。
+     */
+    struct LODCrossfadeState
+    {
+        uint8_t FromLevel = 0;
+        uint8_t ToLevel = 0;
+        float Progress = 1.0f;
+        bool bInitialized = false; // 初回の選択は遷移させずに即座に決める。
+
+        /// 異なる段の間を遷移中かを返す。
+        bool IsActive() const { return FromLevel != ToLevel && Progress < 1.0f; }
+    };
+
+    /**
+     * @brief 選んだ段への遷移を進める。即時指定・初回・無効な長さでは即座に確定する。
+     * 遷移中は選択段を見ず、有限の正の経過時間だけを加算する。新しい遷移の開始時は進めない。
+     * 段は0～255を前提とする。
+     */
+    inline void AdvanceLODCrossfade(LODCrossfadeState& state, uint32_t selectedLevel, float deltaSeconds,
+                                    float durationSeconds, bool bSnap)
+    {
+        if (bSnap || !state.bInitialized || !std::isfinite(durationSeconds) || durationSeconds <= 0.0f)
+        {
+            state.FromLevel = static_cast<uint8_t>(selectedLevel);
+            state.ToLevel = static_cast<uint8_t>(selectedLevel);
+            state.Progress = 1.0f;
+            state.bInitialized = true;
+            return;
+        }
+
+        if (state.IsActive())
+        {
+            if (std::isfinite(deltaSeconds) && deltaSeconds > 0.0f)
+            {
+                state.Progress += deltaSeconds / durationSeconds;
+            }
+            if (state.Progress >= 1.0f)
+            {
+                state.Progress = 1.0f;
+                state.FromLevel = state.ToLevel;
+            }
+            return;
+        }
+
+        if (selectedLevel != state.ToLevel)
+        {
+            state.FromLevel = state.ToLevel;
+            state.ToLevel = static_cast<uint8_t>(selectedLevel);
+            state.Progress = 0.0f;
+        }
+    }
+
+    /**
+     * @brief 描画ごとの符号付きフェード値を作る。入る側は正、出る側は負。
+     * 進み具合を0～1に収め、両端と非数では遷移なしの0を返す。
+     */
+    inline float MakeLODCrossfadeValue(float progress, bool bIncoming)
+    {
+        const float fade = progress < 0.0f ? 0.0f : (progress > 1.0f ? 1.0f : progress);
+        if (!(fade > 0.0f && fade < 1.0f))
+        {
+            return 0.0f;
+        }
+        return bIncoming ? fade : -fade;
+    }
+
+    /**
+     * @brief RGBA8の色味のRGBを保ち、上位8ビットのAへ符号付きフェード値を詰める。
+     * 正は1～126、負は129～254。0・非有限・絶対値1以上は遷移なしの255にする。
+     */
+    inline uint32_t PackLODCrossfadeIntoTint(uint32_t tint, float signedFade)
+    {
+        const float magnitude = std::fabs(signedFade);
+        uint32_t alpha = 0xFFu;
+        if (std::isfinite(signedFade) && magnitude > 0.0f && magnitude < 1.0f)
+        {
+            const uint32_t rounded = static_cast<uint32_t>(std::round(magnitude * 127.0f));
+            const uint32_t quantized = rounded < 1u ? 1u : (rounded > 126u ? 126u : rounded);
+            alpha = signedFade > 0.0f ? quantized : 128u + quantized;
+        }
+        return (tint & 0x00FFFFFFu) | (alpha << 24u);
+    }
+
+    /**
+     * @brief RGBA8のAから符号付きフェード値を読む。GLSLのLodCrossfadeFromTintと同じ約束。
+     * 1～126は正、129～254は負で127で割る。予約値0・127・128・255は遷移なしの0。
+     */
+    inline float DecodeLODCrossfadeFromTint(uint32_t tint)
+    {
+        const uint32_t alpha = tint >> 24u;
+        if (alpha >= 1u && alpha <= 126u)
+        {
+            return static_cast<float>(alpha) / 127.0f;
+        }
+        if (alpha >= 129u && alpha <= 254u)
+        {
+            return -static_cast<float>(alpha - 128u) / 127.0f;
+        }
+        return 0.0f;
+    }
+
     /**
      * @brief LODレベル定義
      */

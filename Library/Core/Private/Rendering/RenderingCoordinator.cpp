@@ -5130,6 +5130,10 @@ namespace NorvesLib::Core::Rendering
 
                 if (sceneView && view->IsEnabled() && viewportPlan.HasDrawableExtent())
                 {
+                    if (m_CurrentPacket)
+                    {
+                        sceneView->SetLODCrossfadeClock(m_CurrentPacket->FrameNumber, m_CurrentPacket->DeltaTime);
+                    }
                     sceneView->PrepareDrawCommandsForViewport(viewportPlan);
 
                     const uint32_t instanceBase =
