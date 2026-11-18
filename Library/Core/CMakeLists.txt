@@ -493,6 +493,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfBufferJson.cpp
     Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
+    Private/Resource/FontFaceCache.cpp
     Private/Resource/ModelAssetLoader.cpp
     Private/Resource/SkeletalAssetLoader.cpp
     Private/Resource/SkeletalAssetPublication.cpp
@@ -970,6 +971,7 @@ set(PUBLIC_HEADERS
     Public/Resource/SkeletalMaterialBindings.h
     Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h
+    Public/Resource/FontFaceCache.h
     # Component
     Public/Component/Component.h
     Public/Component/WorldFieldInteractorComponent.h

@@ -12598,3 +12598,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Object の寿命・撃破の通知の順）。
 - Notes: 既知の限界: 前の敵の撃破が保留中（保留の解消を待つ間）に同じ Id の敵が生成されると、その `Rearm` は決まりどおり無視されるので、前の撃破が完了した後に新しい敵を倒しても撃破ゲートに受け付けられない。シーンの入り直しでは前の World の破棄で保留が外れるが、完了は次の `DefeatGate::Update` なので、その前に新しい敵の BeginPlay が走る順だとこの経路に入る。退役した項目は消さずに残す（1 回の入り直しにつき Id 1 つ分）。
 - U1 UTF-8 の読み書き(Utf8.h/.cpp)を足し、厳密な走査と TextComponent を同じ規則へ寄せる: 着地(直し 0 回)
+- U2 FontFaceCache と、コードポイントの表・フォールバックの face・BuildCpu/Upload を持つ FontAtlas: 着地(直し 1 回)
