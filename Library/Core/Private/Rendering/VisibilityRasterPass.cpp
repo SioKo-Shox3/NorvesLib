@@ -515,6 +515,7 @@ namespace NorvesLib::Core::Rendering
         m_MeshVertexShader = context.ShaderMgr->LoadShader("visbuffer_mesh.vert", RHI::ShaderStage::Vertex);
         m_SkinnedVertexShader = context.ShaderMgr->LoadShader("visbuffer_skinned.vert", RHI::ShaderStage::Vertex);
         m_FragmentShader = context.ShaderMgr->LoadShader("visbuffer.frag", RHI::ShaderStage::Pixel);
+        m_CrossfadeFragmentShader = context.ShaderMgr->LoadShader("visbuffer_crossfade.frag", RHI::ShaderStage::Pixel);
         m_RecordsShader = context.ShaderMgr->LoadShader("visbuffer_records.comp", RHI::ShaderStage::Compute);
         m_RecordArgsShader = context.ShaderMgr->LoadShader("visbuffer_records_args.comp", RHI::ShaderStage::Compute);
         if (!m_MegaVertexShader || !m_MeshVertexShader || !m_SkinnedVertexShader || !m_FragmentShader ||
@@ -529,6 +530,8 @@ namespace NorvesLib::Core::Rendering
         {
             m_MegaPipeline.reset();
             m_MegaTwoSidedPipeline.reset();
+            m_MegaCrossfadePipeline.reset();
+            m_MegaTwoSidedCrossfadePipeline.reset();
             m_MeshPipeline.reset();
             m_SkinnedPipeline.reset();
             m_RecordsPipeline.reset();
@@ -593,6 +596,8 @@ namespace NorvesLib::Core::Rendering
         m_SectionMaterialScratch = Container::VariableArray<uint32_t>{};
         m_MegaPipeline.reset();
         m_MegaTwoSidedPipeline.reset();
+        m_MegaCrossfadePipeline.reset();
+        m_MegaTwoSidedCrossfadePipeline.reset();
         m_MeshPipeline.reset();
         m_SkinnedPipeline.reset();
         m_RecordsPipeline.reset();
@@ -604,6 +609,7 @@ namespace NorvesLib::Core::Rendering
         m_MeshVertexShader.reset();
         m_SkinnedVertexShader.reset();
         m_FragmentShader.reset();
+        m_CrossfadeFragmentShader.reset();
         m_RecordsShader.reset();
         m_RecordArgsShader.reset();
         m_Framebuffer.reset();
@@ -685,11 +691,12 @@ namespace NorvesLib::Core::Rendering
                                            bool bVertexInput,
                                            RHI::PolygonMode polygonMode,
                                            RHI::CullMode cullMode,
-                                           RHI::PipelinePtr& outPipeline) -> bool
+                                           RHI::PipelinePtr& outPipeline,
+                                           const RHI::ShaderPtr& fragmentShader = {}) -> bool
         {
             RHI::GraphicsPipelineDesc pipelineDesc;
             pipelineDesc.vertexShader = vertexShader;
-            pipelineDesc.pixelShader = m_FragmentShader;
+            pipelineDesc.pixelShader = fragmentShader ? fragmentShader : m_FragmentShader;
             pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
 
             if (bVertexInput)
@@ -761,6 +768,35 @@ namespace NorvesLib::Core::Rendering
             m_bLoggedMegaTwoSidedFallback = true;
             NORVES_LOG_WARNING("VisibilityRasterPass", "両面の描画パイプラインを作れません。"
                                                        "MegaGeometry は裏面を捨てる描画を使います");
+        }
+
+        // 遷移用の塗りは任意。片面・両面を独立に作り、失敗した側は既存の塗りで区間を描く。
+        if (m_CrossfadeFragmentShader)
+        {
+            try
+            {
+                createGraphics(m_MegaVertexShader, true, RHI::PolygonMode::Fill, RHI::CullMode::Back,
+                               m_MegaCrossfadePipeline, m_CrossfadeFragmentShader);
+            }
+            catch (const std::exception&)
+            {
+                m_MegaCrossfadePipeline.reset();
+            }
+            try
+            {
+                createGraphics(m_MegaVertexShader, true, RHI::PolygonMode::Fill, RHI::CullMode::None,
+                               m_MegaTwoSidedCrossfadePipeline, m_CrossfadeFragmentShader);
+            }
+            catch (const std::exception&)
+            {
+                m_MegaTwoSidedCrossfadePipeline.reset();
+            }
+        }
+        if ((!m_MegaCrossfadePipeline || !m_MegaTwoSidedCrossfadePipeline) && !m_bLoggedMegaCrossfadeFallback)
+        {
+            m_bLoggedMegaCrossfadeFallback = true;
+            NORVES_LOG_WARNING("VisibilityRasterPass", "遷移用の描画パイプラインを作れません。"
+                                                       "作れなかった側の MegaGeometry はディザ無しで描きます");
         }
 
 #if NORVES_BUILD_DEVELOPMENT
@@ -1650,9 +1686,9 @@ namespace NorvesLib::Core::Rendering
                 {
                     continue;
                 }
-                const RHI::PipelinePtr& pipeline = section.Material.bTwoSided
-                                                       ? m_Work.MegaTwoSidedPipeline
-                                                       : m_Work.MegaPipeline;
+                const RHI::PipelinePtr& pipeline = section.bLodCrossfade
+                    ? (section.Material.bTwoSided ? m_Work.MegaTwoSidedCrossfadePipeline : m_Work.MegaCrossfadePipeline)
+                    : (section.Material.bTwoSided ? m_Work.MegaTwoSidedPipeline : m_Work.MegaPipeline);
                 if (pipeline != boundPipeline)
                 {
                     // 両方のレイアウトは同一なので、結んだ記述子セットは切り替え後も有効。
@@ -2093,6 +2129,13 @@ namespace NorvesLib::Core::Rendering
         m_Work.MegaTwoSidedPipeline = !bWireframe && m_MegaTwoSidedPipeline
                                           ? m_MegaTwoSidedPipeline
                                           : m_Work.MegaPipeline;
+        // 線の表示と専用パイプラインの失敗時は、区間の印によらず既存のパイプラインへ戻す。
+        m_Work.MegaCrossfadePipeline = !bWireframe && m_MegaCrossfadePipeline
+                                          ? m_MegaCrossfadePipeline
+                                          : m_Work.MegaPipeline;
+        m_Work.MegaTwoSidedCrossfadePipeline = !bWireframe && m_MegaTwoSidedCrossfadePipeline
+                                                  ? m_MegaTwoSidedCrossfadePipeline
+                                                  : m_Work.MegaTwoSidedPipeline;
         m_Work.MeshPipeline = bWireframe ? m_MeshWireframePipeline : m_MeshPipeline;
         m_Work.SkinnedPipeline = bWireframe ? m_SkinnedWireframePipeline : m_SkinnedPipeline;
 
