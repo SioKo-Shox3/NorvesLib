@@ -12564,21 +12564,56 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 消滅の効果の本体 VanishEffect（時間の割り付けを World の dt で進め、3 つの口を呼ぶ）: 着地(直し 0 回)
 - U7 シ者の確かめの場面 dissolve と --shisha-vanish-set=ash|light: 着地(直し 0 回)
 - U9 表面の標本の表が無いスキンメッシュでも SkinSurface のエミッタが頂点から粒を出すようにする（統合した先頭で Game のビルドまで確かめる）: 着地(直し 0 回)
-## G13-GR115-SURFACE-REGISTRY 表面の語彙と登録簿、SceneQuery の表面の照会、問い合わせの結果の表面の欄（2026-11-18、run 20261118-161937）
-- Done: 表面の語彙の型 `Library/Core/Public/Scene/SurfaceTypes.h`。強い型 `SurfaceId`（uint16 を包む。0 = Default。整数・`GroundSample::SurfaceId`（u8）・物理の結果の `uint8_t SurfaceId` から暗黙に変換しないことを static_assert で止める）・`SurfaceFlags`（Soft・Hard・Liquid・Vegetated・Wettable）・`SurfaceDesc`（安定名・parent・flags・audio・visual・physical）・`SurfaceQueryFlags`・`SurfaceQuery`・`SurfaceSample`。循環 include を避けるため `ColliderHandle`・`BodyHandle` を `Scene/PhysicsHandles.h` へそのまま移した。
-- Done: `PhysicsRaycastHit`・`PhysicsOverlapHit`・`PhysicsQueryHit` に `Scene::SurfaceId Surface`（既定 Default）。中身を入れるのは G13-GR115-PHYSICS-SURFACE。
-- Done: 登録簿 `SurfaceRegistry`（`Scene/SurfaceRegistry.h`・`Private/Scene/SurfaceRegistry.cpp`）。`LoadFromJson`・`LoadFromAssetFile` は全部を検査してから入れ替え、拒否（`ESurfaceRegistryError` の種別: 未知のキー・重複のキー・型・非有限・範囲・名前・重複名・未知の parent・循環・Default の parent・未知のフラグ・数の上限など）したら表・Revision・名前の添字を変えない。成功で `GetRevision()` が増える。`FindByName`（未知は Default と名前ごとに 1 回の警告）・`TryFindByName`・`GetDesc`・`GetName`・parent をたどる `ResolveFallback(id, predicate)`。
-- Done: `Engine::Engine` のメンバ `m_SurfaceRegistry` と `GetSurfaceRegistry()`（シングルトンにしない）。Game の `OnInitialize` でコリジョンレイヤーの読み込みの直後に `Data/Surfaces.json` を読み、読めなければ Default だけで続けて「表面の語彙を読めません。Default だけで続行します: …」の警告を出す。仮の語彙 8 個の `Assets/Data/Surfaces.json`（Default・Grass_Tall・Dirt_Mud・Rock・Concrete（parent Rock）・Metal・Water_Shallow・Wood。値は仮）。
-- Done: `SceneQuery` に `ISurfaceProvider`（`SampleSurface` が `SurfaceContribution` を返す）と優先度つきの `BindSurfaceProvider` / `UnbindSurfaceProvider`（`BindPhysicsProvider` と同じ持ち主のスレッドと重複の規則。目安は地形 200・草 100）、`QuerySurface`。解決の順はコライダーの明示タグ（`IPhysicsSceneQueryProvider::GetColliderSurface`。既定実装は Unavailable）> provider を優先度の高い順（同じ優先度は登録順）> Default。2 層の重みは和 1 に正規化し、Primary を重い方にする。濡れ・水たまり・草の密度は全 provider の最大。provider も物理も無ければ Default と NoHit で落ちない。
-- Done: 契約の文書 `Docs/Architecture/SurfaceContract.md`（型と番号の取り違えの注意、保存は名前、登録簿の形と拒否の種別、照会の順と重み、物理の結果の欄、後の段階）。
-- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた先頭 1154a647 と同じ中身で、`SurfaceRegistry.cpp`・`SceneQuery.cpp` のコンパイルと `Game.exe` のリンクまで。既存の物理の provider は既定実装のままビルドできた）。`Assets/Data/Surfaces.json` は `json.load` で version 1・8 個。変えた既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致、新規ファイルは UTF-8 + BOM + CRLF。
-- Next: ランナーの評価者の反証（危険地帯: Public API の SceneQuery・Engine）。コライダーの PROPERTY と物理の結果への受け渡しは G13-GR115-PHYSICS-SURFACE、地形・草・濡れの provider と消費者は G13-GR115-GROUND-CONTACT。
-- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (4) `SurfaceRegistryTest`・`SceneQuerySurfaceTest` は作っていない（`Docs/Testing.md` の 3 点も書かない）。ctest は回さない決まり。
-- Notes: 人が見るときの見どころ: Game を起動したときのログに「表面の語彙を読めません」の警告が出ないこと（出れば Surfaces.json が拒否されている。理由が同じ行に出る）。見た目の変化は無い。
-- Notes: 判断: 選定課題 G13-S7 はタスクの notes どおり (A)（保存は名前、`SurfaceId` は読み込み順の添字で保存しない、地形の層の番号は地形の側に残す）。読み直しでは前にあった名前に前と同じ添字を使い、新しい名前は末尾に足す。ファイルから消えた名前は「引退」（添字と名前は残し、`FindByName` では未知、`GetDesc` は Default の記述）にして、消費者が持つ `SurfaceId` が別の表面を指さないようにした。
-- Notes: 判断: `1e999` のような桁あふれの数は JSON の解析が拒否するので `ParseError`（パーサーの説明を Detail に付ける）で拒否する。double では有限でも float に収まらない数は `NonFiniteNumber`。
-- Notes: 既知の限界: 警告済みの名前は `IdentityHash` の値で覚えるので、ハッシュが衝突した別の名前の警告は出ない。読み込みは GameThread で、引きと同時に走らせない前提（クラスのコメントに書いた）。
-- U1 表面の型（SurfaceTypes.h）と物理の結果の Surface 欄: 着地(直し 0 回)
-- U3 SceneQuery の表面の照会: 着地(直し 0 回)
-- U2 表面の登録簿 SurfaceRegistry: 着地(直し 1 回)
-- U4 Engine の持ち物・Game の起動での読み込み・語彙のデータ・契約の文書: 着地(直し 0 回)
+
+- U1 毛の照明の GLSL ライブラリ FurShading.glsl を作り、流れの角の符号化・復号をそこへ移す: 着地(直し 0 回)
+- U2 照明の定数に Fur の Kajiya-Kay・透過・SSAO の重みを足し、UBO を広げる: 着地(直し 0 回)
+- U4 SSR で Fur の画素を飛ばす: 着地(直し 0 回)
+- U3 照明の 3 つの口の Fur の分岐を FurShading.glsl へつなぎ、SSAO を Fur で弱める: 着地(直し 0 回)
+- U5 流れの角の符号化・復号の C++ の参照を置く: 着地(直し 0 回)
+- U6 FurRendering.md に照明の節を書き、全体のビルドと GLSL の確かめを通す: 着地(直し 0 回)
+### G6-GR34-FUR-LIGHTING Fur の画素をラップの拡散・Kajiya-Kay の 2 ローブ・逆光の透過で照らし、SSAO を弱めて SSR から外す（2026-11-18、run 20261118-130153）
+- Done: 新規 `Assets/Shaders/Common/FurShading.glsl` に流れの角の基底・符号化・復号（`FurFlowBasis`・`FurEncodeFlowAngle`・`FurDecodeFlowTangent`。`FurStrand.glsl` から同じ式のまま移し、FurStrand.glsl は include する）、照明の定数の読み出し、粗さから Kajiya-Kay の指数（α = r²、`2/α² − 2` を [1, 2048]）、濡れの口 `FurApplyWetLobes`（今は恒等）、`EvaluateFurDirect`（拡散 = ラップ (N·L + w)/(1 + w) × 材質 AO、鏡面 = T を法線の向きへずらした T1・T2 の 2 ローブで 1 つめは色なし・2 つめは毛色、逆光の透過 = pow(saturate(V·−L), p) × (1 − AO) × 毛色 × 光 × 強さ × 影）を置いた。`Common/ShadingModels.glsl` の 3 つの口の Fur の分岐は、面の補正で P1 と書き込み法線から T を復元して環境光の粗さを下限まで上げ、光源ごとの口で `EvaluateFurDirect` を呼ぶ（G5 の最初の式を置き換えた）。`lighting.frag` は SSAO を Fur の画素だけ `mix(1, ssao, furShadingParams.w)` で掛け、Fur でない画素は前のまま `ao *= ssao`。`ssr.frag` は `Common/GBufferEncoding.glsl` の `GBufferDecodeNormal` で ID を読み、Fur の画素はシーンの色をそのまま返す。照明の定数 `ShadingModelLightingConstants` に Fur の 8 つの欄（ずらし 2・強さ 2・2 つめの指数の倍率・透過の指数・透過の強さ・SSAO の割合。既定はすべて仮）を足し、`shadingModelParams[1]` と末尾の新しい `furShadingParams`（offset 1200）へ詰めて照明の UBO を 1216 バイトにした（`GpuLayoutRegistry.md` を更新）。C++ の参照 `Library/Core/Private/Rendering/FurGBufferEncoding.h/.cpp` に GLSL と同じ式の基底・符号化・復号を置き、Core の CMakeLists に登録した。`Docs/Architecture/FurRendering.md` に照明の節（式・定数の表・SSAO と SSR の扱い）と既知の限界を書いた。
+- 証拠: `.harness/runs/20261118-130153/verify-G6-GR34-FUR-LIGHTING-U6.txt`（HEAD b3bbb644 で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0・エラー 0 で Game.exe まで。`lighting.frag`・`ssr.frag`・`skinned_fur_gbuffer.frag`・`.vert` を BOM を外した写しから glslc にかけて 4 本とも終了コード 0・`GLSL_CHECK OK`。シェーダーは実行時コンパイルなのでビルドでは GLSL の誤りが出ないため別に確かめた）。試験は作らない・回さない決まりなので、done-when の試験（`FurGBufferPackingTest`・`ShadingModelContractTest` の走査・`RenderingFurLightingVulkanTest`）は作っておらず、verify の ctest の行は回していない。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
+- Next: ランナーの評価者の反証（危険地帯: ライティング・GBuffer・照明の UBO の Public API）。撮影での目視は G6-GR34-FUR-CHECK、毛のシーンは G6-GR34-COAT-SCENE、濡れの応答は G6-GR35-WET-LOOK。人が見るときの見どころ: 今はどのシーンにも Fur の材質が無く、Fur でない画素の照明・SSAO・SSR の式は前のままなので、Rendering3DTest（天球・地面・球・岩）とランチャーの各シーンの見た目は変わらない。毛のシーンができたら、逆光で毛の縁が明るくなるか、流れに沿ったハイライトの帯が 2 本出て 2 本目に毛色が付くか、SSAO の on/off で毛の暗さの荒れが少ないか、SSR を on にしても毛の画素に反射が乗らないかを見る。
+- Notes: 判断: 毛の断片シェーダー（`skinned_fur_gbuffer.frag`）は paths の外なので、粗さは今のまま材質の一つの値（`furShellParams.w`）を書き、照明はその粗さから指数を決める。SSAO の割合の既定は 0.3、ずらしは ±0.1、強さは 0.05、2 つめの指数の倍率は 0.5、透過の指数 8・強さ 1（すべて仮。`LightingPass::SetShadingModelLightingConstants` で差し替える）。毛の AO は殻の自己遮蔽なので直接光の拡散にも掛ける（ほかの材質は直接光に AO を掛けない）。
+- Notes: 要起票: 毛の断片シェーダー `skinned_fur_gbuffer.frag` が GBuffer の粗さを材質の一つの値で書き、領域の表（`FurMaterialRegion::lobes`）から書いていない。G6-GR34-FUR-LIGHTING の done-when が前提にする「Fur の FS が領域の表から粗さを書く」を受け持つタスクが TASKS.md に無く、領域ごとのハイライトの違いが出ない。
+
+- U1 シーンの読み込みを「読み・解析」「スキーマ照合」「ルート 1 つずつの生成」の 3 段に分ける: 着地(直し 2 回)
+- U2 payload の種類 `scene` とそのハンドラーを足す: 着地(直し 0 回)
+- Done（2026-11-18、run 20261118-124726 の反復 1）: `SceneSerializer` のシーン読み込みを 3 段に分けた。(a) ワーカーで呼べる `ReadDocumentFromFile`・`ReadDocumentFromAsset`（読みと JSON の構造の解析。World・ClassRegistry・TypeRegistry に触れない）、(b) GameThread の `BeginSpawn`（版 1・2 の移行と物理量の検証、`ReconcileWithSchema` 相当の照合、一時の ResourceRegistry を持つ `SceneSpawnJob` を作る）、(c) `SpawnNextRoot`（ルートを 1 つだけ生成し、最後のルートの後に EntityRefId を張り替える）と `CancelSpawn`（完了前に生成したルートを World から消す）。`LoadIntoWorld`・`LoadIntoWorldFromAsset` は (a)→(b)→(c) を順に回す形にし、統計・戻り値・ルートの順・ログの文言を変えていない。フレームをまたぐので、生成物は生ポインタでなく Entity の ObjectId と Component の ComponentId で控え、張り替えのときに World から引き直す。
+- Done（同）: セルの payload の種類 `scene`（`kScenePayloadKind`）と `ScenePayloadHandler`（`WorldPayloadHandlers`）を足した。Prepare（ワーカー）で `ReadDocumentFromAsset` し、準備済みの文書を排他つきの表に置く。CommitStep の最初の歩で `BeginSpawn`、以後の歩で `SetRootsPerStep`（既定 1）ぶん `SpawnNextRoot` を進める。セルが生成したルートの ObjectId を持ち（シーンのルートは `LoadIntoWorld` と同じく World のルートのまま）、休眠はルートの `SetActive`、解放は生成の途中なら `CancelSpawn`、済んでいればルートの `RemoveEntity` を予算ごとに行う。GameModeScope の `TrackStreaming` の Cleanup（StopAndJoin）でルートが消え、Component の資産の束縛も外れる。
+- Notes: `TryParseJson` は版 1・2 の移行と物理量の検証で ClassRegistry・TypeRegistry を引くので、ワーカーでは構造の解析（`ParseSceneDocumentStructure`）だけを行い、移行と検証（`FinalizeSceneDocument`）は `BeginSpawn` の頭で GameThread に回した。`TryParseJson` 自体の振る舞いは変えていない。資産パスの検証の `Identity` は排他つきの IdentityPool なのでワーカーから作ってよい。
+- Notes: done-when の `StreamingScenePayloadTest` は絶対規則 11 に従って作っていない。`SceneSerializerTest`・`SceneFileRoundTripTest`・`StreamingPayloadTest`・`StreamingCellStateMachineTest` はこのブランチに無く回していない。確かめは `cmake --build build --config Debug --target Game -- /m:1` の終了コード 0（`.harness/runs/20261118-124726/G12-GR40-SCENE-PAYLOAD-U2-verify.txt`）。
+- Next: Game のどのモードも `ScenePayloadHandler` をまだ登録していない。セルのマニフェストに `{"kind": "scene", "logicalPath": ...}` を書くモードが登録するときに、World と AssetSystem をハンドラーより長く生かし、`TrackStreaming` でモードの終わりにセルを外す。
+
+- U1 DefeatGate に受け付け直し(Rearm)と進行に数えるかの引数を足し、GameplayModule は数える撃破だけを進行へ流す: 着地(直し 0 回)
+- U2 EnemyDefinition に countsForProgression(既定 true)を足して読み込む: 着地(直し 0 回)
+- U3 EnemyComponent が BeginPlay で自分の Id を受け付け直し、撃破の開始で定義の countsForProgression を渡す: 着地(直し 0 回)
+
+## 2026-11-18 G8-GR17-ENEMY-COMPONENT-P1（run 20261118-144514 の反復 1、完了）
+- Done: `DefeatGate::Rearm(enemyId)` を足した。完了済みの Id に受け付け直しの印を付け、次の `BeginDefeat` でその項目を退役させて新しい項目を末尾に足す（保留の添字を動かさず、通知中に呼ばれても同じ `Update` では完了しない）ので、`OnDefeatCompleted` がもう 1 回だけ出る。受け付け直していない完了済みの Id への `BeginDefeat` と、保留中の Id への `Rearm` は無視して `GetIgnoredBeginCount` を増やす。初めての Id・不正な Id への `Rearm` は何もしない。`BeginDefeat(enemyId, bCountsForProgression = true)` にし、数える撃破の完了だけを出す `OnProgressionDefeatCompleted` を `OnDefeatCompleted` より先に配る。GameplayModule は `ProgressionState::MarkDefeated` をこの新しい通知へ付け替えたので、数えない撃破は `OnDefeatCompleted`・領域の `MarkCleared` には届くが、進行の診断の数も警告も増やさない（数える撃破で進行の定義に無い Id は今と同じく警告と診断の数）。`ProgressionState` は変えていない（同じ Id を二重に記録せず、`OnFinalUnlocked` は 1 回だけ）。`EnemyDefinition` に `countsForProgression`（既定 true。真偽値でなければファイルとキーのパス付きで拒否）を足し、`EnemyComponent` は BeginPlay で自分の EnemyId を `Rearm` し、撃破の開始で定義の値を `BeginDefeat` へ渡す。
+- 証拠: `.harness/runs/20261118-144514/verify-G8-GR17-ENEMY-COMPONENT-P1-U3.txt`（`cmake --build build --config Debug --target Game -- /m:1`。タスクの verify のビルドの行から試験のターゲットを外した形。Game.exe を生成して BuildExitCode=0・エラー 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。
+- 試験: done-when (3) の試験のケースと verify の ctest の行は、人の決まり（試験を作らない・回さない。試験は TEST-REMOVE-1114 で消してある）により作らず回していない。
+- 人が見るときの見どころ: シ者のいるシーン（戦闘の垂直スライス）で敵を倒し、ランチャーへ戻って同じシーンへ入り直したとき、同じ敵をもう一度倒せて撃破の完了（消える・領域が Cleared になる）まで進むこと。
+- Next: ランナーの評価者の反証（Object の寿命・撃破の通知の順）。
+- Notes: 既知の限界: 前の敵の撃破が保留中（保留の解消を待つ間）に同じ Id の敵が生成されると、その `Rearm` は決まりどおり無視されるので、前の撃破が完了した後に新しい敵を倒しても撃破ゲートに受け付けられない。シーンの入り直しでは前の World の破棄で保留が外れるが、完了は次の `DefeatGate::Update` なので、その前に新しい敵の BeginPlay が走る順だとこの経路に入る。退役した項目は消さずに残す（1 回の入り直しにつき Id 1 つ分）。
+
+- U1 ループの平滑で近傍を格子の時刻で取り、周期で折り返す: 着地(直し 0 回)
+### G4-GR128-PROCESSING-CASES-P1 ループの平滑の継ぎ目（2026-11-18、run 20261118-152431 の反復 1、完了）
+- Done: `SkeletalClipProcessing.cpp` の `SmoothChannels` に周期（格子の間隔の単位、`outputDuration * OutputFps`）を渡し、ループのクリップでは近傍 k を添字の剰余ではなく時刻 `i + k` を周期で `fmod` して取り、間のキーを補間（回転は Slerp・並進は線形）するようにした。周期が整数のコマにならず末尾の間隔が短い格子（例: 12.5 コマ）でも、継ぎ目をまたぐ近傍を等間隔とみなさない。端数が 0 のときは元のキーをそのまま使うので、整数の周期のクリップと継ぎ目から離れたキーの結果は前とビット単位で同じ。ループでないクリップの平滑は変えていない。
+- 確かめ: `cmake --build build --config Debug -- /m:1` 終了コード 0・エラーの行なし（`SkeletalClipProcessing.obj` は編集の後に再コンパイル）、numstat の 2 通りが一致（37 追加・6 削除）。証拠は `.harness/runs/20261118-152431/G4-GR128-PROCESSING-CASES-P1-u1-unit-verify.txt`。
+- 試験は作らない・回さない決まりにより、done-when の `MotionProcessingTest` の `TestSmoothing`（12.5 コマの合成クリップと `CheckLoop`）は作っていない（試験の .cpp は既に消えている）。ctest も回していない。
+- Next: ランナーの再検証と評価者の反証。人が見るときの見どころ: 周期が整数のコマにならないループの歩き・走りのクリップ（`SmoothingRadius` が 1 以上の role-profile で焼いたもの）を再生し、ループの継ぎ目で動きが一瞬速くなったり詰まったりしないこと。
+
+- U1 層のインポスターの契約（型・セルの帯の判定・影の板の GLSL）と FramePacket・ViewRenderContext の運び口: 着地(直し 0 回)
+- U2 SceneView に層のインポスターの登録と、セルの帯・個体ごとの段の選択・Mega の抑制と遷移の値を足す: 着地(直し 0 回)
+- U4 太陽の VSM へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U5 CSM（カスケード）へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U3 層のインポスターの個体を ImpostorBatch と影の投影物の一覧にして FramePacket へ運び、全体を確かめる（最後）: 着地(直し 1 回)
+### G12-GR48-LAYER-SHADOW（2026-11-18、run 20261118-135807）
+- Done: GR47 の散布（`MegaGeometryScatterComponent` が 1 本ごとに出す `MegaGeometryProxy`）を配置の層とし、Entity を作らずにインポスターの段を足した。`SceneView::SetMegaMeshImpostor` で MegaMesh ごとにアトラスを登録すると、層の個体を 64 m の XZ のセル（`LAYER_IMPOSTOR_CELL_SIZE_METERS`）に分け、セルの最短・最長の距離で全部メッシュ／全部インポスター／混在を決め、混在のセルだけ個体ごとに MESH-LOD-SELECT の画面の大きさの式とヒステリシスで段を選ぶ。インポスターの段の個体は Mega を抑え、CROSSFADE の遷移の値（1/127 の丸め）のディザでつなぐ。可視の個体はアトラスの組ごとに `ImpostorBatch` へ束ねて `ImpostorGBufferPass` で描く。影は遷移させず、Mega の元が遷移の終わりまで落とし、インポスターは Mega を隠したときだけ落とす。影を落とす個体は `ImpostorShadowCaster`・`ImpostorShadowAtlas` の一覧にしてメインのビューから `FramePacket` へ写し、太陽の VSM は新しい記録の種類（インポスターの板）を被覆で切り抜く版で描き（クリップマップの範囲と予算の内を近い順。キャッシュの無効化と統計付き）、CSM は VSM が太陽の影を持たないときだけ専用のパイプライン（`impostor_shadow.vert/.frag`）でカスケードごとに描く。影の到達距離（`MegaMeshImpostorDesc::ShadowDistance`）の外の個体と、種で影を切った個体（`MegaGeometryProxy::bCastShadow`）は投影物にしない。インポスターは TLAS に入れない。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）が、着地と同じ中身の作業ツリーで EXIT_CODE=0、`Game.exe` のリンクまで通った（`.harness/runs/20261118-135807/verify-G12-GR48-LAYER-SHADOW-U3-build.txt`）。このタスクで触ったシェーダー（`vsm_draw_alphaclip.vert`・`vsm_draw.vert`・`impostor_shadow.vert`・`impostor_shadow.frag`、`Common/ImpostorShadowCard.glsl` を include する入口）は `glslc` で全部終了コード 0。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致し、新規ファイルは BOM 付き・CRLF。verify の ctest の行と done-when (3) の試験（GR47 の層の試験のケース・`ImpostorShadowVulkanTest`）は人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: 散布の MegaMesh に `SetMegaMeshImpostor` でアトラスを登録した場面で、低い太陽のもと、遠景の木・岩がインポスターに替わる距離の前後へカメラを動かし、(a) 替わる帯にディザの抜け・ポップが無いこと、(b) 地面の影が遷移の間に二重・欠けにならないこと、(c) 影の形が被覆どおりに切り抜かれ（板の四角い影にならない）、影の到達距離の外の個体は影を落とさないこと。
+- Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
+- Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
+- 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。

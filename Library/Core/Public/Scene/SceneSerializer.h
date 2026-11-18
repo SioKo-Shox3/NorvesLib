@@ -137,8 +137,44 @@ namespace NorvesLib::Core::Scene
         size_t DroppedOverrides = 0;
     };
 
+    enum class ESceneSpawnStepResult : uint8_t
+    {
+        InProgress,
+        Done
+    };
+
+    /**
+     * @brief GameThread で進めるシーン生成の状態。
+     * 完了前に破棄すると、一時資産だけが解放され、生成済みのルートは World に残る。
+     * 生成済みのルートを取り消すには CancelSpawn を使う。
+     */
+    class SceneSpawnJob
+    {
+    public:
+        SceneSpawnJob();
+        ~SceneSpawnJob();
+        SceneSpawnJob(SceneSpawnJob&&) noexcept;
+        SceneSpawnJob& operator=(SceneSpawnJob&&) noexcept;
+        SceneSpawnJob(const SceneSpawnJob&) = delete;
+        SceneSpawnJob& operator=(const SceneSpawnJob&) = delete;
+
+        bool IsValid() const;
+        bool IsFinished() const;
+        size_t GetRootCount() const;
+        size_t GetNextRootIndex() const;
+        const SceneLoadStats& GetStats() const;
+        bool HasFailures() const;
+        const Container::VariableArray<uint64_t>& GetSpawnedRootIds() const;
+
+    private:
+        friend class SceneSerializer;
+        struct State;
+        Container::TUniquePtr<State> m_State;
+    };
+
     /**
      * @brief EntitySubtreeSnapshot群とシーンJSONの相互変換（GameThread専用）。
+     * ReadDocumentFromFile・ReadDocumentFromAsset はワーカーでも呼べる。
      *
      * RuntimeSchemaProjectorと同型のstaticユーティリティ。インスタンス化しない。
      * ReconcileWithSchemaは現行ClassRegistry/TypeRegistryと突き合わせ、未知クラス・
@@ -179,6 +215,43 @@ namespace NorvesLib::Core::Scene
             const SceneDocument& document,
             Container::VariableArray<EntitySubtreeSnapshot>& outRoots,
             SceneLoadStats& outStats);
+        /**
+         * @brief シーンファイルの読み込みと構造解析を行う。ワーカーで呼べる。
+         * 文書は版の移行と物理量の検証の前であり、ReconcileWithSchema には直接渡せない。
+         * BeginSpawn に渡すと移行と検証を行う。
+         */
+        static bool ReadDocumentFromFile(const Container::String& filePath, SceneDocument& outDocument,
+                                         Container::String* pOutError = nullptr);
+
+        /**
+         * @brief シーン資産の解決と構造解析を行う。ワーカーで呼べる。
+         * 文書の扱いは ReadDocumentFromFile と同じ。
+         * AssetSystem の SetManifest・ResetManifest・LoadManifestFromJsonText と同時に呼ばない。
+         */
+        static bool ReadDocumentFromAsset(const Asset::AssetSystem& assetSystem,
+                                          Container::AnsiStringView logicalPath, SceneDocument& outDocument,
+                                          Container::String* pOutError = nullptr);
+
+        /**
+         * @brief スキーマ照合を行い、シーン生成を準備する。GameThread 専用。
+         * 既存の未完了ジョブを上書きすると、その生成済みルートは World に残る。
+         * 失敗時は pOutStats にその時点の統計を返す。
+         * TryParseJson で移行済みの文書も渡せ、再検証しても文書は変化しない。
+         */
+        static bool BeginSpawn(SceneDocument document, const Container::String& sourceName,
+                               SceneSpawnJob& outJob, SceneLoadStats* pOutStats = nullptr);
+
+        /**
+         * @brief ルートを最大 1 つ生成し、最後のルートの後で参照を張り替える。GameThread 専用。
+         * pOutRoots は空にせず、成功したルートを末尾に追加する。
+         * 同じジョブの全呼び出しで同じ生存中の World を渡す。
+         */
+        static ESceneSpawnStepResult SpawnNextRoot(World& world, SceneSpawnJob& job,
+                                                   Container::VariableArray<Entity*>* pOutRoots = nullptr);
+
+        /// 未完了ジョブの生成済みルートを同じ World から取り除く。GameThread 専用。
+        static void CancelSpawn(World& world, SceneSpawnJob& job);
+
         // ---- 入口API（GameThread限定。Worldのライブ状態を読む/書くため） ----
 
         /**

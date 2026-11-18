@@ -8053,7 +8053,7 @@
 - notes: 決定 G6-S7（毛の方式）: シェル方式（ロードマップ 1357 行。作者が決めていない「シェル / ストランド / テクスチャだけ」のうち、ロードマップの基準線）。ストランドを選び直しても、Fur の照明・マップ・領域の表・濡れの係数・FurCoatComponent はそのまま使え、置き換わるのは描画の経路だけ（ロードマップ 1379 行）。近景のストランドは対象外。決定 G6-S8（Fur の GBuffer の割り当て）: G5-GR26-GBUFFER-CONTRACT の契約（Normal.w = ID と印、Material.a = P0、Emissive.a = P1）のまま、Fur では P0 = その画素の濡れ度、P1 = 流れの角（書いた法線から決まった規則で作る正規直交の基底の上の角を [0, 1) で。Emissive.a は半精度で、[0, 1) の分解能は 1/2048 ≒ 0.18 度）にする。G5-GR26-LIGHTING-MODELS の notes は Fur の P1 を「シェルの高さの割合」と仮に置いているが、高さは AO（Material.b）に既に入っており、Kajiya-Kay の異方性には毛の向きが要る（G5 は異方性を GR33 の接線の後に回した）ので、割り当て表 `Docs/Architecture/GpuLayoutRegistry.md` の Fur の P1 を流れの角に書き換える。決定 G6-S9（描く経路）: 可視バッファの解決は計算シェーダーで材質ごとの FS を走らせられない（G5-GR26-GBUFFER-PROGRAMS の notes）ので、Fur は解決の後に重ねる経路で、殻 0 を含めて描く（重ねる物は HZB の遮蔽物にならない既知の限界をそのまま受ける）。スキニングは計算の出力（skinning_compute.comp の世界空間の頂点）を読まず、両方の経路で VS で掛け直す（fallback の経路と同じコードにするため。殻数ぶんのスキニングは 3 万頂点 × 32 で約 100 万回で、RTX 4080 では頂点側は効かない見込み。ロードマップ 1504 行）。決定 G6-S10（ファーの値の渡し方）: per-object UBO の後ろに足し、記述子の配置と 6 つのテクスチャの束縛は変えない（std140 のブロックは宣言より大きいバッファを許すので、既存の gbuffer.vert・frag の宣言は変えない。ロードマップ 1377 行）。テクスチャの読み替えは GR26 が材質ごとのテクスチャの枠を持つまでの暫定で、`Docs/Architecture/FurRendering.md`（新規）に書く。M9 計画のスキンのインスタンス描画の禁止は別のパレットの群れの話で、殻は同じパレットの層なので、拒否の条件を緩めず ShellCount という別の欄で通す（ロードマップ 1363 行。SkinnedRenderPathContractTest の既存の期待を保つ）。風・重力の垂れ・体の動きの毛の力と `--fur-debug` の場面は G6-GR34-COAT-SCENE、照明（Kajiya-Kay・透過・SSAO と SSR の扱い）は G6-GR34-FUR-LIGHTING、撮影・golden の承認・性能の計測は G6-GR34-FUR-CHECK。止める条件: Fur の材質の無い golden 4 本が 1 画素でも変わったら、直すまで完了にしない（ロードマップ 1511 行）。試験を足す理由: 殻数の取り違え・影への殻の混入・外部指定のインスタンスの拒否漏れは、どれも何かしらの毛が描かれて落ちず、撮影 1 枚では区別できず、黙って起きる。危険地帯（RenderThread・GBuffer・Public API の DrawCommand.h）なので評価者を通す。ロードマップ 1355〜1380・1471〜1474・1504〜1512 行、要件 `#### GR34`。
 
 ## G6-GR34-FUR-LIGHTING: Fur の画素を、ラップの拡散・Kajiya-Kay の 2 つのローブの異方性のハイライト・逆光の透過で照らし、SSAO を弱めて SSR から外す
-- status: todo
+- status: done
 - after: G6-GR34-SHELL-PASS, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR34
 - needs-gr: GR26
@@ -8154,7 +8154,7 @@
 - notes: 設計はロードマップ 2363 行（GR93 の 5. 草の密度・枯れのペイント）。マスクの形式は GR42（草の場）・GR45（枯れ度の地図）・GR89（地形のマスクの cook）で決まるので needs-gr に入れた（ロードマップ 2761 行のリスク）。G5 の `G5-GR42-GRASS-FIELD-ASSET` と `G5-GR89-TERRAIN-MASKS` が採った層の名前と寸法に合わせ、新しい形式を作らない。作者の方針（企画で保留の提案もエンジンの機能として採る）により、『枯れた草地』も採る前提で枯れのマスクの初期値の生成を入れる。GR89 の cook の試験の名前は、その束が決めた名前で verify に足してよい。やらないこと: 草の描画（GR43）、枯れ度の実行時の評価（GR45）。
 
 ## G12-GR48-LAYER-SHADOW: 大規模の配置の層の遠い個体をインポスターで描き、インポスターが切り抜いた形の影を太陽の影へ落とす
-- status: todo
+- status: done
 - after: G12-GR48-CROSSFADE, G12-GR47-INSTANCE-VARIATION, G12-GR47-PLACEMENT-COOK, G12-GR47-SCATTER-COLLIDERS
 - gr: GR48
 - needs-gr: GR47
@@ -8180,7 +8180,7 @@
 - notes: 要件 `#### GR48` の受け入れ確認の遷移のスイープ・検証レイヤー・記録（ロードマップ 2626・2627 行）と段取りの P5（実際の AI の木での見た目の調整。2283 行）。木の樹種（針葉樹・枯れ木）は画像の生成の指示の記述で、企画は未決なので見本の 2 種にする。AI の高ポリのメッシュの LOD の鎖（GR80、G17）がまだ無いときは、近景と中景を MegaGeometry のクラスタの LOD で描き（G12-GR48-MESH-LOD-SELECT の notes）、遠景だけをインポスターにする。重い処理（ComfyUI での 3D の生成）は GPU を使うので、Game の撮影と同時に走らせない。撮影を開いて目で確かめる。違ったら GR48 の各タスクの paths の範囲で直す。
 
 ## G12-GR40-SCENE-PAYLOAD: セルの中身にシーンの JSON の部分木を使えるようにし、読み・解析をワーカーで、生成を GameThread で予算ごとに行う
-- status: todo
+- status: done
 - after: G12-GR40-WORLD-PAYLOADS, G12-GR92-ASSETREF-SCENE-V3, G12-GR92-ASSET-BIND, G12-GR92-PREFAB-FILE, G12-GR92-BRIDGE-SCENE
 - gr: GR40
 - needs-gr: GR92
@@ -8254,7 +8254,7 @@
   - **起動しない:** 実 GPU での撮影セッションの確かめは GAME-GR137-VFX-CHECK の `BridgeDeterministicCaptureVulkanTest` が受け持つ。このタスクでは起動しない。
 
 ## G8-GR17-ENEMY-COMPONENT-P1: 撃破済みの Id を明示で受け付け直す口を DefeatGate に足し、進行に数えない撃破を ProgressionState へ流さない経路を作る
-- status: todo
+- status: done
 - after: G8-GR17-ENEMY-COMPONENT
 - done-when: (1) 受け付け直し: 完了した Id を明示で受け付け直す口(例 `DefeatGate::Rearm(enemyId)`)を足す。`EnemyComponent` は生成(BeginPlay)のときに自分の EnemyId でこれを呼ぶ。ランチャーから同じシーンへ入り直すときと、セーブからのやり直しで同じ Id の敵がまた出たとき、その敵を倒せないまま進行が止まらないようにするためである。受け付け直した後の `BeginDefeat` は受け付けて、`OnDefeatCompleted` をもう 1 回だけ出す。次の 2 つは今と同じく無視し、`GetIgnoredBeginCount` を増やす: 受け付け直していない完了済みの Id への `BeginDefeat`、保留中(未完了)の Id への受け付け直し。`ProgressionState` は同じ Id を二重に記録せず、`OnFinalUnlocked` を出し直さない。(2) 進行への経路: `BeginDefeat` で「進行に数えるか」を渡せるようにする。既定は「数える」にして、今ある呼び出しの動きは変えない。`EnemyComponent` は EnemyDefinition の項目(例 `countsForProgression`、既定 true)からこの値を渡す。GameplayModule は数える撃破の完了だけを `ProgressionState::MarkDefeated` へ流す。数えない撃破は `OnDefeatCompleted` と領域の `MarkCleared` には届くが、`ProgressionState::GetIgnoredIdCount` を増やさず、警告も出さない。数える撃破なのに進行の定義に無い Id は、今と同じく警告を出して診断の数を増やす(シ者の Id の綴り違いを黙らせない)。(3) 試験は今ある束に足し、新しい実行ファイルは作らない。`DefeatGateTest` に足すケース: 受け付け直した後に同じ Id の完了が 2 回目も 1 回だけ出る、受け付け直していない 2 回目は無視される、保留中の受け付け直しは無視される、数えない撃破の完了では ProgressionState の診断の数が増えない。`EnemyStateMachineTest` に足すケース: 同じ EnemyId の敵を破棄して作り直すと、もう一度倒せて完了が出る。`EnemyDefinitionLoadTest` に足すケース: 新しい項目の型の誤りを、ファイルとキーの分かるエラーで拒否する。
 - verify: `cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1`
@@ -8263,7 +8263,7 @@
 - from: G8-GR17-ENEMY-COMPONENT
 
 ## G4-GR128-PROCESSING-CASES-P1: ループのときの平滑（`SmoothChannels`）で、近傍を時刻で取り、周期 P で折り返して、継ぎ目のキーをゆがめないようにする
-- status: todo
+- status: done
 - done-when: `SmoothChannels`（`Library/Core/Private/Animation/SkeletalClipProcessing.cpp` 91 行）がループのクリップで近傍のキーを添字ではなく時刻で選び、周期 P（`outputDuration`）で折り返す。こうすると、出力の格子の末尾の間隔が短いとき（`sample + 1 == samples` で `outputDuration` に置く 691 行の扱い）でも、等間隔とみなして折り返すことがなくなる。`MotionProcessingTest` の `TestSmoothing` で、周期が整数のコマにならない合成のクリップ（12.5 コマ）を `SmoothingRadius = 2` で処理し、その結果に `CheckLoop` を掛けて通す。`CheckLoop` が見るのは、先頭と末尾のキーが float32 で一致すること、継ぎ目の入りと出の角速度が全体の中央値の 1.5 倍以内であること（今は 2.32 倍で落ちる）。継ぎ目から離れた内側のキーは、直す前の値と 1e-6 rad 以内で一致する。ループでないクリップの平滑の結果は変えない。`MotionProcessingTest` の他の検査と、`SkeletalBvhClipImportTest`・`SkeletalBvhClipTimeTest`・`BvhDecodeTest`・`BvhEvaluateTest`・`RigStaticRootFrameWireTest` は試験を変えずに通る。
 - verify: `cmake --build build --config Debug --target CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(MotionProcessingTest|SkeletalBvhClipImportTest|SkeletalBvhClipTimeTest|BvhDecodeTest|BvhEvaluateTest|RigStaticRootFrameWireTest)$" --no-tests=error --output-on-failure --timeout 300`
@@ -10888,3 +10888,36 @@
 - effort: high
 - from: G11-GR52-CLOUD-SHAFTS
 - notes: G11-GR52-LOCAL-FOG の done-when (3)（TASKS.md 7631 行）の取りこぼし。要件は「`Common/HeightFog.glsl` に同じ項を足し、半透明・板・粒子（GR51 が霧を掛ける前向きの描画）にも局所霧が効く」。ところが局所霧を掛けているのは `forward_transparent.frag` と `world_board.frag` だけで、`ParticleDraw.frag`・`impostor.frag`・`ribbon_trail.frag` は高さフォグしか掛けていない（`LocalFog` を grep しても当たらない）。インポスターは板と同じ UBO を使い、C++ 側は局所霧を offset 288 に既に詰めているので、変更はシェーダーの宣言と呼び出しだけで済む。局所霧は危険地帯（半透明・volumetrics）で、`ForwardPass.cpp` は共有のファイルなので、差分は呼び出しの 1 か所に絞る。試験は足さない（決まり）。
+
+## G6-GR34-COAT-SCENE-P1: 毛の断片シェーダーが GBuffer の粗さを、領域の表の一つ目のローブの指数から書くようにする
+- status: todo
+- done-when: `Assets/Shaders/skinned_fur_gbuffer.frag` が Material の粗さを、材質の値 1 つ（今の `mvp.furShellParams.w`。187 行）ではなく、画素の領域（82 行の `region`）の一つ目のローブの指数（`FurMaterialGpuRegion::Lobes` の z。C++ の `FurRegion::PrimaryExponent`）から書く。指数から粗さへの変換には、`Common/FurShading.glsl` の `FurStrandExponentFromRoughness`（73 行。e = 2/α⁴ − 2）の逆関数 roughness = (2/(e + 2))^(1/4) を同じファイルの隣に置いて使う（断片シェーダーから include できない場合は、断片シェーダーに同じ式で置く）。こうすると、照明が GBuffer の粗さから求める e1 が、領域の表の PrimaryExponent に一致する（1〜2048 で頭打ち）。殻 0 の皮膚面も Fur の ID を書くので同じ扱いにする。二つ目の指数は、GBuffer の粗さの枠が 1 つしかないため今の照明の定数（`secondaryExponentScale`）の倍率のままにする。この限界とローブの指数から粗さへの対応を `Docs/Architecture/FurRendering.md` に書く。濡れによる粗さの低下（G6-GR35-WET-LOOK）は、この値の上に掛かる形を崩さない。Debug の Game がビルドできる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Assets/Shaders/skinned_fur_gbuffer.frag, Assets/Shaders/Common/FurShading.glsl, Docs/Architecture/FurRendering.md, TASKS.md, PROGRESS.md
+- effort: high
+- from: G6-GR34-COAT-SCENE
+
+---
+
+TASK にした理由（判断の根拠）:
+- **G6-GR34-FUR-LIGHTING の done-when の前提が満たされていない。** done-when の 8060 行は「ローブの指数は GBuffer の粗さ（Fur の FS が領域の表から書く）から」としている。notes の 8064 行も、領域ごとのハイライトの違いはこの経路で運ぶと決めている。
+- **断片シェーダーは材質の値 1 つを書いている。** `skinned_fur_gbuffer.frag:186-187` が Material に書いているのは `mvp.furShellParams.w` で、`FurStrand.glsl:34` のコメントでは「皮膚と毛の粗さ」とされている。
+- **照明は GBuffer の粗さからしか指数を出さない。** `FurShading.glsl:115` は `FurStrandExponentFromRoughness(strandRoughness)` で e1 を求める。そのため、領域の表の `PrimaryExponent` / `SecondaryExponent`（`FurTypes.h:60-61`、GPU 側は `Lobes.zw`）はどこからも読まれていない。
+- **受け持つタスクがどこにも無い。**
+  - G6-GR34-SHELL-PASS（done）の done-when で、領域の表を使うのは色だけ。
+  - G6-GR34-FUR-LIGHTING（done）の paths に、この断片シェーダーが入っていない。
+  - G6-GR34-COAT-SCENE の paths にあるのは `.vert` だけ。
+  - G6-GR35-WET-LOOK は濡れによる粗さの低下だけを扱う。
+
+この判断のために読んだのはファイルだけで、ビルドや試験は回していません。
+
+新しいタスクは G6-GR35-WET-LOOK と `skinned_fur_gbuffer.frag`・`FurShading.glsl` の paths が重なるので、2 つが同時には走りません。
+
+## G12-GR48-CHECK-P1: 散布の種に焼いたインポスターのアトラスを結び、`ScatterSystem` が `SceneView::SetMegaMeshImpostor` へ登録・解除する
+- status: todo
+- after: G12-GR48-LAYER-SHADOW
+- done-when: (1) `Scatter::ScatterSpeciesBinding`(`Library/Core/Public/Scatter/ScatterSystem.h`)に任意のインポスターの記述(`MegaMeshImpostorDesc`)を持たせる。`ScatterSystem::Load` は、記述が有効(`IsValid()`)な Mega の種の `MegaMesh` を、読み込み先の `World` の `SceneView::SetMegaMeshImpostor` へ登録する。散布を解放したとき(Unload・World の破棄・GameMode の終わり)は `ClearMegaMeshImpostor` で外す。同じ `MegaMesh` を複数の散布が使うときは、最後の解放まで登録を保つ。記述の無い種は今までどおり Mega だけで描く。(2) `Tools/ImpostorBaker` が書く `.impostor.json`(version 1。`layout`・`cellsX`/`cellsY`・`cellResolution`・`atlasWidth`/`atlasHeight`・`boundsCenter`・`boundsRadius`・`files` の cooked の 4 枚)を `Text/JsonDocument.h` で読み、cooked の NVTEX 4 枚をテクスチャにして `MegaMeshImpostorDesc` を作る口を Core に足す。切り替えの画面の大きさと影の距離は呼び出し側が渡す。版の違い・欄の欠け・テクスチャを読めないときは警告のログを出して記述を返さない(登録しない)。(3) Game の grassland の森(`LoadGrasslandForest`)と散布(`LoadGrasslandScatter`。`Game/GameModes/Grassland/GrasslandScatter.cpp`)の Mega の種は、種のメッシュに対応する焼いたアトラスがあるときだけ (2) で記述を作って binding に載せ、種の名前とアトラスの登録の成否をログに 1 行出す。今のリポジトリには焼いたアトラスが無いので、既定の起動画面とランチャーの各シーンの見た目は変わらない(絶対規則 7)。(4) `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0 で通る。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致し、新規ファイルは UTF-8 + BOM + CRLF。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Scatter/ScatterSystem.h, Library/Core/Private/Scatter/ScatterSystem.cpp, Library/Core/Public/Rendering/LayerImpostorAsset.h, Library/Core/Private/Rendering/LayerImpostorAsset.cpp, Library/Core/CMakeLists.txt, Game/GameModes/Grassland/GrasslandScatter.cpp, TASKS.md, PROGRESS.md
+- from: G12-GR48-CHECK
+- notes: 判断の根拠は 2 つ。(a) 計画の文書 `Docs/Plans/GameFeatureRequirements.md` の GR48 の構成要素(4876 行)に「配置層（GR47）との連携（InstanceGroupDesc の LOD 鎖とインポスター参照）」があるのに、一覧のどのタスクにも入っていない。(b) G12-GR48-LAYER-SHADOW の done-when (1) は「GR47 の配置の層の個体の最後の段を `ImpostorBatch` として描く」ことを求めている。ところが `SetMegaMeshImpostor` の呼び出し元は Library・Game のどこにも無く(定義は `SceneView.cpp:645` だけ)、`ScatterSpeciesBinding` を作るのは `GrasslandScatter.cpp` の 2 か所だけで、そこにもインポスターの欄が無い。このため、ゲームの場面では層の個体が一度もインポスターにならない。NVSCT の種の記録(96 バイトの固定長)の形式は変えず、実行時の binding で結ぶ。焼いたアトラスの置き場と、種の名前・メッシュとの対応の決め方(メッシュの論理パスの隣の `.impostor.json` など)は、この paths の中で決めて記録する。実の AI の木を焼いて置く作業・距離のスイープ・撮影は G12-GR48-CHECK のまま(回さない決まり)。危険地帯(RenderThread へ渡す値・資源の寿命)に当たるので、評価者を通す。

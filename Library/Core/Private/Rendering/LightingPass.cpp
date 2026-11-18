@@ -4771,12 +4771,16 @@ namespace NorvesLib::Core::Rendering
         GPULightingParams params = {};
         InitializeSafeCascadedShadowParams(params);
 
-        // 係数は非有限値を既定値へ戻し、負値と割合の範囲を補正して転送する。
+        // 係数は非有限値を既定値へ戻し、強さの負値とずらし・指数・割合の範囲を補正して転送する。
         const ShadingModelLightingConstants& constants = m_Settings.ShadingModelConstants;
         const ShadingModelLightingConstants defaults{};
         const auto sanitizeNonNegative = [](float value, float fallback)
         {
             return std::isfinite(value) ? std::max(value, 0.0f) : fallback;
+        };
+        const auto sanitizeClamped = [](float value, float fallback, float minimum, float maximum)
+        {
+            return std::isfinite(value) ? std::clamp(value, minimum, maximum) : fallback;
         };
         params.shadingModelParams[0][0] = sanitizeNonNegative(constants.FurWrap, defaults.FurWrap);
         params.shadingModelParams[0][1] =
@@ -4784,10 +4788,22 @@ namespace NorvesLib::Core::Rendering
         params.shadingModelParams[0][2] =
             sanitizeNonNegative(constants.EyeSpecularBoostPerP0, defaults.EyeSpecularBoostPerP0);
         params.shadingModelParams[0][3] = 0.0f;
-        params.shadingModelParams[1][0] = 0.0f;
-        params.shadingModelParams[1][1] = 0.0f;
-        params.shadingModelParams[1][2] = 0.0f;
-        params.shadingModelParams[1][3] = 0.0f;
+        params.shadingModelParams[1][0] =
+            sanitizeClamped(constants.FurPrimaryShift, defaults.FurPrimaryShift, -1.0f, 1.0f);
+        params.shadingModelParams[1][1] =
+            sanitizeClamped(constants.FurSecondaryShift, defaults.FurSecondaryShift, -1.0f, 1.0f);
+        params.shadingModelParams[1][2] =
+            sanitizeNonNegative(constants.FurPrimarySpecularStrength, defaults.FurPrimarySpecularStrength);
+        params.shadingModelParams[1][3] =
+            sanitizeNonNegative(constants.FurSecondarySpecularStrength, defaults.FurSecondarySpecularStrength);
+        params.furShadingParams[0] =
+            sanitizeClamped(constants.FurSecondaryExponentScale, defaults.FurSecondaryExponentScale, 0.01f, 16.0f);
+        params.furShadingParams[1] =
+            sanitizeClamped(constants.FurTransmissionPower, defaults.FurTransmissionPower, 1.0f, 256.0f);
+        params.furShadingParams[2] =
+            sanitizeNonNegative(constants.FurTransmissionStrength, defaults.FurTransmissionStrength);
+        params.furShadingParams[3] =
+            sanitizeClamped(constants.FurSsaoWeight, defaults.FurSsaoWeight, 0.0f, 1.0f);
 
         using namespace NorvesLib::Math;
 

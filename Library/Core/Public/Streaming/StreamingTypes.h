@@ -25,6 +25,8 @@ namespace NorvesLib::Core::Streaming
     inline constexpr const char* kStaticCollidersPayloadKind = "static-colliders";
     /// コードで組む配置を表すペイロードの種類。
     inline constexpr const char* kPlacementPayloadKind = "placement";
+    /// シーン JSON から生成するルートを表すペイロードの種類。
+    inline constexpr const char* kScenePayloadKind = "scene";
 
     enum class EStreamingCellState : uint8_t
     {
