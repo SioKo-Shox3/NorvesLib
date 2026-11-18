@@ -3,6 +3,7 @@
 #define NORVES_SHADING_MODELS_GLSL
 
 #include "Common/PaleFlatShading.glsl"
+#include "Common/FurShading.glsl"
 
 struct ShadingModelSurface
 {
@@ -12,18 +13,27 @@ struct ShadingModelSurface
     vec3 albedo;
     float metallic;
     float roughness;
+    float strandRoughness; // GBuffer に書かれた粗さ（Fur の Kajiya-Kay の指数に使う。下限へ上げる前）。
     vec3 N;
+    vec3 T; // 毛の流れの接線（Fur のときだけ有効。FurDecodeFlowTangent で復元）。
     float ao;
 };
 
-/// 光源の評価前に PaleFlat の色・金属度・粗さを設定し、AO は保持する。
+/// 光源の評価前に PaleFlat の色・金属度・粗さを設定し、Fur の接線を復元して粗さの下限を適用する。AO は保持する。
 void ApplyShadingModelSurface(inout ShadingModelSurface s, vec4 c0, PaleFlatInputs pale)
 {
+    s.T = vec3(0.0);
+    s.strandRoughness = s.roughness;
     if (s.id == GBUFFER_SHADING_MODEL_PALE_FLAT)
     {
         s.albedo = pale.color;
         s.metallic = 0.0;
         s.roughness = 1.0;
+    }
+    else if (s.id == GBUFFER_SHADING_MODEL_FUR)
+    {
+        s.T = FurDecodeFlowTangent(s.N, s.p1);
+        s.roughness = max(s.roughness, c0.y);
     }
 }
 
@@ -34,11 +44,11 @@ float ShadingModelSpecularRoughness(ShadingModelSurface s, vec4 c0)
 }
 
 /// 直接光を加算する。c0.x は Fur の wrap、c0.z は Eye の湿り P0 あたりの鏡面増分。
-/// PaleFlat は専用の直接光の係数と、独立した鏡面の倍率を使う。
+/// c1 は shadingModelParams[1]、c2 は furShadingParams。PaleFlat は専用の直接光の係数と鏡面の倍率を使う。
 void EvaluateShadingModelDirect(ShadingModelSurface s,
                                 vec3 N, vec3 V, vec3 L, vec3 H,
                                 vec3 lightRadiance, float NdotLSigned, float shadow,
-                                vec2 dfg, vec4 c0, PaleFlatInputs pale,
+                                vec2 dfg, vec4 c0, vec4 c1, vec4 c2, PaleFlatInputs pale,
                                 inout vec3 diffuse, inout vec3 specular)
 {
     vec3 diffuseBrdf;
@@ -50,10 +60,9 @@ void EvaluateShadingModelDirect(ShadingModelSurface s,
 
     if (s.id == GBUFFER_SHADING_MODEL_FUR)
     {
-        // 異方性は接線を持つ GR33 の後で扱う。
-        float wrap = clamp((NdotLSigned + c0.x) / (1.0 + c0.x), 0.0, 1.0);
-        diffuse += diffuseBrdf * lightRadiance * wrap * shadow;
-        specular += specularBrdf * lightRadiance * NdotL * shadow;
+        FurShadingConstants furConstants = MakeFurShadingConstants(c0, c1, c2);
+        EvaluateFurDirect(N, s.T, V, L, H, s.albedo, diffuseBrdf, s.strandRoughness, s.ao, s.p0,
+                          lightRadiance, NdotLSigned, shadow, furConstants, diffuse, specular);
     }
     else if (s.id == GBUFFER_SHADING_MODEL_EYE)
     {

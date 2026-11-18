@@ -38,6 +38,30 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief Eye の鏡面の強さの P0 あたりの増分 */
         float EyeSpecularBoostPerP0 = 3.0f;
+
+        /** @brief Fur の一つ目（色なし）の Kajiya-Kay のローブで、毛の接線を法線の方向へずらす量 */
+        float FurPrimaryShift = 0.1f;
+
+        /** @brief Fur の二つ目（毛色）のローブで、毛の接線を法線の方向へずらす量 */
+        float FurSecondaryShift = -0.1f;
+
+        /** @brief Fur の一つ目のローブの強さ */
+        float FurPrimarySpecularStrength = 0.05f;
+
+        /** @brief Fur の二つ目のローブの強さ（毛色を掛ける） */
+        float FurSecondarySpecularStrength = 0.05f;
+
+        /** @brief Fur の二つ目の指数に使う、一つ目の指数（GBuffer の粗さから決まる）の倍率 */
+        float FurSecondaryExponentScale = 0.5f;
+
+        /** @brief Fur の逆光の透過 pow(saturate(V·−L), p) の指数 p */
+        float FurTransmissionPower = 8.0f;
+
+        /** @brief Fur の逆光の透過の強さ */
+        float FurTransmissionStrength = 1.0f;
+
+        /** @brief Fur の画素に画面空間 AO を掛ける割合（0 で掛けず、1 で DefaultLit と同じ。殻の深度の段差による荒れを弱める） */
+        float FurSsaoWeight = 0.3f;
     };
 
     /**

@@ -329,6 +329,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
+    Private/Rendering/FurGBufferEncoding.h
+    Private/Rendering/FurGBufferEncoding.cpp
     Private/Rendering/FurMaterialGpu.cpp
     Private/Rendering/FurShellLod.cpp
     Private/Rendering/GpuResourceStore.cpp
