@@ -12579,3 +12579,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: 毛の断片シェーダー `skinned_fur_gbuffer.frag` が GBuffer の粗さを材質の一つの値で書き、領域の表（`FurMaterialRegion::lobes`）から書いていない。G6-GR34-FUR-LIGHTING の done-when が前提にする「Fur の FS が領域の表から粗さを書く」を受け持つタスクが TASKS.md に無く、領域ごとのハイライトの違いが出ない。
 - U2 毛の頂点シェーダーで、毛の力に重力の向き × kSag × W を足す: 着地(直し 0 回)
 - U3 照明の濡れの口 FurApplyWetLobes を埋め、全体の kGloss を shadingModelParams[0].w に詰める: 着地(直し 0 回)
+- U1 濡れの共通関数 SurfaceWetness.glsl を作り、毛の断片シェーダーで暗化・彩度・粗さと長さ・太さ・束を掛け、P0 に w を書く: 着地(直し 1 回)

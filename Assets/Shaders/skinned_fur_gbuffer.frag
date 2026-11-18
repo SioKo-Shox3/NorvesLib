@@ -6,7 +6,8 @@
 
 // スキン済みの体を殻ごとに描き、セル内の毛の被覆を GBuffer に書く。
 // set 0 の binding 3〜6 は長さ・流れ・密度と束・領域として読み替える。
-// P0 は濡れ度、P1 は流れの角度。環境の濡れは適用せず、材質と照明で扱う。
+// P0 は画素の濡れ度（インスタンスの濡れ度 × 領域の濡れやすさ）、P1 は流れの角度。
+// 雨など環境の濡れは適用せず、暗化・彩度・粗さ・長さ・太さ・束の応答に材質の値を使う。
 
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
@@ -22,6 +23,7 @@ layout(location = 10) flat in uint fragShellIndex;
 layout(location = 11) flat in uint fragShellCount;
 
 #include "Common/FurStrand.glsl"
+#include "Common/SurfaceWetness.glsl"
 #include "Common/GBufferEncoding.glsl"
 #include "Common/VelocityEncoding.glsl"
 #include "Common/AlphaClip.glsl"
@@ -80,6 +82,12 @@ void main()
     }
 
     FurMaterialRegion region = mvp.fur.regions[FurRegionIndex(regionSample, mvp.fur.counts.y)];
+    // 画素の濡れ w = W × 領域の濡れやすさ s。W はスキンのインスタンスの P0（無ければ材質の値）。
+    float instanceWetness = clamp(ResolveShadingParams(fragInstanceShadingParams, mvp.shadingParams).x, 0.0, 1.0);
+    float wetSusceptibility = clamp(region.wet.x, 0.0, 1.0);
+    float wetness = instanceWetness * wetSusceptibility;
+    // 濡れの応答は C++ が W を掛けて渡す。w について一次の式なので、掛け済みの係数と s を使う。
+    vec3 wetGeometry = mvp.fur.wetGeometry.xyz * wetSusceptibility; // x: 長さの縮み、y: 太さの増し、z: 束の寄せ（垂れは頂点）。
     vec3 normal = normalize(fragNormal);
     mat3 cotangentFrame = CalculateCotangentFrame(normal, fragWorldPos, fragTexCoord);
     vec2 flow = 2.0 * flowSample - 1.0;
@@ -111,7 +119,7 @@ void main()
 
     if (fragShellIndex > 0u)
     {
-        float maxLength = lengthSample * region.shading.z;
+        float maxLength = lengthSample * region.shading.z * (1.0 - wetGeometry.x);
         if (densityClump.r <= 0.0 || maxLength <= 0.0)
         {
             discard;
@@ -120,7 +128,7 @@ void main()
         ivec2 cellIndex = ivec2(floor(cell));
         float lengthRandom = FurCellHash2(cellIndex).y;
         float strandLength = maxLength * mix(0.6, 1.0, lengthRandom);
-        float radius = FurRadiusAtHeight(height, strandLength, region.shading.w);
+        float radius = FurRadiusAtHeight(height, strandLength, region.shading.w * (1.0 + wetGeometry.y));
         bool lastShell = fragShellCount > 1u && fragShellIndex == fragShellCount - 1u;
         float lastShellFraction = clamp(mvp.furShellParams.y, 0.0, 1.0);
         uint clipMode = uint(mvp.shadingModel.z + 0.5);
@@ -143,6 +151,15 @@ void main()
             float centerMargin = min(0.5 * widthCoverage.x, 0.5);
             vec2 centerRandom = FurCellHash2(cellIndex + ivec2(19, 71));
             vec2 center = mix(vec2(centerMargin), vec2(1.0 - centerMargin), centerRandom);
+            // 濡れの束は毛先ほど、毛の中心を ClumpSize の UV 幅の塊の中心へ kClump × w × G × h だけ寄せる。
+            // 毛は自分のセルの中でしか判定しないため、寄せた中心をセルの内側に収める。
+            float clumpPull = clamp(wetGeometry.z * densityClump.g * height, 0.0, 1.0);
+            if (clumpPull > 0.0)
+            {
+                float clumpCells = max(mvp.fur.growth.z * mvp.fur.growth.y * densityClump.r, 1.0);
+                vec2 clumpCenter = (floor(cell / clumpCells) + 0.5) * clumpCells - vec2(cellIndex);
+                center = clamp(mix(center, clumpCenter, clumpPull), vec2(centerMargin), vec2(1.0 - centerMargin));
+            }
             if (length(fract(cell) - center) > 0.5 * widthCoverage.x)
             {
                 discard;
@@ -177,14 +194,18 @@ void main()
 
     float brightness = mix(1.0 - region.shading.x, 1.0 + region.shading.y, height);
     albedo = mix(albedo * brightness, mvp.fur.undercoat.rgb, mvp.fur.undercoat.a * (1.0 - height));
+    // 暗化・彩度低下・粗さ低下の係数には W が掛け済みなので、濡れ度の引数に s を使う。
+    // kDark = 1 − WetDarken、kDesat = WetDesaturate、kWetRough = 粗さ × (1 − WetRoughness)。
+    float roughness = mvp.furShellParams.w;
+    albedo = SurfaceWetnessAlbedo(albedo, wetSusceptibility, 1.0 - mvp.fur.wetShading.x, mvp.fur.wetShading.y);
+    roughness = SurfaceWetnessRoughness(roughness, wetSusceptibility, roughness * (1.0 - mvp.fur.wetShading.z));
     float ao = mix(mvp.fur.occlusion.x, 1.0, pow(height, mvp.fur.occlusion.y));
     vec3 outputNormal = normalize(mix(normal, flowTangent, mvp.fur.strand.w * height));
-    float wetness = clamp(ResolveShadingParams(fragInstanceShadingParams, mvp.shadingParams).x, 0.0, 1.0);
 
     outAlbedo = vec4(albedo, 1.0);
     outNormal = GBufferEncodeNormal(outputNormal, GBUFFER_SHADING_MODEL_FUR, 0u);
     outMaterial = GBufferEncodeMaterialForShadingModel(
-        vec3(0.0, mvp.furShellParams.w, ao), wetness, GBUFFER_SHADING_MODEL_FUR);
+        vec3(0.0, roughness, ao), wetness, GBUFFER_SHADING_MODEL_FUR);
     outEmissive = GBufferEncodeEmissive(vec3(0.0), FurEncodeFlowAngle(outputNormal, flowTangent));
 
     outVelocity = vec2(0.0);
