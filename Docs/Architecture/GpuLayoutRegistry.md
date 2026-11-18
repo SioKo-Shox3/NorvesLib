@@ -344,12 +344,19 @@ MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。�
 | 0 | 32 | `sampler2D` | `overheadHeightMap` | `BindTexture(LIGHTING_OVERHEAD_HEIGHT_MAP_BINDING, ...)`。有効な雨の遮蔽マップ、または既定黒 |
 | 0 | 33 以降 | 未割当 | 空き | このレイアウトには宣言なし |
 
-`LightingParams` の `shadingModelParams` はオフセット 944（32 バイト）で、C++ の `float[2][4]` と GLSL の `vec4[2]` に対応する。Fur・Eye の C++ の入口は `LightingPassSettings` の `ShadingModelLightingConstants`（`FurWrap`・`FurMinSpecularRoughness`・`EyeSpecularBoostPerP0`）であり、既定値はすべて仮の値。転送時に非有限値を既定値へ戻し、負値を 0、割合を 0〜1 に補正する。
+`LightingParams` の `shadingModelParams` はオフセット 944（32 バイト）で、C++ の `float[2][4]` と GLSL の `vec4[2]` に対応する。Fur・Eye の C++ の入口は `LightingPassSettings` の `ShadingModelLightingConstants`（`FurWrap`・`FurMinSpecularRoughness`・`EyeSpecularBoostPerP0` と Fur のローブ・透過・SSAO の係数）であり、既定値はすべて仮の値。転送時に非有限値を既定値へ戻し、負値を許さない欄を 0 以上、ローブのずらしを −1〜1、二つ目の指数の倍率を 0.01〜16、透過の指数を 1〜256、SSAO の割合を 0〜1 に補正する。
 
 | 要素 | x | y | z | w |
 |---|---|---|---|---|
 | `shadingModelParams[0]` | Fur の wrap の量（0 で通常の Lambert） | Fur の鏡面に使う粗さの下限 | Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × 値)） | 予約（0） |
-| `shadingModelParams[1]` | 予約（0）。PaleFlat は `paleFlatColorAndWrapMin`・`paleFlatShape`・`paleFlatAverageIrradiance` を使う | 予約（0） | 予約（0） | 予約（0） |
+| `shadingModelParams[1]` | Fur の一つ目のローブのずらし | Fur の二つ目のローブのずらし | Fur の一つ目のローブの強さ | Fur の二つ目のローブの強さ（毛色を掛ける） |
+
+PaleFlat は `paleFlatColorAndWrapMin`・`paleFlatShape`・`paleFlatAverageIrradiance` を使う。
+末尾の `furShadingParams` はオフセット 1200（16 バイト）で、C++ の `float[4]` と GLSL の `vec4` に対応する。
+
+| 欄 | x | y | z | w |
+|---|---|---|---|---|
+| `furShadingParams` | Fur の二つ目の指数の倍率 | 逆光の透過の指数 | 逆光の透過の強さ | Fur の画素に SSAO を掛ける割合 |
 
 0〜32 に空き番号はない。25 は `#define VSM_SLICE_BINDING 25` と `Common/VirtualShadowMapSlice.glsl` の include により宣言される。24 も機能が無効な場合に転用できる空きではなく、C++ のレイアウトで常に確保されている。set 1 以降はこのシェーダーに宣言がない。
 
@@ -366,7 +373,7 @@ C++ の画像型は `CombinedImageSampler`、UBO は `ConstantBuffer`、読み�
 
 ### GPULightingParams の空の遮蔽
 
-C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全体は **1152 バイト**。既存の `shadingModelParams` までの配置を保ち、その後ろに置く。公開が無いフレームと検証表示では、空の遮蔽の欄をすべてゼロにする。
+C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全体は **1216 バイト**。既存の `shadingModelParams` までの配置を保ち、その後ろに置く。公開が無いフレームと検証表示では、空の遮蔽の欄をすべてゼロにする。
 
 | オフセット | C++ フィールド / 型 | GLSL 型 | 意味 |
 |---|---|---|---|
@@ -380,7 +387,7 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全�
 
 ### GPULightingParams の PaleFlat
 
-`skyOcclusionTexelMeters` の後ろの差分 +48 バイトを G10-GR65 が使う。`GPULightingParams` / `LightingParams` の全体は **1152 バイト**。
+`skyOcclusionTexelMeters` の後ろの差分 +48 バイトを G10-GR65 が使う。`GPULightingParams` / `LightingParams` の全体は **1216 バイト**。
 
 | オフセット | C++ フィールド / 型 | GLSL 型 | 意味 |
 |---|---|---|---|

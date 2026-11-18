@@ -144,7 +144,8 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
             }
-            if (!firstDraw || (requireSurface && (source.SampleCount == 0 || source.VertexCount == 0)))
+            // 表がなくても頂点から放出できるため、頂点がある源を受け入れる。
+            if (!firstDraw || (requireSurface && source.VertexCount == 0))
             {
                 return kGpuSkinSourceNone;
             }
@@ -488,7 +489,7 @@ namespace NorvesLib::Core::Rendering
                         }
                     }
                     if (params.SkinSourceIndex != kGpuSkinSourceNone && shape == kGpuEmitterShapeSkinSurface &&
-                        (skinSources[params.SkinSourceIndex].SampleCount == 0 || skinSources[params.SkinSourceIndex].VertexCount == 0))
+                        skinSources[params.SkinSourceIndex].VertexCount == 0)
                     {
                         params.SkinSourceIndex = kGpuSkinSourceNone;
                     }

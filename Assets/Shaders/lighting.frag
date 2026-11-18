@@ -41,7 +41,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
     mat4 invViewProjectionCameraRelative; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
     vec4 depthLinearization; // x=近方面(m), y=近方面÷遠方面（正射影は0で、invViewProjectionで戻す）
-    vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] 予約（0）
+    vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] x=Furの一つ目のローブのずらし, y=二つ目のずらし, z=一つ目の強さ, w=二つ目の強さ
     uvec4 skyOcclusionInfo; // 有効 / 段の数 / 解像度 / 反射を辿る最大距離（m、float のビット列）
     vec4 skyOcclusionParams; // 強度 / 拡散の指数 / 地面高(m) / 鏡面の強さ
     vec4 skyOcclusionBounce; // rgb=遮蔽物の反射色×強度、w=0
@@ -53,6 +53,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 cloudShadowCenterAndExtent; // x=中心X(m), y=中心Z(m), z=一辺(m), w=地面の太陽の直達に雲の影を掛けるなら1
     vec4 cloudShadowSunAndBottom; // xyz=太陽へ向かう向き, w=雲の底の高度(m)
     vec4 cloudShadowOutside; // x=マスクの外の透過率（一様の直達の係数f）, y=1/f, zw=未使用
+    vec4 furShadingParams; // x=Furの二つ目の指数の倍率, y=逆光の透過の指数, z=逆光の透過の強さ, w=Furの画素にSSAOを掛ける割合
 } params;
 
 // ライトデータ構造
@@ -1245,7 +1246,15 @@ void main()
             outColor = vec4(vec3(ssao), 1.0);
             return;
         }
-        ao *= ssao;
+        if (bShadingModelActive && shadingSurface.id == GBUFFER_SHADING_MODEL_FUR)
+        {
+            // 殻の深度の段差で画面空間 AO が荒れるので、毛の画素は割合 furShadingParams.w でだけ掛ける。
+            ao *= mix(1.0, ssao, params.furShadingParams.w);
+        }
+        else
+        {
+            ao *= ssao;
+        }
         diffuseAO = GTAOMultiBounce(ao, albedo);
     }
     else if (params.debugViewMode == DEBUG_VIEW_MODE_AMBIENT_OCCLUSION)
@@ -1416,8 +1425,8 @@ void main()
             vec2 dfg = texture(brdfLUT, dfgCoordinate).rg;
             EvaluateShadingModelDirect(shadingSurface, N, V, L, H,
                                        lightColor * attenuation, dot(N, L), shadow, dfg,
-                                       params.shadingModelParams[0], pale,
-                                       Lo_diffuse, Lo_specular);
+                                       params.shadingModelParams[0], params.shadingModelParams[1],
+                                       params.furShadingParams, pale, Lo_diffuse, Lo_specular);
         }
         else if (bValidationLambert)
         {
@@ -1702,7 +1711,7 @@ void main()
         // 発光は露出を掛けた後で足す（下の outColor）。
     }
 
-    // 直接光には AO を掛けない。光の向きが決まっている直接光の遮蔽は影（CSM・RT影・接触影）が解き、
+    // Fur 以外の直接光には AO を掛けない。光の向きが決まっている直接光の遮蔽は影（CSM・RT影・接触影）が解き、
     // 材質の細かな凹凸の明暗は法線マップが出す。材質の AO は全方向から来る光の遮蔽の値なので、直接光に
     // 掛けると日なたの面まで暗くなる（材質AOを使わない Cycles の参照と比べて確かめた。SCN-WL-MATERIAL-AO-SHADING）
 

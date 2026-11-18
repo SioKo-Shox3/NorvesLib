@@ -5,7 +5,9 @@
 namespace NorvesLib::Core::Particle
 {
     constexpr uint32_t kVfxCookedMagic = 0x5846564Eu;
-    constexpr uint32_t kVfxCookedVersion = 3u;
+    constexpr uint32_t kVfxCookedVersion = 4u;
+    /// InitShape・InitLifetime・GpuSpriteRenderer の消滅用の引数を持たない版 3。
+    constexpr uint32_t kVfxCookedVersionLegacyV3 = 3u;
     /// GpuSpriteRenderer の DrawInSlotOrder を持たない版 2。
     constexpr uint32_t kVfxCookedVersionLegacyV2 = 2u;
     constexpr uint32_t kVfxCookedVersionLegacyV1 = 1u;

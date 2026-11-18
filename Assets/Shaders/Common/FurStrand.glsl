@@ -1,8 +1,10 @@
-﻿// ファーの殻の描画定数、毛の流れの角度、セル単位の乱数を頂点・断片シェーダーで共有する。
+﻿// ファーの殻の描画定数とセル単位の乱数を頂点・断片シェーダーで共有する。
+// 流れの角の符号化・復号は Common/FurShading.glsl。
 #ifndef NORVES_FUR_STRAND_GLSL
 #define NORVES_FUR_STRAND_GLSL
 
 #include "Common/FurMaterialParams.glsl"
+#include "Common/FurShading.glsl"
 
 layout(std140, set = 0, binding = 0) uniform MVPData
 {
@@ -42,44 +44,6 @@ uint FurShellCount()
 float FurShellHeight(uint shellIndex, uint shellCount)
 {
     return shellCount <= 1u ? 0.0 : float(shellIndex) / float(shellCount - 1u);
-}
-
-const float FurFlowTwoPi = 6.283185307179586;
-
-// 正規化された書き込み法線から、Duff ら（2017）の式で同じ正規直交基底を作る。
-void FurFlowBasis(vec3 n, out vec3 b1, out vec3 b2)
-{
-    float signZ = n.z >= 0.0 ? 1.0 : -1.0;
-    float a = -1.0 / (signZ + n.z);
-    float b = n.x * n.y * a;
-    b1 = vec3(1.0 + signZ * n.x * n.x * a, signZ * b, -signZ * n.x);
-    b2 = vec3(b, signZ + n.y * n.y * a, -n.y);
-}
-
-// Emissive.a は半精度で分解能 1/2048 ≒ 0.18 度。
-// 流れを法線の面へ射影し、半精度への丸めでも 1.0 にならない角度を返す。
-float FurEncodeFlowAngle(vec3 n, vec3 t)
-{
-    vec3 projected = t - n * dot(n, t);
-    if (dot(projected, projected) <= 1.0e-12)
-    {
-        return 0.0;
-    }
-    vec3 b1;
-    vec3 b2;
-    FurFlowBasis(n, b1, b2);
-    float angle = atan(dot(projected, b2), dot(projected, b1));
-    return min(fract(angle / FurFlowTwoPi), 1.0 - 1.0 / 2048.0);
-}
-
-// 書き込み法線と同じ基底を使い、保存した角度から照明用の接線を戻す。
-vec3 FurDecodeFlowTangent(vec3 n, float p1)
-{
-    vec3 b1;
-    vec3 b2;
-    FurFlowBasis(n, b1, b2);
-    float angle = fract(p1) * FurFlowTwoPi;
-    return cos(angle) * b1 + sin(angle) * b2;
 }
 
 // 符号付きセルを整数のまま混ぜ、二つの乱数のビット列を作る。
