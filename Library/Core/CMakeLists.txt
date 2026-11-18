@@ -205,6 +205,7 @@ set(PRIVATE_SOURCES
     Private/Text/Base64.h
     Private/Text/Base64.cpp
     Private/Text/JsonWriter.cpp
+    Private/Text/Utf8.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
     Private/Debug/DebugOutput.cpp
@@ -631,6 +632,7 @@ set(PUBLIC_HEADERS
     Public/Text/IdentityPool.h
     Public/Text/JsonDocument.h
     Public/Text/JsonWriter.h
+    Public/Text/Utf8.h
     Public/Container/Containers.h
     Public/Container/PointerTypes.h
     Public/Container/VariableArray.h
