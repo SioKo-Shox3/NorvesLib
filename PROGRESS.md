@@ -12471,3 +12471,26 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: 荒野で MegaGeometry の木へ向かってカメラを前後させ、メッシュ↔インポスターの 0.25 秒のディザの帯に、格子状の抜け（1 フレームの穴）が出ないこと。
 - Next: ランナーの評価者の反証（GBuffer・ビジビリティバッファの経路・RenderThread へ渡す値 = 危険地帯）。遷移のスイープの確かめは G12-GR48-CHECK。
 - Notes: 既知の限界（前の節に加えて）: 遷移中に `UpdateMeshProxy` で段の数が減ると、出ていく側の写しが無効な段を指したまま最大 0.25 秒残ることがある。`Docs/Architecture/GpuLayoutRegistry.md` の `customData.w` の説明は遷移の値を入れる前のまま。Viewport の無い互換の経路（`PrepareDrawCommands()`）は時計を受け取らないので即座に切り替わる。
+
+## G10-GR60-VANISH-EFFECT ディゾルブ・表面のエミッタ・単発の放出・灰雲と破片を時間の割り付けで束ねる消滅の効果（2026-11-18、run 20261118-113220）
+- Done: 消滅の効果 `VanishEffect`（`Library/Core/Public/Particle/VanishEffect.h`）。開始からの時刻でディゾルブの閾値のカーブ・エミッタごとの有効と生成率・時刻ごとの単発の放出を割り付け、World の時間のチャンネル（ヒットストップで 0）の dt で進める（dt ≤ 0 なら進まない）。外から呼べる口は `SetDissolveThreshold`（`SkinnedMeshComponent::SetDissolveThreshold` へ）・`SetEmitterEnabled`（有効と生成率の上書き）・`EmitBurst`（`VfxEffectSystem::RaiseGpuBurst` = GR57 の単発の放出の列の前の口）の 3 つ。単発の放出は「前の時刻 < 放出の時刻 ≤ 今の時刻」で 1 回ずつ出すので、刻みの幅によらない。
+- Done: 時間の割り付けの定義 `norves.vanish`（`VanishEffectDefinition.h`。長さ・閾値のキー・縁の発光の輝度・エミッタごとの有効と生成率のキー・単発の放出の列・参照する VFX の定義）と読み込み `LoadVanishEffectFile`。必須の欠落・未知のキー・負の時間・時刻の逆順・存在しないエミッタの参照を「<ファイル>: <キーの道>: <理由>」で拒否する。粒の定義は GR136 の VFX の定義（`VfxSchema.cpp`）に載せ、時間の割り付けだけ小さい JSON を足した。
+- Done: VFX の定義の書式に InitShape の SkinSurface（5）・Bone（6）とスキンの引数、InitLifetime の `LifetimeMax`（寿命の幅）、GpuSpriteRenderer の自転の速さ・板の多角形（辺の数・歪み）・大きさの上限（m）・画面の被覆の上限（画面の高さの割合）を足した（焼いた形式は版 4 で、旧版は既定値で読む。`GpuEmitterParams` は 400 B）。効果のシステムにエミッタごとの有効・生成率の上書きとスキンの源の結び付け（`SetInstanceSkinSource`）。粒のシェーダーで寿命の幅・板の自転と多角形の切り抜き・大きさと被覆の上限を描く。
+- Done: データ `Assets/Effects/ShishaVanish_Ash.{vfx,vanish}.json`（6 秒。灰 Ash: 低彩度・寿命 2〜4 秒・上昇と弱い重力・地面で止まって薄れる / 灰雲 AshCloud: 大きく薄いソフトの粒を数十個・大きさと被覆の上限 / 破片 Debris: 多角形の板・自転・落下・地面で止まる。縁の発光 2500 nit）と `ShishaVanish_Light.{vfx,vanish}.json`（5 秒。光 Glow・GlowBurst: 加算・短い寿命・上昇だけ・地面に当たらない。縁の発光 9000 nit）。値はすべて仮。
+- Done: 表面の標本の表（SURF）が無いスキンメッシュでも、SkinSurface のエミッタが頂点を一様に引いて粒を出す（表のあるメッシュは今と同じ式・同じ乱数の番号）。
+- Done: シ者の確かめの場面 `dissolve`（`Game/GameModes/ShishaShowcase/ShishaShowcaseDissolveScene.cpp`）と起動引数 `--shisha-vanish-set=ash|light`（既定 ash。開発ビルドだけで、重複・ほかの値・`--shisha-showcase` なしはエラー）。代役にディゾルブの材質（定義の縁の発光の輝度）を当て、準備から 1 秒（仮）待って効果を最初から最後まで 1 回流し、`SHISHA_SHOWCASE scene=dissolve stage=start|threshold50|end set=<セット> particles=<数>` を出す。終わった後は残った粒と消えた代役をそのまま置く。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた先頭で、`GpuParticleSimulationPass.cpp`・`ShishaShowcaseDissolveScene.cpp` のコンパイルと `Game.exe` のリンクまで）。`ParticleSpawn.comp` の `glslc --target-env=vulkan1.3` 終了コード 0。変えたファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread のパーティクル・アセットの読み込み）。起動しての確かめは G10-GR60-VANISH-CHECK。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (4) `VfxEffectSystemTest` への追加はしていない（`Docs/Testing.md` の 3 点も書かない）。ctest・撮影・GPU の計測は回さない決まり。
+- Notes: 人が見るときの見どころ: `Game.exe --shisha-showcase=dissolve --shisha-vanish-set=ash`（と `light`）。準備から約 1 秒で消滅が始まり、ログに `SHISHA_SHOWCASE scene=dissolve stage=start|threshold50|end` が出る。灰: 縁の帯から灰が上がって地面に積もる・灰雲・多角形の破片の板が回って落ちる。光: 縁の発光が強く、加算の光の粒が上がるだけ。
+- Notes: 判断: 選定課題 G10-S4（消え方の表現）はタスクの notes どおり灰と光の 2 セットを両方持つ。崩壊（C）は同じ枠で破片の量の値を上げれば作れる。
+- Notes: 判断: シ者の場面の代役は生の glTF（`ValidU8Float.gltf`）で SURF の表が無いので、表の無いスキンメッシュでは頂点を一様に引く代わりの道を足した（頂点の密度に比例し、面積には比例しない）。起動引数は既存の `--shisha-*` と同じく `Game/GameApplicationHandler.*` で受ける（paths の外だが、起動引数の置き場がそこにしか無い）。
+- Notes: 既知の限界: 撃破の流れ（G8 の `OnDefeatStarted`・`DefeatBloodPresenter`）への結線はしていない（確かめの場面だけ）。灰の風は GR57 の粒が受ける風の入力に任せる。
+- U4 消滅の効果の定義（norves.vanish）と、ファイルとキーの分かるエラーで拒否する読み込みを作る: 着地(直し 0 回)
+- U1 VFX 定義の書式にスキンの形・寿命の幅・板の自転と多角形・大きさと画面の被覆の上限を足し、GPU の放出の記述に欄を足す: 着地(直し 1 回)
+- U2 効果のシステムに、エミッタごとの有効・生成率の上書きとスキンの源の結び付けを足し、新しい欄を GPU の記述へ詰める: 着地(直し 0 回)
+- U3 粒のシェーダーで寿命の幅・板の自転と多角形の切り抜き・大きさと画面の被覆の上限を描き、スキンの形の単発の放出を表面から出す: 着地(直し 0 回)
+- U6 灰と光の 2 セットのデータ（VFX 定義と消滅の割り付け）を置く: 着地(直し 0 回)
+- U5 消滅の効果の本体 VanishEffect（時間の割り付けを World の dt で進め、3 つの口を呼ぶ）: 着地(直し 0 回)
+- U7 シ者の確かめの場面 dissolve と --shisha-vanish-set=ash|light: 着地(直し 0 回)
+- U9 表面の標本の表が無いスキンメッシュでも SkinSurface のエミッタが頂点から粒を出すようにする（統合した先頭で Game のビルドまで確かめる）: 着地(直し 0 回)
