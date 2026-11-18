@@ -8143,7 +8143,7 @@
 - notes: 確かめの対象はロードマップ 1494 行（撮影）。犬が届くまではファントムで撮る（ロードマップ 1494 行の「ファントム（犬が届いたら犬）」）。色の値は企画で未定の提案の値で、照らし合わせて記録するだけで既定を決めない。数字の比べ（平均の輝度の単調さ）は metrics.json で行い、目視は束感とハイライトの見え方だけに使う。要件 `#### GR35`。
 
 ## G12-GR93-PAINT: 配置の画面のブラシで、地形の当たった位置に草の密度と枯れのマスクを塗り、地形のマスクの cook へ渡せる PNG に書く
-- status: todo
+- status: done
 - after: G12-GR93-EDIT-VIEW, G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET, G12-GR45-DRYNESS-CPU, G12-GR45-DRYNESS-FIELD, G12-GR45-GRASS-DRYNESS, G12-GR45-WITHER-GAMEPLAY, G5-GR89-NVTRN-FORMAT, G5-GR89-TERRAIN-COOKER, G5-GR89-TERRAIN-MASKS
 - gr: GR93
 - needs-gr: GR42, GR45, GR89
