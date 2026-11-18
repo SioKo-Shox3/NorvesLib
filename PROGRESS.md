@@ -12381,3 +12381,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 灰と光の 2 セットのデータ（VFX 定義と消滅の割り付け）を置く: 着地(直し 0 回)
 - U5 消滅の効果の本体 VanishEffect（時間の割り付けを World の dt で進め、3 つの口を呼ぶ）: 着地(直し 0 回)
 - U7 シ者の確かめの場面 dissolve と --shisha-vanish-set=ash|light: 着地(直し 0 回)
+- U9 表面の標本の表が無いスキンメッシュでも SkinSurface のエミッタが頂点から粒を出すようにする（統合した先頭で Game のビルドまで確かめる）: 着地(直し 0 回)

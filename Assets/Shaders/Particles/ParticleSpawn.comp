@@ -47,22 +47,33 @@ bool ResolveSkinSpawn(GpuEmitterParams emitter, uint serial,
     vec3 previousPosition;
     if (ParticleShape(emitter) == kGpuEmitterShapeSkinSurface)
     {
-        if (source.sampleCount == 0u || source.vertexCount == 0u ||
-            all(equal(source.vertexAddress, uvec2(0u))) || all(equal(source.sampleAddress, uvec2(0u))) ||
+        if (source.vertexCount == 0u ||
+            all(equal(source.vertexAddress, uvec2(0u))) ||
             !SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(source.paletteOffset)) ||
             !SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(source.paletteOffset + 1u)) ||
             !SkinnedSurfaceIsFiniteMatrix(SkinnedSurfaceMatrix(source.previousPaletteOffset)))
         {
             return false;
         }
+        bool useTable = source.sampleCount != 0u && !all(equal(source.sampleAddress, uvec2(0u)));
         bool accepted = false;
         for (uint attempt = 0u; attempt < kGpuSkinMaxAttempts; ++attempt)
         {
             uint draw = kGpuSkinRandomDrawAttemptBase + 2u * attempt;
-            uint sampleIndex = min(uint(VfxCounterUnitFloat(seed, serial, draw) * source.sampleCount), source.sampleCount - 1u);
             uvec3 vertices;
             vec3 barycentrics;
-            SkinnedSurfaceUnpackSample(SkinnedSurfaceLoadSample(source.sampleAddress, sampleIndex), vertices, barycentrics);
+            if (useTable)
+            {
+                uint sampleIndex = min(uint(VfxCounterUnitFloat(seed, serial, draw) * source.sampleCount), source.sampleCount - 1u);
+                SkinnedSurfaceUnpackSample(SkinnedSurfaceLoadSample(source.sampleAddress, sampleIndex), vertices, barycentrics);
+            }
+            else
+            {
+                // 表がない場合は面積ではなく頂点密度に比例して選ぶ。
+                uint vertexIndex = min(uint(VfxCounterUnitFloat(seed, serial, draw) * source.vertexCount), source.vertexCount - 1u);
+                vertices = uvec3(vertexIndex);
+                barycentrics = vec3(1.0, 0.0, 0.0);
+            }
             SkinnedSurfacePoint point;
             if (!SkinnedSurfaceEvaluatePoint(source.vertexAddress, source.vertexCount, vertices, barycentrics,
                 source.paletteOffset, source.previousPaletteOffset, source.boneCount, point))
