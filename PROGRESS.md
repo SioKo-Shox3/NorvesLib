@@ -12249,3 +12249,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 遷移の契約（係数の進め方・符号つきの値・色味の A の詰め方・GLSL のディザ）を足す: 着地(直し 1 回)
 - U7 静的・スキン・インポスターの GBuffer の経路の遷移のディザ（レビュー済みの U3・U4 のパッチ）を当て直す: 着地(直し 0 回)
 - U8 SceneView の係数と写し（レビュー済みの U2 のパッチ）を当て直し、Mega を元に持つ板を GPU に届く Mega の状態にそろえる: 着地(直し 0 回)
+- U5 MegaGeometry の色味の A に値を詰め、GBuffer の経路の遷移中の区間を crossfade の版で描く: 着地(直し 1 回)
