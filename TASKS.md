@@ -8215,7 +8215,7 @@
 - notes: SDK の仮想関数 `assetGetProperties`・`assetSetProperty`・`assetSave` は、今は NorvesEditor のブランチ `task/E4-001`(7537f47)にしかない。E4-001 は blocked で、統合ブランチにはまだ入っていない。NorvesLib のビルドが読む `NORVES_BRIDGE_SDK_DIR`(NorvesEditor のメインの作業ツリー)にこの口が無いうちは verify の 1 行目が落ちる。その場合は NorvesEditor を書き換えず、理由を書いてこのタスクを blocked にする。E4-001 が統合された後で todo に戻す。線の上の名前は `Docs/Plans/GameFeatureRoadmap.md` の GR137 の節に合わせる。Bridge のプロトコルの境界なので評価者を通す。
 
 ## GAME-GR137-CAPTURE-WIRE: NorvesLibBridgeAdapter に決定的な撮影(`viewport.captureDeterministic` と完了イベント `viewport.captureCompleted`)をつなぎ、能力 `viewport.capture` を広告する
-- status: doing
+- status: done
 - done-when: SDK の `IBridgeEngineAdapter` に入った `viewportCaptureDeterministic` を `NorvesLibBridgeAdapter` で上書きする。線の上のメソッド名・欄・エラーコードは、NorvesEditor の `bridge/spec/schema` にある `viewport.captureDeterministic` と `viewport.captureCompleted` の定義に合わせる。
 
   **(1) 受け付け**
