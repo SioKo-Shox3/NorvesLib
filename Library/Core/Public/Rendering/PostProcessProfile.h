@@ -2,7 +2,13 @@
 #pragma once
 
 #include "Text/IdentityPool.h"
+#include "Container/PointerTypes.h"
 #include <cstdint>
+
+namespace NorvesLib::Core::Asset
+{
+    class TextAssetReloadTracker;
+}
 
 namespace NorvesLib::Core::Rendering
 {
@@ -116,6 +122,39 @@ namespace NorvesLib::Core::Rendering
         Identity Name;
         PostProcessSettings Settings;
         uint32_t OverrideMask = PostProcessFields::All;
+    };
+
+    /** @brief postprocess.v1 を読み、成功したときだけ出力を更新する。未知のキーは警告して捨てる。 */
+    bool ParsePostProcessProfileJson(Container::Span<const uint8_t> bytes, PostProcessProfile& outProfile,
+        Container::String& outError, Container::VariableArray<Container::String>* outUnknownKeys = nullptr);
+    /** @brief 全設定と上書きする欄を、整形済みの postprocess.v1 として書き出す。 */
+    Container::String WritePostProcessProfileJson(const PostProcessProfile& profile);
+
+    /** @brief 主スレッドでファイルの変更を追跡し、最後に読めたプロファイルを保持する。 */
+    class PostProcessProfileSource
+    {
+    public:
+        PostProcessProfileSource();
+        ~PostProcessProfileSource();
+        PostProcessProfileSource(PostProcessProfileSource&&) noexcept;
+        PostProcessProfileSource& operator=(PostProcessProfileSource&&) noexcept;
+        PostProcessProfileSource(const PostProcessProfileSource&) = delete;
+        PostProcessProfileSource& operator=(const PostProcessProfileSource&) = delete;
+
+        /** @brief 追跡と保持値を初期化する。パスが不正なら追跡を無効にして false を返す。 */
+        bool SetSource(const Container::AnsiString& assetRoot, Container::AnsiStringView path);
+        /** @brief 前フレームからの秒数で変更を調べ、新しい正常値を採ったときだけ true を返す。 */
+        bool Poll(double deltaSeconds);
+        bool HasProfile() const;
+        const PostProcessProfile& GetProfile() const;
+        const Container::String& GetLastError() const;
+
+    private:
+        Container::TUniquePtr<Asset::TextAssetReloadTracker> m_Tracker;
+        PostProcessProfile m_Profile;
+        Container::String m_LastError;
+        bool m_bHasProfile = false;
+        bool m_bReadFailed = false;
     };
 
     enum class PostProcessLayer : uint8_t
