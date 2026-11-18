@@ -8042,7 +8042,7 @@
 - notes: マップの組は G6-S4（G6-GR91-FUR-MATERIAL-DATA の notes）の 4 枚。置き場は G6-S1（`Scripts/Blender/`。ロードマップ 1404 行の DogGame/art/generator ではない）。入力は G6-GR103-BLENDER-STAGES が張り直した土台メッシュ（UV0 が重ならない・アーマチュアとウェイト付き）で、提案『共通の土台を張り直す』を採る（G6-S3）ので、手描きの補正マスクは AI の再生成をまたいで効く（ロードマップ 1432 行）。頂点カラーの代わりの道（要件 GR91 (2) の 3 つめ）は Blender の中で頂点カラーを UV へ焼いて同じ 4 枚にするだけで、エンジンの頂点の ABI（Mesh3DVertex 32B・SkinnedMeshVertex 64B）は変えない。Blender 5.2.2 の同梱の Python に numpy 2.3.4 がある（`Y:/AI/blender/blender-5.2.2-windows-x64/5.2/python/lib/site-packages/numpy`。ロードマップ 1519 行の「要確認」はこれで解ける）。通常の Python の numpy は `Scripts/BakeAcesOutputLut.py` などの前例に合わせる。UniRig の骨格は 14 関節と粗く、骨の向きだけでは四肢の先と顔の流れが足りない（ロードマップ 1515 行）ので、設定の領域の表と補正マスクで補う前提にする。流れの RG8 は正規化しないで長さを整い度として読む（ミップの平均で縮む。ロードマップ 1390 行）ので、焼く値は単位長さで書く。この項目は Blender を起動しない（fur_flow.py を Blender で回すのは G6-GR91-FUR-MAPS-CHECK）。試験を足す理由: UV の向き（V の反転・鏡映・島の回転）の取り違えは毛が逆向きに流れるだけで、エラーもログも出ず、黙って起きる（ロードマップ 1516 行）。`Docs/Architecture/FurMaps.md`（新規）にマップの規約・設定 JSON の欄・出力の形を書く。ロードマップ 1398・1402〜1422・1485 行、要件 `#### GR91`。
 
 ## G6-GR34-SHELL-PASS: スキン済みの体の Fur の材質の部分だけを、同じ頂点・同じパレットで N 枚の殻としてインスタンス描画で GBuffer へ重ね、毛の判定・毛先の細り・自己遮蔽の AO・距離による殻数の LOD を入れる
-- status: doing
+- status: done
 - after: G6-GR91-FUR-MATERIAL-DATA, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR34
 - needs-gr: GR26, GR27, GR30, GR32
