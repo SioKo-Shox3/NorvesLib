@@ -5024,6 +5024,8 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->TransparentCommandRange = CommandRange{};
             m_CurrentPacket->InstanceData.clear();
             m_CurrentPacket->ImpostorBatches.clear();
+            m_CurrentPacket->ImpostorShadowCasters.clear();
+            m_CurrentPacket->ImpostorShadowAtlases.clear();
             m_CurrentPacket->ImpostorBatchRange = CommandRange{};
             m_CurrentPacket->Views.clear();
             m_CurrentPacket->Stats = FrameStatsSnapshot{};
@@ -6019,6 +6021,8 @@ namespace NorvesLib::Core::Rendering
             packet->MeshDelta.bActive ? &m_MeshMirror.GetProxies() : &packet->Scene.MeshProxies;
         viewContext.SnapshotInstanceData = &packet->InstanceData;
         viewContext.SnapshotImpostorBatches = &packet->ImpostorBatches;
+        viewContext.SnapshotImpostorShadowCasters = &packet->ImpostorShadowCasters;
+        viewContext.SnapshotImpostorShadowAtlases = &packet->ImpostorShadowAtlases;
         viewContext.SnapshotImpostorBatchRange = packet->ImpostorBatchRange;
         viewContext.SnapshotSkinnedMeshProxies = packet->SkinnedMeshDelta.bActive
                                                      ? &m_SkinnedMeshMirror.GetProxies()

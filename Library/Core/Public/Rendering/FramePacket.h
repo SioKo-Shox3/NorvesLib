@@ -4,6 +4,7 @@
 #include "SceneProxy.h"
 #include "DrawCommand.h"
 #include "Rendering/ImpostorBatch.h"
+#include "Rendering/LayerImpostor.h"
 #include "Rendering/DebugDrawQueue.h"
 #include "ViewportSnapshot.h"
 #include "Rendering/FrameCaptureTypes.h"
@@ -422,6 +423,11 @@ namespace NorvesLib::Core::Rendering
         /** @brief 各ビューのインポスターの束を連結したスナップショット */
         Container::VariableArray<ImpostorBatch> ImpostorBatches;
 
+        /// 太陽の影へ落とす主ビューの層の個体。視錐台では省かない。
+        Container::VariableArray<ImpostorShadowCaster> ImpostorShadowCasters;
+        /// 影の投影物が参照するアトラス。
+        Container::VariableArray<ImpostorShadowAtlas> ImpostorShadowAtlases;
+
         /** @brief 互換経路で使う主ビューのインポスターの束の範囲 */
         CommandRange ImpostorBatchRange;
 
@@ -504,6 +510,8 @@ namespace NorvesLib::Core::Rendering
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             ImpostorBatches.clear();
+            ImpostorShadowCasters.clear();
+            ImpostorShadowAtlases.clear();
             ImpostorBatchRange = CommandRange{};
             DebugLineVertices.clear();
             Stats = FrameStatsSnapshot{};
