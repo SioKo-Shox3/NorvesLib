@@ -153,13 +153,14 @@ namespace NorvesLib::Modules::Gameplay::Enemy
 
             bool Read(JsonValue root, EnemyDefinition& definition)
             {
-                const char* const keys[] = {"id", "archetype", "isFinal", "maxHealth", "staggerThreshold",
+                const char* const keys[] = {"id", "archetype", "isFinal", "countsForProgression", "maxHealth", "staggerThreshold",
                     "animMachine", "animStates", "alertDelaySeconds", "attackIntervalSeconds", "repeatPenalty",
                     "attackProfiles", "patterns", "openingPatternId", "collapse", "defeat", "defeatResponses"};
                 if (!CheckMembers(root, "", keys) ||
                     !ReadString(root, "id", "", definition.Id, true, true) ||
                     !ReadString(root, "archetype", "", definition.Archetype, false, true) ||
                     !ReadBool(root, "isFinal", "", definition.bIsFinal, false) ||
+                    !ReadBool(root, "countsForProgression", "", definition.bCountsForProgression, false) ||
                     !ReadFloat(root, "maxHealth", "", definition.MaxHealth, true, NumberRange::Positive) ||
                     !ReadFloat(root, "staggerThreshold", "", definition.StaggerThreshold, true, NumberRange::NonNegative) ||
                     !ReadIdentity(root, "animMachine", "", definition.AnimMachine, true) ||

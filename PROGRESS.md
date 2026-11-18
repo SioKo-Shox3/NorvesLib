@@ -12585,14 +12585,35 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `TryParseJson` は版 1・2 の移行と物理量の検証で ClassRegistry・TypeRegistry を引くので、ワーカーでは構造の解析（`ParseSceneDocumentStructure`）だけを行い、移行と検証（`FinalizeSceneDocument`）は `BeginSpawn` の頭で GameThread に回した。`TryParseJson` 自体の振る舞いは変えていない。資産パスの検証の `Identity` は排他つきの IdentityPool なのでワーカーから作ってよい。
 - Notes: done-when の `StreamingScenePayloadTest` は絶対規則 11 に従って作っていない。`SceneSerializerTest`・`SceneFileRoundTripTest`・`StreamingPayloadTest`・`StreamingCellStateMachineTest` はこのブランチに無く回していない。確かめは `cmake --build build --config Debug --target Game -- /m:1` の終了コード 0（`.harness/runs/20261118-124726/G12-GR40-SCENE-PAYLOAD-U2-verify.txt`）。
 - Next: Game のどのモードも `ScenePayloadHandler` をまだ登録していない。セルのマニフェストに `{"kind": "scene", "logicalPath": ...}` を書くモードが登録するときに、World と AssetSystem をハンドラーより長く生かし、`TrackStreaming` でモードの終わりにセルを外す。
-- U1 プロファイルの値型・Sanitize・Lerp・重ね合わせ: 着地(直し 0 回)
-- U2 JSON の読み書き・ホットリロード・中立のプロファイル・CameraProxy への運搬: 着地(直し 0 回)
-### G14-GR61-PROFILE-DATA ポストプロセスのプロファイルの値型・補間・重ね合わせ・JSON とホットリロード・カメラの値での運搬（2026-11-18、run 20261118-181355）
-- Done: `Rendering/PostProcessProfile.h`・`PostProcessProfile.cpp` に値型 `PostProcessSettings`（`bValid` 既定 false。Grade・Lens・Look・`DitherStrength` 既定 1/255。保護色相は既定で無効）と `PostProcessProfile`（`Identity` の名前・設定・上書きマスク `PostProcessFields`）を足した。`Sanitize` は NaN・範囲外を欄ごとの既定へ戻して戻した欄のマスクを返し、`Lerp`・`LerpMasked` は Contrast・Saturation を対数、ExposureBias を EV で線形、色を線形 RGB、LUT を重みで補間する。
-- Done（同）: `PostProcessProfileMixer` は Base・Weather・Shot の順に重みつきで畳み込み、上書きマスクの欄だけを替える。`BlendTo`・`BlendOut` の遷移を `Advance(unscaledDt)` で進め（NaN・負の dt は 0）、出力は 1 つの `PostProcessSettings`。レイヤーが全部空なら `bValid=false`。ヒープ確保はしない。
-- Done（同）: `PostProcessProfileJson.cpp` に `postprocess.v1` の読み `ParsePostProcessProfileJson`（先頭の BOM を外す。壊れた JSON・根がオブジェクトでない・schema 違い・型違い・`overrideMask` の未知の名前は拒否して出力を変えない。未知のキーはドット区切りのパスで警告して捨てる。読んだ後に `Sanitize` し、戻した欄を警告）と書き `WritePostProcessProfileJson`（整形あり）を足した。LUT のパスは `IdentityPool` に入れてプロセスの寿命の文字列を借りる（GameThread が解放した文字列を RenderThread が読む形にしない）。
-- Done（同）: `PostProcessProfileSource` が `TextAssetReloadTracker` で変更を見て読み直す。読み直しが不正・読めないときは前の値を保って警告する（読めない間の警告は 1 回）。中立のプロファイル `Assets/PostProcess/neutral.ppprofile.json`（全欄が既定・上書きマスクは全部）を置いた。`CameraProxy` に `PostProcessSettings PostProcess`（値型、既定 `bValid=false`）を足し、コメントアウトの `PostProcessHandle` を消した。`CameraProxy` の大きさの検査・memcmp・位置で並べた初期化は Library・Game に無い。
-- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が EXIT=0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致（単位の作業ツリーの `.harness/unit-verify.txt`）。
-- Next: ランナーの評価者の反証（危険地帯: Public API の `CameraProxy`。FramePacket で値のまま写る）。描画での読み取りは G14-GR61-GRADE-PASS、毎フレームの重ね合わせの結線は G14-GR61-LAYERS。今は描画がこの値を読まないので、見た目は変わらない。
-- Notes: done-when (5) の `PostProcessProfileMixerTest`・`PostProcessProfileJsonTest` は絶対規則 11 に従って作っていない。既存の試験は回していない。読む→書く→読むの往復とホットリロードの実際の動きはゲームで確かめていない（描画が読むのは後の項目）。
-- Notes: 判断: LUT が片方だけのプロファイルどうしの補間は両方の枠を同じパスにして Blend=0。EaseIn=t²・EaseOut=t(2−t)。`SetSource` は不正なパスでも保持値を消して false。値の範囲はすべて仮。
+
+- U1 DefeatGate に受け付け直し(Rearm)と進行に数えるかの引数を足し、GameplayModule は数える撃破だけを進行へ流す: 着地(直し 0 回)
+- U2 EnemyDefinition に countsForProgression(既定 true)を足して読み込む: 着地(直し 0 回)
+- U3 EnemyComponent が BeginPlay で自分の Id を受け付け直し、撃破の開始で定義の countsForProgression を渡す: 着地(直し 0 回)
+
+## 2026-11-18 G8-GR17-ENEMY-COMPONENT-P1（run 20261118-144514 の反復 1、完了）
+- Done: `DefeatGate::Rearm(enemyId)` を足した。完了済みの Id に受け付け直しの印を付け、次の `BeginDefeat` でその項目を退役させて新しい項目を末尾に足す（保留の添字を動かさず、通知中に呼ばれても同じ `Update` では完了しない）ので、`OnDefeatCompleted` がもう 1 回だけ出る。受け付け直していない完了済みの Id への `BeginDefeat` と、保留中の Id への `Rearm` は無視して `GetIgnoredBeginCount` を増やす。初めての Id・不正な Id への `Rearm` は何もしない。`BeginDefeat(enemyId, bCountsForProgression = true)` にし、数える撃破の完了だけを出す `OnProgressionDefeatCompleted` を `OnDefeatCompleted` より先に配る。GameplayModule は `ProgressionState::MarkDefeated` をこの新しい通知へ付け替えたので、数えない撃破は `OnDefeatCompleted`・領域の `MarkCleared` には届くが、進行の診断の数も警告も増やさない（数える撃破で進行の定義に無い Id は今と同じく警告と診断の数）。`ProgressionState` は変えていない（同じ Id を二重に記録せず、`OnFinalUnlocked` は 1 回だけ）。`EnemyDefinition` に `countsForProgression`（既定 true。真偽値でなければファイルとキーのパス付きで拒否）を足し、`EnemyComponent` は BeginPlay で自分の EnemyId を `Rearm` し、撃破の開始で定義の値を `BeginDefeat` へ渡す。
+- 証拠: `.harness/runs/20261118-144514/verify-G8-GR17-ENEMY-COMPONENT-P1-U3.txt`（`cmake --build build --config Debug --target Game -- /m:1`。タスクの verify のビルドの行から試験のターゲットを外した形。Game.exe を生成して BuildExitCode=0・エラー 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。
+- 試験: done-when (3) の試験のケースと verify の ctest の行は、人の決まり（試験を作らない・回さない。試験は TEST-REMOVE-1114 で消してある）により作らず回していない。
+- 人が見るときの見どころ: シ者のいるシーン（戦闘の垂直スライス）で敵を倒し、ランチャーへ戻って同じシーンへ入り直したとき、同じ敵をもう一度倒せて撃破の完了（消える・領域が Cleared になる）まで進むこと。
+- Next: ランナーの評価者の反証（Object の寿命・撃破の通知の順）。
+- Notes: 既知の限界: 前の敵の撃破が保留中（保留の解消を待つ間）に同じ Id の敵が生成されると、その `Rearm` は決まりどおり無視されるので、前の撃破が完了した後に新しい敵を倒しても撃破ゲートに受け付けられない。シーンの入り直しでは前の World の破棄で保留が外れるが、完了は次の `DefeatGate::Update` なので、その前に新しい敵の BeginPlay が走る順だとこの経路に入る。退役した項目は消さずに残す（1 回の入り直しにつき Id 1 つ分）。
+
+- U1 ループの平滑で近傍を格子の時刻で取り、周期で折り返す: 着地(直し 0 回)
+### G4-GR128-PROCESSING-CASES-P1 ループの平滑の継ぎ目（2026-11-18、run 20261118-152431 の反復 1、完了）
+- Done: `SkeletalClipProcessing.cpp` の `SmoothChannels` に周期（格子の間隔の単位、`outputDuration * OutputFps`）を渡し、ループのクリップでは近傍 k を添字の剰余ではなく時刻 `i + k` を周期で `fmod` して取り、間のキーを補間（回転は Slerp・並進は線形）するようにした。周期が整数のコマにならず末尾の間隔が短い格子（例: 12.5 コマ）でも、継ぎ目をまたぐ近傍を等間隔とみなさない。端数が 0 のときは元のキーをそのまま使うので、整数の周期のクリップと継ぎ目から離れたキーの結果は前とビット単位で同じ。ループでないクリップの平滑は変えていない。
+- 確かめ: `cmake --build build --config Debug -- /m:1` 終了コード 0・エラーの行なし（`SkeletalClipProcessing.obj` は編集の後に再コンパイル）、numstat の 2 通りが一致（37 追加・6 削除）。証拠は `.harness/runs/20261118-152431/G4-GR128-PROCESSING-CASES-P1-u1-unit-verify.txt`。
+- 試験は作らない・回さない決まりにより、done-when の `MotionProcessingTest` の `TestSmoothing`（12.5 コマの合成クリップと `CheckLoop`）は作っていない（試験の .cpp は既に消えている）。ctest も回していない。
+- Next: ランナーの再検証と評価者の反証。人が見るときの見どころ: 周期が整数のコマにならないループの歩き・走りのクリップ（`SmoothingRadius` が 1 以上の role-profile で焼いたもの）を再生し、ループの継ぎ目で動きが一瞬速くなったり詰まったりしないこと。
+
+- U1 層のインポスターの契約（型・セルの帯の判定・影の板の GLSL）と FramePacket・ViewRenderContext の運び口: 着地(直し 0 回)
+- U2 SceneView に層のインポスターの登録と、セルの帯・個体ごとの段の選択・Mega の抑制と遷移の値を足す: 着地(直し 0 回)
+- U4 太陽の VSM へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U5 CSM（カスケード）へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U3 層のインポスターの個体を ImpostorBatch と影の投影物の一覧にして FramePacket へ運び、全体を確かめる（最後）: 着地(直し 1 回)
+### G12-GR48-LAYER-SHADOW（2026-11-18、run 20261118-135807）
+- Done: GR47 の散布（`MegaGeometryScatterComponent` が 1 本ごとに出す `MegaGeometryProxy`）を配置の層とし、Entity を作らずにインポスターの段を足した。`SceneView::SetMegaMeshImpostor` で MegaMesh ごとにアトラスを登録すると、層の個体を 64 m の XZ のセル（`LAYER_IMPOSTOR_CELL_SIZE_METERS`）に分け、セルの最短・最長の距離で全部メッシュ／全部インポスター／混在を決め、混在のセルだけ個体ごとに MESH-LOD-SELECT の画面の大きさの式とヒステリシスで段を選ぶ。インポスターの段の個体は Mega を抑え、CROSSFADE の遷移の値（1/127 の丸め）のディザでつなぐ。可視の個体はアトラスの組ごとに `ImpostorBatch` へ束ねて `ImpostorGBufferPass` で描く。影は遷移させず、Mega の元が遷移の終わりまで落とし、インポスターは Mega を隠したときだけ落とす。影を落とす個体は `ImpostorShadowCaster`・`ImpostorShadowAtlas` の一覧にしてメインのビューから `FramePacket` へ写し、太陽の VSM は新しい記録の種類（インポスターの板）を被覆で切り抜く版で描き（クリップマップの範囲と予算の内を近い順。キャッシュの無効化と統計付き）、CSM は VSM が太陽の影を持たないときだけ専用のパイプライン（`impostor_shadow.vert/.frag`）でカスケードごとに描く。影の到達距離（`MegaMeshImpostorDesc::ShadowDistance`）の外の個体と、種で影を切った個体（`MegaGeometryProxy::bCastShadow`）は投影物にしない。インポスターは TLAS に入れない。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）が、着地と同じ中身の作業ツリーで EXIT_CODE=0、`Game.exe` のリンクまで通った（`.harness/runs/20261118-135807/verify-G12-GR48-LAYER-SHADOW-U3-build.txt`）。このタスクで触ったシェーダー（`vsm_draw_alphaclip.vert`・`vsm_draw.vert`・`impostor_shadow.vert`・`impostor_shadow.frag`、`Common/ImpostorShadowCard.glsl` を include する入口）は `glslc` で全部終了コード 0。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致し、新規ファイルは BOM 付き・CRLF。verify の ctest の行と done-when (3) の試験（GR47 の層の試験のケース・`ImpostorShadowVulkanTest`）は人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: 散布の MegaMesh に `SetMegaMeshImpostor` でアトラスを登録した場面で、低い太陽のもと、遠景の木・岩がインポスターに替わる距離の前後へカメラを動かし、(a) 替わる帯にディザの抜け・ポップが無いこと、(b) 地面の影が遷移の間に二重・欠けにならないこと、(c) 影の形が被覆どおりに切り抜かれ（板の四角い影にならない）、影の到達距離の外の個体は影を落とさないこと。
+- Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
+- Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
+- 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。
