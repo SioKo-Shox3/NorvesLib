@@ -577,6 +577,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief 可視インポスターの束を取得 */
         const Container::VariableArray<ImpostorBatch> &GetImpostorBatches() const { return m_ImpostorBatches; }
 
+        /** @brief 太陽の影へ落とす層のインポスターと、そのアトラスの表を取得 */
+        const Container::VariableArray<ImpostorShadowCaster>& GetImpostorShadowCasters() const { return m_ImpostorShadowCasters; }
+        const Container::VariableArray<ImpostorShadowAtlas>& GetImpostorShadowAtlases() const { return m_ImpostorShadowAtlases; }
+
         // ========================================
         // 設定
         // ========================================
@@ -700,6 +704,7 @@ namespace NorvesLib::Core::Rendering
         // 同じフレームの複数のビューでは時間を一度だけ進める。
         void PrepareLODCrossfadeCullClock();
         void AppendWorldBoardDrawCommands();
+        void AppendLayerImpostorBatches();
 
         /**
          * @brief このフレームの Viewport に TAA を掛けるかでパスの有効・無効を切り替える
@@ -788,6 +793,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<DrawCommand> m_TransparentCommands;
         Container::VariableArray<GPUSceneInstanceData> m_InstanceData;
         Container::VariableArray<ImpostorBatch> m_ImpostorBatches;
+        Container::VariableArray<ImpostorShadowCaster> m_ImpostorShadowCasters;
+        Container::VariableArray<ImpostorShadowAtlas> m_ImpostorShadowAtlases;
 
         // 設定
         bool m_bEnableFrustumCulling = true;

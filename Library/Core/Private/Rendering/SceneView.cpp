@@ -106,6 +106,49 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        void FillLayerImpostorInstanceData(const MegaGeometryProxy& proxy,
+                                           const MegaMeshImpostorDesc& desc,
+                                           const Math::Vector3& center,
+                                           float halfSize,
+                                           float crossfadeValue,
+                                           GPUSceneInstanceData& outData)
+        {
+            Math::Matrix4x4 world = proxy.WorldTransform;
+            world.SetTranslationRow(center);
+            Math::Matrix4x4 previousWorld = proxy.PreviousWorldTransform;
+            previousWorld.SetTranslationRow(Math::MatrixUtils::TransformPointRowVector(previousWorld, desc.BoundsCenter));
+            Math::MatrixUtils::CopyToShaderData(world, outData.World);
+            Math::MatrixUtils::CopyToShaderData(previousWorld, outData.PreviousWorld);
+
+            for (float& value : outData.NormalMatrix)
+            {
+                value = 0.0f;
+            }
+            // 焼きの正射影は境界球の中心から半径の範囲なので、一辺は半径の 2 倍。
+            outData.NormalMatrix[0] = 2.0f * halfSize;
+            outData.NormalMatrix[1] = 2.0f * halfSize;
+            outData.NormalMatrix[2] = 0.5f;
+            outData.NormalMatrix[3] = 0.5f;
+            outData.NormalMatrix[8] = 1.0f;
+            outData.NormalMatrix[9] = 1.0f;
+            outData.NormalMatrix[10] = static_cast<float>(desc.AxisCellCountX);
+            outData.NormalMatrix[11] = static_cast<float>(desc.AxisCellCountY);
+
+            constexpr float colorScale = 1.0f / 255.0f;
+            outData.ObjectColor[0] = static_cast<float>(proxy.Tint & 0xFFu) * colorScale;
+            outData.ObjectColor[1] = static_cast<float>((proxy.Tint >> 8) & 0xFFu) * colorScale;
+            outData.ObjectColor[2] = static_cast<float>((proxy.Tint >> 16) & 0xFFu) * colorScale;
+            outData.ObjectColor[3] = 1.0f;
+            outData.CustomData[0] = static_cast<float>(desc.CellResolution);
+            outData.CustomData[1] = static_cast<float>(desc.AtlasWidth);
+            outData.CustomData[2] = static_cast<float>(desc.AtlasHeight);
+            outData.CustomData[3] = crossfadeValue;
+            for (float& value : outData.ShadingParams)
+            {
+                value = -1.0f;
+            }
+        }
+
         // BillboardComponent::BuildBoardProxy と同じ式で、板の基点から各頂点を包む境界を作る。
         void BuildTransientBoardBounds(BoardProxy& proxy)
         {
@@ -1000,6 +1043,8 @@ namespace NorvesLib::Core::Rendering
     void SceneView::ClearAllProxies()
     {
         m_LayerImpostorCells.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
         m_LayerImpostorStates.clear();
         m_SuppressedLayerMegaIds.clear();
         m_NextSuppressedLayerMegaIds.clear();
@@ -1039,6 +1084,8 @@ namespace NorvesLib::Core::Rendering
     void SceneView::ClearMegaGeometryProxies()
     {
         m_LayerImpostorCells.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
         m_LayerImpostorStates.clear();
         m_SuppressedLayerMegaIds.clear();
         m_NextSuppressedLayerMegaIds.clear();
@@ -2020,7 +2067,7 @@ namespace NorvesLib::Core::Rendering
                     Math::MatrixUtils::TransformSphereToClipSpace(viewProjection, placement.Center, placement.HalfSize);
                 instance.bVisible = Math::MatrixUtils::IntersectsClipSpace(clipBounds, Math::ClipSpaceDepthRange::ZeroToOne);
             }
-            if (bHidden && desc->bCastShadow)
+            if (bHidden && desc->bCastShadow && proxy.bCastShadow)
             {
                 const float distance = std::hypot(placement.Center.x - cameraPosition.x,
                                                   placement.Center.y - cameraPosition.y,
@@ -2693,6 +2740,160 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    // 板の束とは別に、層の可視個体の束と視錐台外も含む影の一覧を作る。
+    void SceneView::AppendLayerImpostorBatches()
+    {
+        if (m_LayerImpostorInstances.empty())
+        {
+            return;
+        }
+
+        struct VisibleLayerImpostor
+        {
+            const MegaGeometryProxy* Proxy;
+            const MegaMeshImpostorDesc* Desc;
+            float CenterX;
+            float CenterY;
+            float CenterZ;
+            float HalfSize;
+            float CrossfadeValue;
+        };
+        Container::VariableArray<VisibleLayerImpostor> visible;
+        Container::UnorderedMap<uint64_t, uint32_t> shadowAtlasByMesh;
+        for (const LayerImpostorInstance& instance : m_LayerImpostorInstances)
+        {
+            if ((!instance.bVisible && !instance.bCastShadow) || instance.ProxyIndex >= m_MegaGeometryProxies.size())
+            {
+                continue;
+            }
+            const MegaGeometryProxy& proxy = m_MegaGeometryProxies[instance.ProxyIndex];
+            if (proxy.ObjectId != instance.ObjectId)
+            {
+                continue;
+            }
+            const MegaMeshImpostorDesc* desc = FindMegaMeshImpostor(proxy.MegaMeshHandle);
+            LayerImpostorPlacement placement;
+            if (!desc || !ComputeLayerImpostorPlacement(proxy.WorldTransform, *desc, placement))
+            {
+                continue;
+            }
+
+            if (instance.bVisible)
+            {
+                visible.push_back({&proxy, desc, placement.Center.x, placement.Center.y, placement.Center.z,
+                                   placement.HalfSize, instance.CrossfadeValue});
+            }
+            if (!instance.bCastShadow)
+            {
+                continue;
+            }
+
+            uint32_t atlasIndex;
+            const auto cached = shadowAtlasByMesh.find(proxy.MegaMeshHandle.Id);
+            if (cached != shadowAtlasByMesh.end())
+            {
+                atlasIndex = cached->second;
+            }
+            else
+            {
+                atlasIndex = static_cast<uint32_t>(m_ImpostorShadowAtlases.size());
+                for (uint32_t index = 0; index < m_ImpostorShadowAtlases.size(); ++index)
+                {
+                    const ImpostorShadowAtlas& atlas = m_ImpostorShadowAtlases[index];
+                    if (atlas.AlbedoAtlas == desc->AlbedoAtlas && atlas.Layout == desc->Layout &&
+                        atlas.AxisCellCountX == desc->AxisCellCountX && atlas.AxisCellCountY == desc->AxisCellCountY &&
+                        atlas.CellResolution == desc->CellResolution && atlas.AtlasWidth == desc->AtlasWidth &&
+                        atlas.AtlasHeight == desc->AtlasHeight)
+                    {
+                        atlasIndex = index;
+                        break;
+                    }
+                }
+                if (atlasIndex == m_ImpostorShadowAtlases.size())
+                {
+                    ImpostorShadowAtlas atlas;
+                    atlas.AlbedoAtlas = desc->AlbedoAtlas;
+                    atlas.Layout = desc->Layout;
+                    atlas.AxisCellCountX = desc->AxisCellCountX;
+                    atlas.AxisCellCountY = desc->AxisCellCountY;
+                    atlas.CellResolution = desc->CellResolution;
+                    atlas.AtlasWidth = desc->AtlasWidth;
+                    atlas.AtlasHeight = desc->AtlasHeight;
+                    m_ImpostorShadowAtlases.push_back(atlas);
+                }
+                shadowAtlasByMesh.emplace(proxy.MegaMeshHandle.Id, atlasIndex);
+            }
+
+            ImpostorShadowCaster caster;
+            caster.Key = instance.ObjectId;
+            caster.Center[0] = placement.Center.x;
+            caster.Center[1] = placement.Center.y;
+            caster.Center[2] = placement.Center.z;
+            caster.HalfSize = placement.HalfSize;
+            caster.AxisX[0] = placement.AxisX.x;
+            caster.AxisX[1] = placement.AxisX.y;
+            caster.AxisX[2] = placement.AxisX.z;
+            caster.AxisY[0] = placement.AxisY.x;
+            caster.AxisY[1] = placement.AxisY.y;
+            caster.AxisY[2] = placement.AxisY.z;
+            caster.AxisZ[0] = placement.AxisZ.x;
+            caster.AxisZ[1] = placement.AxisZ.y;
+            caster.AxisZ[2] = placement.AxisZ.z;
+            caster.AtlasIndex = atlasIndex;
+            m_ImpostorShadowCasters.push_back(caster);
+        }
+
+        // 板と同じ鍵で束ね、同じ組の中では元の可視一覧の順序を保つ。
+        std::stable_sort(visible.begin(), visible.end(),
+                         [](const VisibleLayerImpostor& lhs, const VisibleLayerImpostor& rhs)
+                         {
+                             if (lhs.Desc->AlbedoAtlas != rhs.Desc->AlbedoAtlas)
+                             {
+                                 return lhs.Desc->AlbedoAtlas < rhs.Desc->AlbedoAtlas;
+                             }
+                             if (lhs.Desc->NormalAtlas != rhs.Desc->NormalAtlas)
+                             {
+                                 return lhs.Desc->NormalAtlas < rhs.Desc->NormalAtlas;
+                             }
+                             if (lhs.Desc->OrmAtlas != rhs.Desc->OrmAtlas)
+                             {
+                                 return lhs.Desc->OrmAtlas < rhs.Desc->OrmAtlas;
+                             }
+                             if (lhs.Desc->DepthAtlas != rhs.Desc->DepthAtlas)
+                             {
+                                 return lhs.Desc->DepthAtlas < rhs.Desc->DepthAtlas;
+                             }
+                             return lhs.Desc->Layout < rhs.Desc->Layout;
+                         });
+
+        const size_t firstLayerBatch = m_ImpostorBatches.size();
+        for (const VisibleLayerImpostor& item : visible)
+        {
+            const MegaMeshImpostorDesc& desc = *item.Desc;
+            if (m_ImpostorBatches.size() == firstLayerBatch ||
+                m_ImpostorBatches.back().AlbedoAtlas != desc.AlbedoAtlas ||
+                m_ImpostorBatches.back().NormalAtlas != desc.NormalAtlas ||
+                m_ImpostorBatches.back().OrmAtlas != desc.OrmAtlas ||
+                m_ImpostorBatches.back().DepthAtlas != desc.DepthAtlas ||
+                m_ImpostorBatches.back().Layout != desc.Layout)
+            {
+                ImpostorBatch batch;
+                batch.AlbedoAtlas = desc.AlbedoAtlas;
+                batch.NormalAtlas = desc.NormalAtlas;
+                batch.OrmAtlas = desc.OrmAtlas;
+                batch.DepthAtlas = desc.DepthAtlas;
+                batch.Layout = desc.Layout;
+                batch.InstanceDataOffset = static_cast<uint32_t>(m_InstanceData.size());
+                m_ImpostorBatches.push_back(batch);
+            }
+            GPUSceneInstanceData instanceData;
+            const Math::Vector3 center(item.CenterX, item.CenterY, item.CenterZ);
+            FillLayerImpostorInstanceData(*item.Proxy, desc, center, item.HalfSize, item.CrossfadeValue, instanceData);
+            m_InstanceData.push_back(instanceData);
+            ++m_ImpostorBatches.back().InstanceCount;
+        }
+    }
+
     void SceneView::GenerateCommands()
     {
         m_DrawCommands.clear();
@@ -2700,6 +2901,8 @@ namespace NorvesLib::Core::Rendering
         m_TransparentCommands.clear();
         m_InstanceData.clear();
         m_ImpostorBatches.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
 
         // バッチャーからDrawCommandを生成
         m_Batcher.GenerateDrawCommands(m_DrawCommands,
@@ -2737,6 +2940,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         AppendWorldBoardDrawCommands();
+        AppendLayerImpostorBatches();
 
         // 不透明と透明を分離してソート
         DrawCommandSorter::SortAndSeparate(m_DrawCommands, m_OpaqueCommands, m_TransparentCommands);
@@ -2767,6 +2971,8 @@ namespace NorvesLib::Core::Rendering
     void SceneView::PrepareDrawCommands()
     {
         m_LayerImpostorInstances.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
         if (!m_bInitialized)
         {
             return;
@@ -2797,6 +3003,8 @@ namespace NorvesLib::Core::Rendering
     void SceneView::PrepareDrawCommandsForViewport(const ViewportSnapshot &viewport)
     {
         m_LayerImpostorInstances.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
         if (!m_bInitialized)
         {
             return;

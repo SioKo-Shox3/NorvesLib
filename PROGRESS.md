@@ -12475,3 +12475,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 SceneView に層のインポスターの登録と、セルの帯・個体ごとの段の選択・Mega の抑制と遷移の値を足す: 着地(直し 0 回)
 - U4 太陽の VSM へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
 - U5 CSM（カスケード）へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U3 層のインポスターの個体を ImpostorBatch と影の投影物の一覧にして FramePacket へ運び、全体を確かめる（最後）: 着地(直し 1 回)

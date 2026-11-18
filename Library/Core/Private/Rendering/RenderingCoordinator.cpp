@@ -913,6 +913,15 @@ namespace NorvesLib::Core::Rendering
             return range;
         }
 
+        // 描画に使う最初のメインビューの影をパケットへ写す。
+        void SnapshotImpostorShadows(const SceneView& source, FramePacket& destination)
+        {
+            const auto& casters = source.GetImpostorShadowCasters();
+            const auto& atlases = source.GetImpostorShadowAtlases();
+            destination.ImpostorShadowCasters.assign(casters.begin(), casters.end());
+            destination.ImpostorShadowAtlases.assign(atlases.begin(), atlases.end());
+        }
+
         CommandRange CombineCommandRanges(const CommandRange &opaqueRange,
                                           const CommandRange &transparentRange)
         {
@@ -5103,6 +5112,7 @@ namespace NorvesLib::Core::Rendering
                     m_CurrentPacket->OpaqueCommandRange = opaqueCommandRange;
                     m_CurrentPacket->TransparentCommandRange = transparentCommandRange;
                     m_CurrentPacket->ImpostorBatchRange = impostorBatchRange;
+                    SnapshotImpostorShadows(*sceneView, *m_CurrentPacket);
                     bLegacyCommandsSet = true;
                 }
             }
@@ -5170,6 +5180,7 @@ namespace NorvesLib::Core::Rendering
                         m_CurrentPacket->OpaqueCommandRange = viewportPlan.OpaqueCommandRange;
                         m_CurrentPacket->TransparentCommandRange = viewportPlan.TransparentCommandRange;
                         m_CurrentPacket->ImpostorBatchRange = viewportPlan.ImpostorBatchRange;
+                        SnapshotImpostorShadows(*sceneView, *m_CurrentPacket);
                         bLegacyCommandsSet = true;
                     }
                 }
