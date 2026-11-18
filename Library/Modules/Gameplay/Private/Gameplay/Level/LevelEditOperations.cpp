@@ -927,6 +927,41 @@ namespace NorvesLib::Modules::Gameplay::Level
             && m_PaintMasks[index].SetBaseline(baseline, bResetValues);
     }
 
+    bool LevelEditOperations::RegenerateDrynessBaseline(const Core::World& world,
+        const LevelDrynessBaselineSettings& settings, bool bResetValues, size_t* pOutTerritoryCount,
+        size_t* pOutWitherCount, String* pOutError)
+    {
+        if (pOutError != nullptr)
+        {
+            pOutError->clear();
+        }
+        if (!HasPaintMasks())
+        {
+            return SaveError(pOutError, "マスクが配置に合わせられていません。");
+        }
+
+        Core::Container::VariableArray<uint8_t> values;
+        size_t territoryCount = 0;
+        size_t witherCount = 0;
+        if (!BuildLevelDrynessBaseline(world, GetPaintMaskLayout(), settings, values, &territoryCount, &witherCount))
+        {
+            return SaveError(pOutError, "枯れの初期値を作れませんでした。設定と配置を確認してください。");
+        }
+        if (!SetPaintMaskBaseline(ELevelPaintLayer::Dryness, Core::Container::Span<const uint8_t>(values), bResetValues))
+        {
+            return SaveError(pOutError, "枯れの初期値をマスクに設定できませんでした。");
+        }
+        if (pOutTerritoryCount != nullptr)
+        {
+            *pOutTerritoryCount = territoryCount;
+        }
+        if (pOutWitherCount != nullptr)
+        {
+            *pOutWitherCount = witherCount;
+        }
+        return true;
+    }
+
     bool LevelEditOperations::SavePaintMasks(const String& masksDirectory, size_t* pOutSavedLayers, String* pOutError)
     {
         if (pOutSavedLayers != nullptr)

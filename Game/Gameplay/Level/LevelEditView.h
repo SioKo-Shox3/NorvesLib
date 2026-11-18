@@ -47,7 +47,8 @@ namespace Game::LevelEdit
     private:
         enum class ECommandType
         {
-            Place, Pick, Move, Delete, Rename, FindByKey, ReSnap, Save, Load
+            Place, Pick, Move, Delete, Rename, FindByKey, ReSnap, Save, Load,
+            BindPaintMasks, ApplyPaint, SavePaintMasks, LoadPaintMasks, RegenerateDryness
         };
 
         struct Command
@@ -55,11 +56,20 @@ namespace Game::LevelEdit
             ECommandType Type;
             NorvesLib::Modules::Gameplay::Level::ELevelMarkerKind Kind;
             NorvesLib::Core::Container::String Text;
+            NorvesLib::Modules::Gameplay::Level::ELevelPaintLayer PaintLayer;
+            NorvesLib::Modules::Gameplay::Level::LevelPaintBrush Brush;
+            NorvesLib::Core::Container::String MasksDirectory;
+            NorvesLib::Modules::Gameplay::Level::LevelDrynessBaselineSettings DrynessSettings;
+            bool bErase = false;
+            bool bFlipZ = false;
+            bool bResetDrynessValues = false;
         };
 
         void Enqueue(ECommandType type, const char* text = "");
         void ExecuteCommand(const Command& command, NorvesLib::Core::GameMode::GameModeContext& ctx,
                             const NorvesLib::Math::Ray* ray);
+        bool BindPaintMasks(const Command& command, NorvesLib::Core::GameMode::GameModeContext& ctx,
+                            const NorvesLib::Math::Vector3& point);
         void SetResult(const NorvesLib::Core::Container::String& text, bool bSuccess = true);
         void ResetModeState();
 
@@ -83,6 +93,23 @@ namespace Game::LevelEdit
         bool m_bDrawMarkers = true;
         LevelMarkerDebugDrawSettings m_DrawSettings;
 
+        int m_PaintLayerIndex = 0;
+        int m_PaintOperationIndex = 0;
+        int m_PaintValue = 0;
+        NorvesLib::Modules::Gameplay::Level::LevelPaintBrush m_PaintBrush;
+        NorvesLib::Modules::Gameplay::Level::LevelDrynessBaselineSettings m_DrynessSettings;
+#if defined(NORVES_SOURCE_ASSET_DIR)
+        char m_MasksPath[512] = NORVES_SOURCE_ASSET_DIR "/Levels/Sample/Masks";
+#else
+        char m_MasksPath[512] = "Assets/Levels/Sample/Masks";
+#endif
+        bool m_bPaintFlipZ = false;
+        bool m_bDrawBrush = true;
+        bool m_bContinuousPaint = false;
+        bool m_bResetDrynessValues = false;
+        // 基準値への復帰ではマスク側の変更印が消えるため、保存までは別に覚える。
+        bool m_bDrynessBaselineNeedsSave = false;
+
         // Tick が写した表示値。Entity と Component のポインタは保存しない。
         size_t m_MarkerCount = 0;
         bool m_bHasSelection = false;
@@ -91,6 +118,11 @@ namespace Game::LevelEdit
             NorvesLib::Modules::Gameplay::Level::ELevelMarkerKind::Territory;
         NorvesLib::Math::Vector3 m_SelectedPosition;
         LevelMarkerDebugDrawStats m_DrawStats;
+        bool m_bPaintMasksBound = false;
+        NorvesLib::Modules::Gameplay::Level::LevelPaintMaskLayout m_PaintMaskLayout;
+        NorvesLib::Core::Container::String m_BoundMasksDirectory;
+        bool m_bPaintMaskLoaded[NorvesLib::Modules::Gameplay::Level::kLevelPaintLayerCount] = {};
+        bool m_bPaintMaskDirty[NorvesLib::Modules::Gameplay::Level::kLevelPaintLayerCount] = {};
         NorvesLib::Core::Container::String m_LastResult;
     };
 } // namespace Game::LevelEdit

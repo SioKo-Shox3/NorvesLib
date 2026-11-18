@@ -12544,3 +12544,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 マスクの層・円形ブラシ・R8 PNG の読み書き: 着地(直し 0 回)
 - U2 枯れの手続きの初期値（持ち場と枯れの源から smoothstep と雑音）: 着地(直し 0 回)
 - U3 LevelEditOperations にマスクを合わせる・塗る・消す・保存・読み直しを足す: 着地(直し 0 回)
+- U4 配置の画面にブラシの操作と枯れの初期値を足す: 着地(直し 0 回)

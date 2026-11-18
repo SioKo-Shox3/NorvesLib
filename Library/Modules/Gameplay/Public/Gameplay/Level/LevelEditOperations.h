@@ -141,6 +141,11 @@ namespace NorvesLib::Modules::Gameplay::Level
         uint32_t EraseMask(ELevelPaintLayer layer, const Math::Vector3& groundPoint, const LevelPaintBrush& brush);
         /// 基準値を差し替える。bResetValues なら値も戻す。未設定・無効な層・標本数違いは false。
         bool SetPaintMaskBaseline(ELevelPaintLayer layer, Core::Container::Span<const uint8_t> baseline, bool bResetValues);
+        /// 合わせた配置で持ち場と枯れの源から枯れの基準値を作り、必要なら値も戻す。
+        /// 未設定または生成できない場合は false。個数は成功時のみ返し、エラー出力は最初に空にする。
+        bool RegenerateDrynessBaseline(const Core::World& world, const LevelDrynessBaselineSettings& settings,
+                                       bool bResetValues, size_t* pOutTerritoryCount = nullptr,
+                                       size_t* pOutWitherCount = nullptr, Core::Container::String* pOutError = nullptr);
 
         /// 全層を指定の置き場へ保存する。空なら覚えている置き場を使う。
         /// 成功した層の変更の印を消す。一層でも失敗すれば false で、成功したファイルは残る。

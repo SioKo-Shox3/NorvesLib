@@ -11,11 +11,18 @@
 #include "GameMode/ISubRoutine.h"
 #include "Gameplay/Level/LevelMarkerComponent.h"
 #include "Logging/LogMacros.h"
+#include "Math/MathTypes.h"
+#include "Math/Vector4.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
 #include "Rendering/CameraPicking.h"
+#include "Rendering/DebugDrawQueue.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/Terrain/TerrainHeightField.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <utility>
 
@@ -36,6 +43,9 @@ namespace Game::LevelEdit
             "持ち場", "寝床", "ファストトラベル点", "見どころ", "動物の出現点", "痕跡", "痕跡の点"
         };
         static_assert(sizeof(kKindLabels) / sizeof(kKindLabels[0]) == Level::kLevelMarkerKindCount);
+        const char* const kPaintLayerLabels[] = {"草の密度", "枯れ"};
+        const char* const kPaintOperationLabels[] = {"塗る", "消す"};
+        static_assert(sizeof(kPaintLayerLabels) / sizeof(kPaintLayerLabels[0]) == Level::kLevelPaintLayerCount);
 
         const char* GetKindLabel(Level::ELevelMarkerKind kind)
         {
@@ -54,6 +64,38 @@ namespace Game::LevelEdit
         {
             const auto* marker = entity.GetComponent<Level::LevelMarkerComponent>();
             return marker != nullptr ? *marker->getKey() : String();
+        }
+
+        Math::Vector3 BrushCirclePoint(const Core::Rendering::Terrain::TerrainSystem& terrains,
+                                       const Math::Vector3& center, float radius, float angle)
+        {
+            Math::Vector3 point(center.x + radius * std::cos(angle), center.y, center.z + radius * std::sin(angle));
+            const auto field = terrains.FindTerrain(point.x, point.z);
+            if (field)
+            {
+                const float height = field->SampleHeight(point.x, point.z);
+                if (std::isfinite(height))
+                {
+                    point.y = height;
+                }
+            }
+            point.y += 0.1f;
+            return point;
+        }
+
+        void DrawBrushCircle(Core::Rendering::DebugDrawQueue& queue,
+                             const Core::Rendering::Terrain::TerrainSystem& terrains,
+                             const Math::Vector3& center, float radius, const Math::Vector4& color)
+        {
+            constexpr uint32_t kSegments = 48;
+            Math::Vector3 previous = BrushCirclePoint(terrains, center, radius, 0.0f);
+            for (uint32_t index = 1; index <= kSegments; ++index)
+            {
+                const float angle = Math::Constants::TWO_PI * static_cast<float>(index) / static_cast<float>(kSegments);
+                const Math::Vector3 next = BrushCirclePoint(terrains, center, radius, angle);
+                queue.AddLine(previous, next, color);
+                previous = next;
+            }
         }
     } // namespace
 
@@ -199,7 +241,19 @@ namespace Game::LevelEdit
 
     void LevelEditView::Enqueue(ECommandType type, const char* text)
     {
-        m_Commands.push_back({type, static_cast<Level::ELevelMarkerKind>(m_MarkerKindIndex), String(text)});
+        Command command;
+        command.Type = type;
+        command.Kind = static_cast<Level::ELevelMarkerKind>(m_MarkerKindIndex);
+        command.Text = text;
+        command.PaintLayer = static_cast<Level::ELevelPaintLayer>(m_PaintLayerIndex);
+        command.Brush = m_PaintBrush;
+        command.Brush.Value = static_cast<uint8_t>(std::clamp(m_PaintValue, 0, 255));
+        command.MasksDirectory = m_MasksPath;
+        command.DrynessSettings = m_DrynessSettings;
+        command.bErase = m_PaintOperationIndex == 1;
+        command.bFlipZ = m_bPaintFlipZ;
+        command.bResetDrynessValues = m_bResetDrynessValues;
+        m_Commands.push_back(std::move(command));
     }
 
     void LevelEditView::SetResult(const String& text, bool bSuccess)
@@ -215,13 +269,44 @@ namespace Game::LevelEdit
         }
     }
 
+    bool LevelEditView::BindPaintMasks(const Command& command, Core::GameMode::GameModeContext& ctx,
+                                       const Math::Vector3& point)
+    {
+        const auto field = ctx.EngineRef.GetTerrainSystem().FindTerrain(point.x, point.z);
+        if (!field || !field->IsGrid())
+        {
+            SetResult("画面の中心に格子の地形がありません", false);
+            return false;
+        }
+
+        String error;
+        const auto layout = Level::MakeLevelPaintMaskLayout(field->GetGridLayout(), command.bFlipZ);
+        if (!m_Operations.BindPaintMasks(layout, command.MasksDirectory, &error))
+        {
+            SetResult(error, false);
+            return false;
+        }
+        m_bDrynessBaselineNeedsSave = false;
+        const bool bResetValues = !m_Operations.WasPaintMaskLoadedFromFile(Level::ELevelPaintLayer::Dryness);
+        if (!m_Operations.RegenerateDrynessBaseline(ctx.WorldRef, command.DrynessSettings, bResetValues,
+                                                    nullptr, nullptr, &error))
+        {
+            SetResult("マスクは合わせましたが、" + error, false);
+            return false;
+        }
+        m_bDrynessBaselineNeedsSave = bResetValues;
+        SetResult("地形にマスクを合わせました: " + command.MasksDirectory);
+        return true;
+    }
+
     void LevelEditView::ExecuteCommand(const Command& command, Core::GameMode::GameModeContext& ctx,
                                        const Math::Ray* ray)
     {
         auto& world = ctx.WorldRef;
         const auto& query = ctx.EngineRef.GetSceneQuery();
         const bool bNeedsRay = command.Type == ECommandType::Place || command.Type == ECommandType::Pick ||
-                               command.Type == ECommandType::Move;
+                               command.Type == ECommandType::Move || command.Type == ECommandType::BindPaintMasks ||
+                               command.Type == ECommandType::ApplyPaint;
         if (bNeedsRay && ray == nullptr)
         {
             SetResult("カメラがありません", false);
@@ -239,7 +324,8 @@ namespace Game::LevelEdit
 
         Math::Vector3 point;
         Math::Vector3 normal;
-        if ((command.Type == ECommandType::Place || command.Type == ECommandType::Move) &&
+        if ((command.Type == ECommandType::Place || command.Type == ECommandType::Move ||
+             command.Type == ECommandType::BindPaintMasks || command.Type == ECommandType::ApplyPaint) &&
             !m_Operations.RaycastGround(query, *ray, Level::LevelEditOperations::kDefaultRayDistance, point, normal))
         {
             SetResult("画面の中心の先に地面がありません", false);
@@ -329,6 +415,73 @@ namespace Game::LevelEdit
             }
             break;
         }
+        case ECommandType::BindPaintMasks:
+        {
+            BindPaintMasks(command, ctx, point);
+            break;
+        }
+        case ECommandType::ApplyPaint:
+        {
+            if (!m_Operations.HasPaintMasks() && !BindPaintMasks(command, ctx, point))
+            {
+                break;
+            }
+            const uint32_t changed = command.bErase
+                ? m_Operations.EraseMask(command.PaintLayer, point, command.Brush)
+                : m_Operations.PaintMask(command.PaintLayer, point, command.Brush);
+            SetResult("変わった標本: " + CountText(changed));
+            break;
+        }
+        case ECommandType::SavePaintMasks:
+        {
+            size_t count = 0;
+            String error;
+            if (m_Operations.SavePaintMasks(command.MasksDirectory, &count, &error))
+            {
+                m_bDrynessBaselineNeedsSave = false;
+                SetResult("マスクを保存しました: " + CountText(count) + " 層");
+            }
+            else
+            {
+                SetResult("マスクを保存できませんでした: " + error, false);
+            }
+            break;
+        }
+        case ECommandType::LoadPaintMasks:
+        {
+            String error;
+            if (m_Operations.LoadPaintMasks(&error))
+            {
+                m_bDrynessBaselineNeedsSave = !m_Operations.WasPaintMaskLoadedFromFile(Level::ELevelPaintLayer::Dryness);
+                SetResult("マスクを読み直しました: " + m_Operations.GetPaintMaskDirectory());
+            }
+            else
+            {
+                SetResult("マスクを読み直せませんでした: " + error, false);
+            }
+            break;
+        }
+        case ECommandType::RegenerateDryness:
+        {
+            size_t territories = 0;
+            size_t witherSources = 0;
+            String error;
+            if (m_Operations.RegenerateDrynessBaseline(world, command.DrynessSettings, command.bResetDrynessValues,
+                                                       &territories, &witherSources, &error))
+            {
+                if (command.bResetDrynessValues)
+                {
+                    m_bDrynessBaselineNeedsSave = true;
+                }
+                SetResult("枯れの初期値を作りました: 持ち場 " + CountText(territories) +
+                          "・枯れの源 " + CountText(witherSources));
+            }
+            else
+            {
+                SetResult(error, false);
+            }
+            break;
+        }
         }
     }
 
@@ -350,6 +503,25 @@ namespace Game::LevelEdit
             ExecuteCommand(command, ctx, bHasRay ? &ray : nullptr);
         }
         m_Commands.clear();
+
+        Math::Vector3 brushPoint;
+        Math::Vector3 brushNormal;
+        const bool bPaintContinuously = m_bContinuousPaint && m_Operations.HasPaintMasks();
+        const bool bHasBrushPoint = (bPaintContinuously || m_bDrawBrush) && bHasRay &&
+            m_Operations.RaycastGround(ctx.EngineRef.GetSceneQuery(), ray,
+                                       Level::LevelEditOperations::kDefaultRayDistance, brushPoint, brushNormal);
+        if (bPaintContinuously && bHasBrushPoint)
+        {
+            const auto layer = static_cast<Level::ELevelPaintLayer>(m_PaintLayerIndex);
+            if (m_PaintOperationIndex == 1)
+            {
+                m_Operations.EraseMask(layer, brushPoint, m_PaintBrush);
+            }
+            else
+            {
+                m_Operations.PaintMask(layer, brushPoint, m_PaintBrush);
+            }
+        }
 
         // 読み込み直後の子の変換も表示と描画に反映する。
         ctx.WorldRef.UpdateWorldTransforms();
@@ -374,6 +546,30 @@ namespace Game::LevelEdit
             settings.SelectedObjectId = m_Operations.GetSelectedObjectId();
             const Math::Vector3 position(camera.PositionX, camera.PositionY, camera.PositionZ);
             m_DrawStats = DrawLevelMarkers(ctx.WorldRef, position, settings, Core::GEngine.GetDebugDraw());
+        }
+
+        if (m_bDrawBrush && bHasBrushPoint)
+        {
+            auto& queue = Core::GEngine.GetDebugDraw();
+            const auto& terrains = ctx.EngineRef.GetTerrainSystem();
+            DrawBrushCircle(queue, terrains, brushPoint, m_PaintBrush.Radius, Math::Vector4(0.2f, 1.0f, 0.3f, 1.0f));
+            if (m_PaintBrush.Falloff > 0.0f)
+            {
+                DrawBrushCircle(queue, terrains, brushPoint, m_PaintBrush.Radius * (1.0f - m_PaintBrush.Falloff),
+                                Math::Vector4(1.0f, 0.85f, 0.2f, 1.0f));
+            }
+        }
+
+        m_bPaintMasksBound = m_Operations.HasPaintMasks();
+        m_PaintMaskLayout = m_Operations.GetPaintMaskLayout();
+        m_BoundMasksDirectory = m_Operations.GetPaintMaskDirectory();
+        for (uint32_t index = 0; index < Level::kLevelPaintLayerCount; ++index)
+        {
+            const auto layer = static_cast<Level::ELevelPaintLayer>(index);
+            const auto* mask = m_Operations.GetPaintMask(layer);
+            m_bPaintMaskLoaded[index] = m_Operations.WasPaintMaskLoadedFromFile(layer);
+            m_bPaintMaskDirty[index] = mask != nullptr &&
+                (mask->IsDirty() || (layer == Level::ELevelPaintLayer::Dryness && m_bDrynessBaselineNeedsSave));
         }
     }
 
@@ -466,6 +662,83 @@ namespace Game::LevelEdit
         ImGui::Text("描いた数: %u・距離で外した数: %u・予算で外した数: %u・頂点数: %u",
                     m_DrawStats.Drawn, m_DrawStats.CulledByDistance, m_DrawStats.CulledByBudget, m_DrawStats.VerticesAdded);
         ImGui::Text("マーカーの数: %zu", m_MarkerCount);
+
+        if (ImGui::CollapsingHeader("草の密度・枯れのペイント"))
+        {
+            ImGui::PushID("PaintMasks");
+            if (ImGui::Combo("層", &m_PaintLayerIndex, kPaintLayerLabels, static_cast<int>(Level::kLevelPaintLayerCount)))
+            {
+                m_PaintValue = m_PaintLayerIndex == 0 ? 0 : 255;
+            }
+            ImGui::Combo("操作", &m_PaintOperationIndex, kPaintOperationLabels, 2);
+            ImGui::SliderFloat("半径 [m]", &m_PaintBrush.Radius, 0.5f, 64.0f);
+            ImGui::SliderFloat("強さ", &m_PaintBrush.Strength, 0.0f, 1.0f);
+            ImGui::SliderFloat("減衰", &m_PaintBrush.Falloff, 0.0f, 1.0f);
+            ImGui::SliderInt("塗る値", &m_PaintValue, 0, 255);
+            m_PaintBrush.Radius = std::isfinite(m_PaintBrush.Radius) ? std::clamp(m_PaintBrush.Radius, 0.5f, 64.0f) : 4.0f;
+            m_PaintBrush.Strength = std::isfinite(m_PaintBrush.Strength) ? std::clamp(m_PaintBrush.Strength, 0.0f, 1.0f) : 1.0f;
+            m_PaintBrush.Falloff = std::isfinite(m_PaintBrush.Falloff) ? std::clamp(m_PaintBrush.Falloff, 0.0f, 1.0f) : 0.5f;
+            m_PaintValue = std::clamp(m_PaintValue, 0, 255);
+            m_PaintBrush.Value = static_cast<uint8_t>(m_PaintValue);
+            ImGui::TextUnformatted("0 = 無し・255 = 最大");
+            ImGui::InputText("マスクの置き場", m_MasksPath, sizeof(m_MasksPath));
+            ImGui::Checkbox("spec の flip_z と同じにする", &m_bPaintFlipZ);
+            ImGui::Checkbox("ブラシの円を描く", &m_bDrawBrush);
+            ImGui::Checkbox("連続で塗る（毎更新）", &m_bContinuousPaint);
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("枯れの初期値");
+            ImGui::SliderFloat("源のない場所の枯れ", &m_DrynessSettings.BaseLevel, 0.0f, 1.0f);
+            ImGui::SliderFloat("持ち場の枯れ", &m_DrynessSettings.TerritoryLevel, 0.0f, 1.0f);
+            ImGui::InputFloat("持ち場の半径の倍率", &m_DrynessSettings.TerritoryRadiusScale);
+            ImGui::InputFloat("持ち場の外側の減衰幅 [m]", &m_DrynessSettings.TerritoryFalloff);
+            ImGui::Checkbox("枯れの源を使う", &m_DrynessSettings.bUseWitherSources);
+            ImGui::InputFloat("縁の乱れの振幅 [m]", &m_DrynessSettings.EdgeNoise);
+            ImGui::InputFloat("雑音の格子の間隔 [m]", &m_DrynessSettings.NoiseScale);
+            ImGui::InputScalar("乱数の種", ImGuiDataType_U32, &m_DrynessSettings.Seed);
+            ImGui::TextUnformatted("倍率・幅・振幅は 0 以上、振幅が正なら雑音の間隔は正にします");
+            ImGui::Checkbox("塗った枯れも初期値へ戻す", &m_bResetDrynessValues);
+
+            if (ImGui::Button("画面の中心の地形に合わせる（未保存の塗りは捨てる）"))
+            {
+                Enqueue(ECommandType::BindPaintMasks);
+            }
+            if (ImGui::Button("画面の中心に塗る（1 回）"))
+            {
+                Enqueue(ECommandType::ApplyPaint);
+            }
+            if (ImGui::Button("保存"))
+            {
+                Enqueue(ECommandType::SavePaintMasks);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("読み直す"))
+            {
+                Enqueue(ECommandType::LoadPaintMasks);
+            }
+            if (ImGui::Button("枯れの初期値を作り直す"))
+            {
+                Enqueue(ECommandType::RegenerateDryness);
+            }
+
+            ImGui::Text("地形に合わせた状態: %s", m_bPaintMasksBound ? "合わせ済み" : "未設定");
+            if (m_bPaintMasksBound)
+            {
+                ImGui::Text("格子: %u 列 × %u 行", m_PaintMaskLayout.Columns, m_PaintMaskLayout.Rows);
+                ImGui::Text("原点 (FirstX, FirstZ): %.3f, %.3f", m_PaintMaskLayout.FirstX, m_PaintMaskLayout.FirstZ);
+                ImGui::Text("間隔: %.3f m・flip_z: %s", m_PaintMaskLayout.Spacing,
+                            m_PaintMaskLayout.bFlipZ ? "オン" : "オフ");
+                ImGui::TextWrapped("合わせた置き場（読み直し先）: %s", m_BoundMasksDirectory.c_str());
+                for (uint32_t index = 0; index < Level::kLevelPaintLayerCount; ++index)
+                {
+                    ImGui::Text("%s: ファイルから読み込み %s・未保存の変更 %s", kPaintLayerLabels[index],
+                                m_bPaintMaskLoaded[index] ? "あり" : "なし", m_bPaintMaskDirty[index] ? "あり" : "なし");
+                }
+            }
+            ImGui::TextWrapped("地形の spec の recipe.paint に grass_density（mode: multiply）と dry_grass（mode: override）でこの PNG を指すと、地形の cook に入ります");
+            ImGui::TextWrapped("結果: %s", m_LastResult.c_str());
+            ImGui::PopID();
+        }
         ImGui::TextWrapped("%s", m_LastResult.c_str());
         ImGui::End();
     }
