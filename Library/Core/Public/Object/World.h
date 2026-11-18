@@ -251,6 +251,22 @@ namespace NorvesLib::Core
         }
 
         /**
+         * @brief クラスを実行時に指定して World 管理下の Entity を生成する
+         * @param cls 生成するクラス。Entity の派生でなければ失敗する
+         * @param parent 親。nullptr ならルートに置く
+         * @return 生成した Entity。失敗したら nullptr。所有権は World が持つ
+         */
+        Entity* SpawnEntityOfClass(const IClass& cls, Entity* parent = nullptr);
+
+        /**
+         * @brief クラスを実行時に指定して Component を生成し、owner に付ける
+         * @param owner 持ち主の Entity。この World にいなければ失敗する
+         * @param cls 生成するクラス。Component の派生でなければ失敗する
+         * @return 生成した Component。失敗したら nullptr。所有権は owner が持つ
+         */
+        Component::Component* CreateComponentOfClass(Entity* owner, const IClass& cls);
+
+        /**
          * @brief EntityをInnerとして追加
          * @param object 追加するEntity（OuterがこのWorldに設定されます）
          */
