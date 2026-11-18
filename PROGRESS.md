@@ -12376,3 +12376,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: `GpuEmitterParams`（304 B）に SkinSurface（形 5）・Bone（形 6）の欄、`GpuSkinSource`（96 B）、`GpuParticleEmitterFrame::SkinComponentId`、`humanoid_v1` のロールか骨の組から骨・マスクを決める `GpuSkinEmitter.h` の道具。
 - U4 消滅の効果の定義（norves.vanish）と、ファイルとキーの分かるエラーで拒否する読み込みを作る: 着地(直し 0 回)
 - U1 VFX 定義の書式にスキンの形・寿命の幅・板の自転と多角形・大きさと画面の被覆の上限を足し、GPU の放出の記述に欄を足す: 着地(直し 1 回)
+- U2 効果のシステムに、エミッタごとの有効・生成率の上書きとスキンの源の結び付けを足し、新しい欄を GPU の記述へ詰める: 着地(直し 0 回)
