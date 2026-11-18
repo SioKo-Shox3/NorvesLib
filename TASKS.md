@@ -7952,7 +7952,7 @@
 - notes: 要件 `#### GR92` の受け入れ確認の「実機の小さな場面」「欠落・失敗」（ロードマップ 2633・2634 行）。`--load-scene` のシーンの id（sandbox で受けるか、専用の id にするか）は G12-GR92-PREFAB-FILE で決めた形に合わせて `-Scene` を直してよい。撮影を開いて目で確かめる。違ったら G12-GR92-ASSET-BIND・G12-GR92-PREFAB-FILE の paths の範囲で直す。
 
 ## G12-GR93-EDIT-VIEW: ImGui の配置の画面で、マーカーを地面の当たった位置に置き・選び・動かし・保存し、持ち場・点・痕跡をデバッグ描画で見られる
-- status: todo
+- status: done
 - after: G12-GR93-MARKERS-SNAP, G12-GR92-PREFAB-FILE, G12-GR92-BRIDGE-SCENE
 - gr: GR93
 - done-when: (1) 画面に依存しない編集の操作 `Library/Modules/Gameplay` の `LevelEditOperations`（画面の中心の光線 → 地面の当たった位置へ種類を指定してマーカーを置く・選ぶ・動かす・消す、Key の重複の検査と自動の採番、全マーカーの再吸着、`Gameplay.scene.json` への保存（G12-GR92-ASSETREF-SCENE-V3 の壊れない保存）、領域の外の参照は Key で引く）がある。(2) Game の `Game/Gameplay/Level/LevelEditView`（`IImGuiView`。`--imgui` のときだけ `RegisterImGuiView` で登録）がその操作の画面で、`LevelMarkerDebugDraw` が持ち場の球・箱・円柱、ファストトラベル点と見どころの印、痕跡のスプラインを `DebugDrawQueue` へ描く。描く数はカメラからの距離で絞り、`kMaxDebugLineVertices`（`DebugDrawQueue.h:22`、1<<16）を超えない。(3) 試験: `PhysicsDynamicsTest` の束へ `LevelEditOperationsTest` を MEMBER で足す（地面の Box への光線で置いた位置が地面 + GroundOffset、Key の重複を拒否して採番、動かしたあとの再吸着、保存 → 読み込みで全マーカーの PROPERTY が一致、選択中のマーカーを消しても落ちない、1000 個のマーカーで描画の頂点が上限を超えない）。`BridgeAssetPropertyEditTest` の場面の文書のケースに、クラス名を指定したマーカーの生成・Component の追加・String と float と bool の設定・保存 → 読み込みの一致を足す。`Game` がビルドできる。
