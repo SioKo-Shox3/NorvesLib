@@ -12367,3 +12367,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: 源は同じビューの不透明の描画の列から引くので、視野の外で GBuffer に描かれない部品・残像（透明）だけの部品からは粒を出さない。BDA を使えない機器・表の無いメッシュ（SURF なし）では SkinSurface は出さない（Bone はパレットだけで出る）。2 回の cook のバイト一致は、手元のスキン付きの glTF の参照 `.bin` が欠けていて実物では測っていない。
 - Notes: 判断: 選定課題 G9-S3（人型のシ者の骨格の出所）はタスクの notes どおり Kimodo の SOMA 版の骨格に合わせる。エンジンは骨格に依らず、`humanoid_v1` のロールの表と骨の組をデータで持つ。SOMA の関節を写す profile（`Assets/Retarget/`）は実物の出力を取り込むときに置く。
 - Notes: 統合ブランチの取り込み（反復 3）: 衝突の 2 つ目の子・屋根の下の子の欄（256〜319）の後にスキンの放出の欄（320〜367）を置き、`GpuEmitterParams` を 368 B にした。`ParticleSpawn.comp` は表面・骨の解決の後に `ClassifyParticleAtPlacement` を通す。確かめ: `cmake --build build --config Debug --target AssetCook Game -- /m:1` 終了コード 0・error の行 0、粒のシェーダー 5 本の `glslc --target-env=vulkan1.3` 終了コード 0。
+- U1 表面の標本の記録の型と NVSKEL role2 の任意節 SURF の読み書き: 着地(直し 0 回)
+- U4 GPU の放出の記述に SkinSurface・Bone の欄と、スキンの源の行と、骨の選び方の道具を足す: 着地(直し 0 回)
+- U5 スキンの表面の点を CPU の SkinPosition と同じ式でスキニングする GLSL の部品: 着地(直し 0 回)
+- U2 取り込み設定の surfaceSamples と、面積に比例して決定的に選ぶ cook: 着地(直し 0 回)
+- U3 読み込みで表を SkinnedMeshAssetLease に持たせ、GPU のバッファへ 1 回だけ上げる: 着地(直し 1 回)
+- U6 放出のシェーダーとシミュレーションのパスで SkinSurface・Bone を出す: 着地(直し 0 回)
+- Done: `GpuEmitterParams`（304 B）に SkinSurface（形 5）・Bone（形 6）の欄、`GpuSkinSource`（96 B）、`GpuParticleEmitterFrame::SkinComponentId`、`humanoid_v1` のロールか骨の組から骨・マスクを決める `GpuSkinEmitter.h` の道具。
