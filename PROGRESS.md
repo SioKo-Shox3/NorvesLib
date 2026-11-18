@@ -12411,3 +12411,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ: 書き換えた行を cmd から回して終了コード 0、同じ形で無い文字列を探すと終了コード 1（判定が効いている）。証拠は `.harness/runs/20261118-080412/verify-GAME-GR137-ASSET-EDIT-WIRE-iter4-line1.txt`。このマシンの `adapter.hpp` の 230・243・255 行目に 3 つの仮想関数がある。ビルドの行の証拠は反復 2 の `GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`（SDK 入りの Debug で `--target Game` 終了コード 0、error の行 0）。
 - Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
 - Notes: 要起票: `GAME-GR137-CAPTURE-WIRE` の verify の 1 行目（TASKS.md 8246 行付近）も `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を直に指しており、このマシンでは PathNotFound で終了コード 1 になる（この項目の反復 2 の再検証と同じ落ち方）。着手前に同じ形（`Join-Path $env:USERPROFILE ...`）に直す。
+
+### GAME-GR137-ASSET-EDIT-WIRE を統合ブランチへ戻す（2026-11-18、run 20261118-113224 の反復 1）
+
+- Done: 実装は変えていない（`afc92c72`・`256b6334` で着地した `BridgeAssetEditProtocol.{h,cpp}` と `NorvesLibBridgeAdapter` の 3 メソッドと能力 `asset.edit` の広告のまま）。統合ブランチでは項目が todo のままで実装が未統合だったので、確かめ直して done に戻した。
+- 確かめ: verify の 1 行目をこのマシンで回して終了コード 0（`.harness/runs/20261118-113224/GAME-GR137-ASSET-EDIT-WIRE-verify1.txt`）。ビルドの行は試験のターゲットを外した `cmake --build build --config Debug --target Game -- /m:1` で終了コード 0、error の行 0（`GAME-GR137-ASSET-EDIT-WIRE-build.txt`）。この枠の `build` は SDK なしの構成なので、アダプタの新しい経路のコンパイルの証拠は run 20261118-080412 の SDK 入りの Debug のビルド（`GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`、終了コード 0）のまま。ctest の行は試験を回さない決まりで回していない。
+- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
