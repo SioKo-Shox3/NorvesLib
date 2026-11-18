@@ -12617,3 +12617,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
 - Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
 - 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。
+
+- U1 UTF-8 の読み書き(Utf8.h/.cpp)を足し、厳密な走査と TextComponent を同じ規則へ寄せる: 着地(直し 0 回)
+- U2 FontFaceCache と、コードポイントの表・フォールバックの face・BuildCpu/Upload を持つ FontAtlas: 着地(直し 1 回)
+
+## 2026-11-18 G15-GR69-UTF8-FONTATLAS（run 20261118-184115 の反復 1、完了）
+- Done: `Text/Utf8.h`（実装 `Private/Text/Utf8.cpp`）に `DecodeUtf8`（不正な先頭バイト・継続バイトの欠落・過長表現・サロゲート・0x10FFFF 超・途中切れは U+FFFD で 1 バイト前進）・`AppendUtf8`（4 バイトまで。符号化は `EncodeJsonUnicodeScalar<char>` を使う）・`IsValidUtf8`・`ForEachUtf8Codepoint` を足した。厳密な 1 文字の読み `Utf8Detail::TryDecodeUtf8Strict` を `TextDetail::ForEachUnicodeScalar` の 1 バイトの枝も使い、表は 1 つだけ。`TextComponent::BuildGlyphBoardProxies` はコードポイントごとに走査する（ASCII の基準線・字間・改行・空白・`\x7F` の '?' は今のまま）。
+- Done: `FontFaceCache`（論理パスごとにブロブを 1 回だけ読む。失敗は覚えない。Mutex で守る）を新設。`FontAtlasDesc` に `Codepoints`（空なら 0x20〜0x7E）・`Faces`（フォールバックの順。空なら `FontLogicalPath`）・`Padding`・`MaxAtlasSize` を足し、字形を整列したコードポイントの表（二分探索）にした。欠落は '?' → U+25A1 → U+FFFD の順。`Build` を `BuildCpu`（GPU に触らない）と `Upload` に分け、`Build` は両方を同期で呼ぶ包み（`FontFaceCache&` を受ける多重定義もある）。幅 0 は 64 から 2 倍ずつ試す自動、上限に収まらなければ false。既定の `FontAtlasDesc{}` は並び・詰め方・幅 512・画素の規則が前と同じ。
+- 証拠: `.harness/runs/20261118-184115/verify-G15-GR69-UTF8-FONTATLAS-U2.txt`（`cmake --build build --config Debug --target Game -- /m:1`。Game.exe を生成して終了コード 0・error の行 0、既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致、新規ファイルは UTF-8 + BOM + CRLF）。
+- 試験: done-when (4) の Utf8Test・FontAtlasTest・TextComponentBoardProxyTest の拡張と verify の ctest の行は、人の決まり（試験を作らない・回さない。対象の試験は TEST-REMOVE-1114 で消してある）により作らず回していない。`Docs/Testing.md` も触っていない。
+- 人が見るときの見どころ: 今のところ日本語を出す画面は無い。既定のフォント（ランチャーと各シーンの ASCII の文字）が前と同じ見た目で出ること。
+- Next: ランナーの評価者の反証（Public API の FontAtlas・TextComponent）。G15-GR69-STRINGTABLE-LAYOUT・G15-GR69-ASYNC-ATLAS が `BuildCpu`/`FontFaceCache` を使う。
+- Notes: 既知の限界: `FontFaceCache` を GEngine に持たせる配線はしていない（`ApplicationProcessor.cpp` の既定のフォントは今の `Build(FontAtlasDesc{}, ...)` のまま、一時のキャッシュで読む）。`Faces` の 1 本でも読めないと焼き全体が失敗する。`Codepoints` を指定したときは代わりの字 '?'・U+25A1・U+FFFD を自動で足す（どの face にも無い字は焼かない）。
