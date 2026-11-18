@@ -12527,3 +12527,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: 実装は変えていない（`afc92c72`・`256b6334` で着地した `BridgeAssetEditProtocol.{h,cpp}` と `NorvesLibBridgeAdapter` の 3 メソッドと能力 `asset.edit` の広告のまま）。統合ブランチでは項目が todo のままで実装が未統合だったので、確かめ直して done に戻した。
 - 確かめ: verify の 1 行目をこのマシンで回して終了コード 0（`.harness/runs/20261118-113224/GAME-GR137-ASSET-EDIT-WIRE-verify1.txt`）。ビルドの行は試験のターゲットを外した `cmake --build build --config Debug --target Game -- /m:1` で終了コード 0、error の行 0（`GAME-GR137-ASSET-EDIT-WIRE-build.txt`）。この枠の `build` は SDK なしの構成なので、アダプタの新しい経路のコンパイルの証拠は run 20261118-080412 の SDK 入りの Debug のビルド（`GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`、終了コード 0）のまま。ctest の行は試験を回さない決まりで回していない。
 - Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
+
+## G12-GR93-EDIT-VIEW ImGui の配置の画面でマーカーを置き・選び・動かし・保存し、持ち場・点・痕跡をデバッグ描画で見る（2026-11-18、run 20261118-113228）
+- Done: `Library/Modules/Gameplay` の `LevelEditOperations`（`Gameplay/Level/LevelEditOperations.h`）: 光線 → 地面の当たり（物理の光線。当たらなければ高さ場を 1 m 刻みと二分 16 回）、種類（持ち場・寝床・ファストトラベル点・見どころ・動物の出現点・痕跡・痕跡の点）を指定した配置（地面 + GroundOffset、吸着の設定で合わせ直す）、Key の重複の拒否と自動の採番（`<種類>_001` から最小の空き番号）、光線での選択（ObjectId で保持）、移動と子の痕跡の点の再吸着、削除、全マーカーの再吸着、Key での検索（領域の外の参照）、マーカーのルートだけを一時ファイル → 置換で保存（SceneSerializer::SaveToFile と同じ壊れない置換）、読み込み（文書を解析できてから既存のマーカーを入れ替える）。持ち場には球の EncounterZone（半径 10 m、センサー無効）を付ける。作ったルートと消す Entity を `ILevelEditEntityOwner` で持ち主へ知らせる。
+- Done: `Game/Gameplay/Level/LevelMarkerDebugDraw`: 持ち場の球・箱・円柱、寝床・ファストトラベル点・見どころ・出現点の印、痕跡の Catmull-Rom のスプラインを、カメラに近い順に、距離（既定 300 m）と、キューの残り・設定の上限（既定 32768 頂点）の小さい方に収めて `DebugDrawQueue` へ描く（`kMaxDebugLineVertices` を超えない）。選択中は白。
+- Done: `Game/Gameplay/Level/LevelEditView`（`IImGuiView`、窓「配置の編集」）: `--imgui` のときだけ `GameApplicationHandler::OnPostInitialize` で `RegisterImGuiView`、`OnPreShutdown` で解除。今のゲームモードの段へ小さな SubRoutine を積んで GameModeContext を借り、ボタンの命令はモードの Tick（PreSimulation）で実行する。置いた・読み込んだルートは `GameModeScope::TrackObject`（モードを出ると消える）、消す前は部分木ごと `Untrack`（`--load-scene` で読んだルートを消しても、モードの終わりに解放済みのポインタを触らない）。保存先の既定は `Assets/Levels/Sample/Gameplay.scene.json`。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた版。`LevelEditOperations.cpp`・`LevelMarkerDebugDraw.cpp`・`LevelEditView.cpp` のコンパイルと `Game.exe` まで）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: ランナーの評価者の反証（危険地帯: Object の寿命。エディタの生成・破棄とゲームモードの追跡）。見本の `Gameplay.scene.json` を作って撮影で確かめるのは G12-GR93-EDIT-CHECK。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when (3) の `LevelEditOperationsTest`・`BridgeAssetPropertyEditTest` のケースと `Test/` の CMake は作っていない。verify の ctest の行は回していない。
+- Notes: 人が見るときの見どころ: `--scene=sandbox --imgui` で窓「配置の編集」を開き、種類を選んで「画面の中心に置く」→ 地面にマーカーの印が出る。痕跡を置いて選んだまま「痕跡の点」を何個か置くと紫のスプライン。「保存」→「読み込み」で同じ配置に戻る。窓の統計の頂点数が 65536 を超えないこと。
+- Notes: 判断: Gameplay.scene.json にはマーカー（LevelMarkerComponent を持つルートとその部分木）だけを保存する（World 全体の SaveToFile は地形なども含むため使わない）。読み込みはマーカーを入れ替える（ファイルを開けない・解析できないときは何も変えない）。痕跡の点にも Key（`trailpoint_NNN`）を付け、吸着は親の痕跡の設定に従う。
+- Notes: 既知の限界: 光線は画面の中心だけ（マウスの位置では置かない）。持ち場の形・半径を編集する欄は無い（球 10 m で置く。箱・円柱は読み込んだ文書の値で描く）。再吸着（ReSnapAll）は物理の光線に頼るので、コライダーの無い高さ場では合わない（配置の光線は高さ場にも当たる）。描画のために毎フレーム World の木をたどる（`--imgui` のときだけ）。
+- U4 退避した配置の編集の操作を当て直し、読み込みの事前解析と Entity の持ち主への通知を足す: 着地(直し 0 回)
+- U5 退避したマーカーのデバッグ描画を当て直す: 着地(直し 0 回)
+- U3 ImGui の配置の画面と --imgui のときだけの登録: 着地(直し 0 回)
