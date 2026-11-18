@@ -1793,7 +1793,10 @@ namespace NorvesLib::Core::Rendering
                 }
                 else if (megaSource)
                 {
-                    m_NextImpostorMegaCrossfadeValues[megaSource->ObjectId] = sourceValue;
+                    // Mega は色味の A で 1/127 刻みに丸まるため、板にも同じ値を渡す。
+                    // 画素ごとの相補を保つため、保存前に同じ丸めを適用する。
+                    m_NextImpostorMegaCrossfadeValues[megaSource->ObjectId] =
+                        DecodeLODCrossfadeFromTint(PackLODCrossfadeIntoTint(0u, sourceValue));
                 }
                 bVisible = true;
             }
