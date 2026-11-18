@@ -21,7 +21,7 @@ namespace NorvesLib::Core::Rendering
     /** @brief 毛皮全体の殻と毛束の値。 */
     struct FurParams
     {
-        uint32_t LayerCount = 16u; ///< 距離段がない場合の殻数（1〜64、既定は 16 枚）。
+        uint32_t LayerCount = 16u; ///< 殻数の上限（1〜64、既定は 16 枚）。段がないときは既定の表をこの値で頭打ちにする。
         float MaxLengthMeters = 0.02f; ///< 毛の最大長（m、有限・0 より大きく 1 以下、既定は 0.02 m）。
         float LengthScale = 1.0f; ///< 毛の長さの倍率（有限・0〜4、既定の 1 は不変）。
         float StrandDensity = 1024.0f; ///< UV 1 あたりのセル数（有限・0 より大きく 65536 以下、既定は 1024）。
@@ -36,7 +36,7 @@ namespace NorvesLib::Core::Rendering
         float AoExponent = 1.0f; ///< 根元から毛先への遮蔽の指数（有限・0 より大きく 16 以下、既定は 1）。
         float Tilt = 0.3f; ///< 毛の傾き（0〜1、0 は法線向き・1 は流れ向き、既定は 0.3）。
         FurLodLevel LodLevels[FurMaxLodLevelCount]; ///< 距離と殻数の段（最大 4 段、既定は全枠未使用）。
-        uint32_t LodLevelCount = 0u; ///< 使用する距離段の数（0〜4、既定の 0 は常に LayerCount を使う）。
+        uint32_t LodLevelCount = 0u; ///< 使用する距離段の数（0〜4、既定の 0 は FurShellLod.h の既定の表を LayerCount で頭打ちにして使う）。
         float WetDarken = 0.0f; ///< 濡れたときの暗化量（0〜1、既定の 0 は不変）。
         float WetDesaturate = 0.0f; ///< 濡れたときの彩度低下量（0〜1、既定の 0 は不変）。
         float WetRoughness = 0.0f; ///< 濡れ切ったときの粗さの減少量（0〜1、既定の 0 は不変）。

@@ -40,6 +40,7 @@ namespace NorvesLib::Core::Rendering
             }
             const uint32_t frameIndex = static_cast<uint32_t>(packet->SkinnedMeshFrameLeases.size());
             packet->SkinnedMeshFrameLeases.push_back(frame);
+            Container::VariableArray<Container::TSharedPtr<const FurMaterialData>> furCopies(proxy.FurSlots.size());
             for (uint32_t index = 0; index < count; ++index)
             {
                 const Skeletal::SkeletalSubMesh implicit{0,static_cast<uint32_t>(asset->GetIndices().size()),0};
@@ -54,6 +55,19 @@ namespace NorvesLib::Core::Rendering
                 command.Draw.VertexOffset = 0;
                 command.Draw.MaterialIndex = submesh.MaterialSlot;
                 command.Draw.MaterialHandle = material;
+                for (size_t slotIndex = 0; slotIndex < proxy.FurSlots.size(); ++slotIndex)
+                {
+                    const SkinnedMeshFurSlot& slot = proxy.FurSlots[slotIndex];
+                    if (slot.Slot == submesh.MaterialSlot && slot.Material == material)
+                    {
+                        if (!furCopies[slotIndex])
+                        {
+                            furCopies[slotIndex] = Container::MakeShared<const FurMaterialData>(slot.Fur);
+                        }
+                        command.Skinned.Fur = furCopies[slotIndex];
+                        break;
+                    }
+                }
                 command.Draw.MaterialBlendMode = BlendMode::Opaque;
                 command.Draw.ObjectId = proxy.ObjectId;
                 command.Draw.SourceMeshComponentId = proxy.ComponentId;

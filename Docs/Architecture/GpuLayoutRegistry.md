@@ -23,13 +23,13 @@ GBuffer の空きチャネルの意味は `Library/Core/Public/Rendering/Shading
 
 `Material.a` と `Emissive.a` は意味のない余白ではなく、登録済みの `P0` / `P1` の枠である。`P0` は UNORM 8 bit、`P1` は半精度 float の制約を受ける。
 
-書き手は `gbuffer.frag`、`megageometry.frag`、`foliage.frag`、`Common/VisibilityResolve.glsl`。それぞれ `GBufferEncodeNormal` / `GBufferEncodeMaterial` / `GBufferEncodeEmissive` を使う。通常のメッシュ・MegaGeometry・可視バッファの解決は材質の ID と `P0` / `P1` を書く。`foliage.frag` は `DefaultLit` と `P0 = P1 = 0` を書く。MegaGeometry のデバッグ表示や、可視バッファで材質を取得できない場合も既定値を書く。`Velocity` はクリップ座標の差から `(currentNdc - previousNdc) * 0.5` で求める。前フレームが無効なら `0`、有効でも前フレームのクリップ座標の w が閾値以下なら「履歴なし」の印を書く。ラスタ経路で現在の w が無効な場合や、通常の速度が NaN または長さの 2 乗が `1e6` 以上の場合も `0` とする。値・条件と読み手の扱いは 13 節に従う。
+書き手は `gbuffer.frag`、`megageometry.frag`、`foliage.frag`、`Common/VisibilityResolve.glsl`、`skinned_fur_gbuffer.frag`。それぞれ `GBufferEncodeNormal` / `GBufferEncodeMaterial` / `GBufferEncodeEmissive` を使う。通常のメッシュ・MegaGeometry・可視バッファの解決は材質の ID と `P0` / `P1` を書く。`foliage.frag` は `DefaultLit` と `P0 = P1 = 0` を書く。MegaGeometry のデバッグ表示や、可視バッファで材質を取得できない場合も既定値を書く。`Velocity` はクリップ座標の差から `(currentNdc - previousNdc) * 0.5` で求める。前フレームが無効なら `0`、有効でも前フレームのクリップ座標の w が閾値以下なら「履歴なし」の印を書く。ラスタ経路で現在の w が無効な場合や、通常の速度が NaN または長さの 2 乗が `1e6` 以上の場合も `0` とする。値・条件と読み手の扱いは 13 節に従う。
 
 ### 材質ごとの GBuffer プログラムのシェーダー契約
 
 プログラムの FS は上の表の 5 枚へ同じ location・形式・意味で出力し、Normal・Material・Emissive は `Common/GBufferEncoding.glsl` の `GBufferEncodeNormal`・`GBufferEncodeMaterial`・`GBufferEncodeEmissive` を通す。標準 FS の本体は `Common/GBufferFragment.glsl` である。
 
-VS と FS は標準の頂点入力と `set 0` の配置を共有する。binding 0 は `MVPData`、1〜6 はアルベド・法線・金属度・粗さ・AO・高さのテクスチャ、7 は静的メッシュのインスタンス表、8〜10 はスキニングの現在行列・頂点・前行列、11 は VT フィードバックの storage buffer、12 は風の環境 UBO `VertexAnimationWindFrame`（頂点のみ）、13 は環境の UBO（14 節。ピクセルのみ）、14 は発光テクスチャ、15 は水たまりの UBO、16 は雨の遮蔽マップ、17 は水たまりの層（14〜17 はいずれもピクセルのみ。水たまりの配置は 16 節）である。風の UBO は GBuffer の 1 回の記録につき 1 つ確保し、各材質の記述子で共有する。FS は GBuffer へ書く前に `ApplyWetSurfaceWithPuddle` を呼び、`DefaultLit` は返り値の水たまりの被覆を `P1` に書く。FS へ渡す location 0〜8 の値と型も標準の `gbuffer.vert` / `skinned_gbuffer.vert` / `Common/GBufferFragment.glsl` に合わせる。独自のスキン VS は `Common/SkinnedVertex.glsl` を include し、標準と同じ binding 8〜10 を読む。
+VS と FS は標準の頂点入力と `set 0` の配置を共有する。ファーの殻の binding 3〜6 は 11 節のとおり読み替える。binding 0 は `MVPData`、1〜6 はアルベド・法線・金属度・粗さ・AO・高さのテクスチャ、7 は静的メッシュのインスタンス表、8〜10 はスキニングの現在行列・頂点・前行列、11 は VT フィードバックの storage buffer、12 は風の環境 UBO `VertexAnimationWindFrame`（頂点のみ）、13 は環境の UBO（14 節。ピクセルのみ）、14 は発光テクスチャ、15 は水たまりの UBO、16 は雨の遮蔽マップ、17 は水たまりの層（14〜17 はいずれもピクセルのみ。水たまりの配置は 16 節）である。風の UBO は GBuffer の 1 回の記録につき 1 つ確保し、各材質の記述子で共有する。標準 FS は GBuffer へ書く前に `ApplyWetSurfaceWithPuddle` を呼び、`DefaultLit` は返り値の水たまりの被覆を `P1` に書く。ファーの殻の FS は環境の濡れを適用しない。FS へ渡す location 0〜8 の値と型も標準の `gbuffer.vert` / `skinned_gbuffer.vert` / `Common/GBufferFragment.glsl` に合わせる。独自のスキン VS は `Common/SkinnedVertex.glsl` を include し、標準と同じ binding 8〜10 を読む。
 
 組み込みのプログラム `Dissolve` は `GBufferProgramRegistry` の構築時に登録する。通常の VS は `gbuffer_dissolve.vert`、スキンの VS は `skinned_gbuffer_dissolve.vert`、FS は `gbuffer_dissolve.frag`。標準の location 0〜8 に加え、VS から FS へ location 9 の `vec3 fragRestPosition`（変形前の局所位置。スキンはバインド姿勢）と location 10 の `float fragDissolveProtect`（保護する骨の重み。静的メッシュは 0）を渡す。ディゾルブの閾値は `P0`（`ShadingParams.x`）で、インスタンス値を優先し、未指定なら材質値を使う。PaleFlat の消滅度と同じ `P0` の欄を使い、専用の閾値欄は増やさない。`P0` が閾値なので、ディゾルブの FS は濡れの感度に `P0` を使わず 1 とする。
 
@@ -62,10 +62,12 @@ CPU の `ShadingModel` から GBuffer の ID への変換は `MaterialTypes.h::T
 | ID | C++ 定数（`GBufferContract`） | GLSL 定数 | 意味 | P0 | P1 |
 |---|---|---|---|---|---|
 | 0 | `ShadingModelDefaultLit` | `GBUFFER_SHADING_MODEL_DEFAULT_LIT` | 標準のライティング | 濡れの感度（`ResolveWetSurfaceResponse`） | 水たまりの被覆 0〜1（書き手が `ApplyWetSurfaceWithPuddle` の返り値を書く。水たまりが無ければ 0） |
-| 1 | `ShadingModelFur` | `GBUFFER_SHADING_MODEL_FUR` | 毛皮 | 濡れ度 | シェルの高さの割合 |
+| 1 | `ShadingModelFur` | `GBUFFER_SHADING_MODEL_FUR` | 毛皮 | 濡れ度 | 流れの角（書いた法線から作る Duff ら 2017 の正規直交基底の上の接線の角を `[0, 1)` で表す） |
 | 2 | `ShadingModelEye` | `GBUFFER_SHADING_MODEL_EYE` | 目 | 湿り（鏡面の強さ） | 未使用 |
 | 3 | `ShadingModelPaleFlat` | `GBUFFER_SHADING_MODEL_PALE_FLAT` | 淡い平坦な面 | 消滅度 | 未使用 |
 | 4〜15 | 予約 | 予約 | 未割当 | 未割当 | 未割当 |
+
+Fur の殻の高さは AO（`Material.b`）に反映する。ただし値は高さそのものではなく、`AoRoot` と `AoExponent` から求めた遮蔽値である。`Emissive.a` は半精度で分解能 `1/2048` ≒ 0.18 度。角の符号化と復号は `Common/FurStrand.glsl` の `FurEncodeFlowAngle`・`FurDecodeFlowTangent` を使う。
 
 ID が 0 でない画素は `lighting.frag` が `Common/ShadingModels.glsl` の `ApplyShadingModelSurface`・`EvaluateShadingModelDirect`・`ShadingModelFinalize` で面・直接光・最終色を描き分け、ニューラル BRDF を使わず解析の式で評価する（検証表示を除く）。照明が P0・P1 のうち現在使う値は Eye の P0（鏡面の強さ）と DefaultLit の P1（水たまりの被覆。空由来の鏡面の遮りに使う）で、他はファーのシェル・濡れ・消滅の段階で使う枠である。PaleFlat は `GBufferEncodeMaterialForShadingModel` で GBuffer に書く時点で粗さ 1・金属度 0 になり、SSR は粗さが終了値以上の画素を棄却するため改造しない（既定の終了値は 0.7）。半透明とパストレーサーは ID を読まない。
 PaleFlat のアルベドは `Color`（リニア RGB）とし、直接光の係数は `mix(max(NdotL, 0) * shadow, mix(WrapMin, 1, clamp(NdotL * 0.5 + 0.5, 0, 1) * mix(1, shadow, ShadowStrength)), Flatness)`（shadow は 0〜1 に補正）とする。
@@ -103,9 +105,9 @@ PaleFlat のアルベドは `Color`（リニア RGB）とし、直接光の係�
 
 ### GBuffer
 
-C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::Execute` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 576u)` と初期化時の `UBO_SIZE = 576` がある。頂点アニメのインスタンス値・時刻、鏡面の AA、頂点アニメの材質の 2 欄、視界の確保の欄は `offsetof` で 368・384・400・416・432・448 バイトを、ディゾルブの欄は 512・528・544・560 バイトを検査する。空きの末尾領域はない。
+C++ は `Library/Core/Private/Rendering/GBufferPass.cpp::GBufferPass::RecordGBufferDraws` 内の `PerObjectUBO`。`static_assert(sizeof(PerObjectUBO) == 576u)` と初期化時の `UBO_SIZE = 576` がある。頂点アニメのインスタンス値・時刻、鏡面の AA、頂点アニメの材質の 2 欄、視界の確保の欄は `offsetof` で 368・384・400・416・432・448 バイトを、ディゾルブの欄は 512・528・544・560 バイトを検査する。空きの末尾領域はない。
 
-GLSL の `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の `MVPData` は先頭 448 バイトを宣言する。`Assets/Shaders/Common/GBufferFragment.glsl`（`gbuffer.frag`・`gbuffer_alphaclip.frag`）は先頭 512 バイトを宣言する。ディゾルブの VS（`gbuffer_dissolve.vert`・`skinned_gbuffer_dissolve.vert`）と FS（`gbuffer_dissolve.frag`）だけが末尾の 64 バイトも含む全 576 バイトを宣言する（VS は視界の確保の 64 バイトを `vec4[4]` で読み飛ばす）。風の材質値を読むのは通常メッシュの頂点シェーダーだけである。`viewClearance` に値を入れるのは `bViewClearanceOccluder` の付いた材質だけで、ほかは全成分 0。読むのは切り抜きの変種（`gbuffer_alphaclip.frag`・`gbuffer_dissolve.frag`）だけで、通常の `gbuffer.frag` は読まない。
+GLSL の `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert` の `MVPData` は先頭 448 バイトを宣言する。`Assets/Shaders/Common/GBufferFragment.glsl`（`gbuffer.frag`・`gbuffer_alphaclip.frag`）は先頭 512 バイトを宣言する。ディゾルブの VS（`gbuffer_dissolve.vert`・`skinned_gbuffer_dissolve.vert`）と FS（`gbuffer_dissolve.frag`）は末尾の 64 バイトも含む全 576 バイトを宣言する（VS は視界の確保の 64 バイトを `vec4[4]` で読み飛ばす）。風の材質値を読むのは通常メッシュの頂点シェーダーだけである。`viewClearance` に値を入れるのは `bViewClearanceOccluder` の付いた材質だけで、ほかは全成分 0。読むのは切り抜きの変種（`gbuffer_alphaclip.frag`・`gbuffer_dissolve.frag`）だけで、通常の `gbuffer.frag` は読まない。
 
 | オフセット | C++ フィールド / 型 | GLSL フィールド / 型 | 意味（ベクトルは x / y / z / w 順） |
 |---|---|---|---|
@@ -119,7 +121,7 @@ GLSL の `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert`
 | 304 | `frameParams: float[4]` | `frameParams: vec4` | 前のカメラ履歴あり（1/0）/ 発光のプリエクスポージャ / sparse（VT）テクスチャあり（1/0）/ アルベドの VT フィードバックパラメータ |
 | 320 | `vtFeedbackParams: float[4]` | `vtFeedbackParams: vec4` | 法線の VT パラメータ / ORM の VT パラメータ / 高さの VT パラメータ / 鏡面のない材質（1/0） |
 | 336 | `shadingParams: float[4]` | `shadingParams: vec4` | 材質の `P0` / `P1` / 予約 / 被覆率の乗数。スキニングはインスタンス値を重ねた値 |
-| 352 | `shadingModel: float[4]` | `shadingModel: vec4` | x = GBuffer のシェーディングモデル ID、yzw = 0 |
+| 352 | `shadingModel: float[4]` | `shadingModel: vec4` | x = GBuffer のシェーディングモデル ID、y = 切り抜きの閾値、z = 切り抜き方式、w = Hash の位相。ファーの殻での値は 11 節 |
 | 368 | `vertexAnimInstanceParams: float[4]` | `vertexAnimInstanceParams: vec4`（頂点側のみ） | 16 バイト。スキンの描画の生の `ShadingParams`（負は未指定のまま）。静的メッシュでは全成分 -1 で、頂点側はインスタンス表を読む |
 | 384 | `vertexAnimTime: float[4]` | `vertexAnimTime: vec4`（頂点側のみ） | 16 バイト。`t` / `tPrev` / 試験の揺れの許可（1/0）/ 0。巻きと量子化は上記の時刻欄の注記に従う |
 | 400 | `specularAAParams: float[4]` | `specularAAParams: vec4`（断片側のみ） | 16 バイト。x = 鏡面の AA の強さ（`SpecularAAStrength`。0 で無効）、y = `NormalScale`、z = 材質のテクスチャの印、w = 予約の 0 |
@@ -130,6 +132,14 @@ GLSL の `Assets/Shaders/gbuffer.vert` と `Assets/Shaders/skinned_gbuffer.vert`
 | 528 | `dissolveSweep: float[4]` | `dissolveSweep: vec4` | xyz = 局所座標の掃引方向、w = 掃引の強さ（`DirectionBias`） |
 | 544 | `dissolveParams: float[4]` | `dissolveParams: vec4` | 有効の印（1/0）/ `NoiseScale` / 縁の幅（`EdgeWidth`）/ ディザの幅（TAA 適用時は 0） |
 | 560 | `dissolveProtectBones: uint32_t[4]` | `dissolveProtectBones: uvec4` | 保護する骨のビット集合 |
+
+ファーの殻だけは先頭の `PerObjectUBO` 576 バイトに次の欄を続け、合計 **1104 バイト**とする。標準の材質は 576 バイトのまま。C++ の合成は `GBufferPass.cpp::GBufferPass::RecordGBufferDraws` 内の `FurPerObjectUBO`、確保は同ファイルの `m_FurUniformAllocator`。`FurShellDrawGpuParams` は `Library/Core/Public/Rendering/FurShellLod.h`、GLSL の全宣言は `Assets/Shaders/Common/FurStrand.glsl::MVPData` にあり、頂点・断片シェーダーが共通で使う。
+
+| オフセット | 大きさ | C++ フィールド / 型 | GLSL フィールド / 型 | 意味 |
+|---|---|---|---|---|
+| 576 | 496 | `Material: FurMaterialGpuParams` | `fur: FurMaterialParams` | 材質の値。内訳は 11 節 |
+| 1072 | 16 | `Draw.Force: float[4]` | `furDrawForce: vec4` | xyz = 世界空間の毛の力、w = 0。現状は xyz も 0 |
+| 1088 | 16 | `Draw.Shell: float[4]` | `furShellParams: vec4` | x = 殻数、y = 最後の殻を残す割合、z = 連続の殻数、w = 皮膚と毛の粗さ |
 
 両経路の `specularAAParams.z` は印を足し合わせた float で、1 は発光テクスチャ、2 は `NormalScale` の適用を表し、シェーダーは `uint(z + 0.5)` で戻す。発光テクスチャが有効かつ nits が正なら 1、`NormalScale != 1` なら 2 を立てる。印が 0 のときは y も 0 のままにし、既定の演算を保つ。
 
@@ -395,7 +405,7 @@ C++ は `LightingPassGpuTypes.h`、GLSL は `LightingParams` の対応欄。全�
 
 1. 変更する枠・型・オフセット・量子化・既定値を先に本表へ登録する。使用中・予約の枠を空きと見なさない。
 2. ID・印・P0・P1 の変更は `ShadingModelIds.h` と `Common/GBufferEncoding.glsl` の定数表・関数を同時に直し、シェーダーと C++ の全書き手・読み手を同じ契約へ揃える。デカールでの値の保持と可視バッファへの書き出しも揃える。
-3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、`Common/SceneInstanceData.glsl` と上記の読み手を揃える。可視バッファの材質表を変更するときは、7 節の C++・GLSL 宣言も揃える。 ファーの材質の定数を変えるときは `FurTypes.h` の `FurMaterialGpuParams`・`PackFurMaterialGpuParams`・`Common/FurMaterialParams.glsl` と 11 節を同時に直す。
+3. UBO の変更は各パスの C++ 構造体・確保サイズ・binding の範囲と、頂点・断片の GLSL 宣言を揃える。既存のサイズの `static_assert` も更新する。`GPUSceneInstanceData` の変更は `MeshTypes.h`、詰める側の `DrawCommand.cpp`・`CanvasView.cpp`・`SceneView.cpp`、`Common/SceneInstanceData.glsl` と上記の読み手を揃える。可視バッファの材質表を変更するときは、7 節の C++・GLSL 宣言も揃える。 ファーの材質の定数を変えるときは `FurTypes.h` の `FurMaterialGpuParams`・`PackFurMaterialGpuParams`・`Common/FurMaterialParams.glsl` と 11 節を同時に直す。ファーの殻の UBO を変えるときは `GBufferPass.cpp` の合成構造体と確保サイズ・`FurShellLod.h`・`Common/FurStrand.glsl` を揃える。
 4. lighting の binding の変更は `lighting.frag`（include 先を含む）と `CreateLightingDescriptorSetDesc`・`ExecuteWithInputs` を同時に直す。GLSL の宣言と C++ の種類・番号・束ねる資源を照合する。
 5. 環境の UBO を変更するときは `EnvironmentGpuParams.h` の C++ 構造体と `static_assert`、`Common/WetSurface.glsl` の構造体、14 節に記載した全書き手の宣言・binding を揃える。
 6. Velocity の「履歴なし」の印の値・判定の境・前フレームの w の閾値を変更するときは、`VelocityContract.h` と `Common/VelocityEncoding.glsl` を同時に直し、全書き手・読み手を 13 節の契約へ揃える。
@@ -603,8 +613,8 @@ C++ は `ShadowMapPass.cpp::PointShadowFaceUBO`、GLSL は `point_shadow.vert::P
 ## 11. ファーの材質の定数とマップ
 
 `ShadingModel::Fur` のときだけ有効な `MaterialResourceData::Fur` を、`FurMaterialGpu.cpp` の `PackFurMaterialGpuParams(fur, wetness)` が std140 の定数にする。
-RenderThread へは `SkinnedMeshProxy::FurSlots` の値の写しで渡し、RenderThread は材質の店の要素を読まない。
-この定数を束ねるパス・binding はまだなく、シェル描画の項目で登録する。
+RenderThread へは `SkinnedMeshProxy::FurSlots` の値の写しで渡し、ファーの値については材質の店を直接読まない。
+スキンの殻描画はこの定数を `GBufferPass.cpp` の `FurPerObjectUBO` に組み込み、set 0 / binding 0 に束ねる。配置は 2 節。
 各行は 16 バイトで、C++ の並びと std140 が一致する。全体は **496 バイト**（112 + 48 × 8）。
 
 ### FurMaterialGpuParams
@@ -631,7 +641,7 @@ C++ は `Library/Core/Public/Rendering/FurTypes.h::FurMaterialGpuParams`、GLSL 
 | +32 | `Wet: float[4]` | `vec4 wet` | x = `WetSusceptibility`、yzw = 空き（0） |
 
 濡れ度はインスタンスの `ShadingParams` の P0（1 節の ID 1）。Pack は `[0, 1]` に収め（負・非有限は 0）、応答 × 濡れ度だけを書き、生の濡れ度は書かない。
-濡れの応答がすべて 0 なら濡れ度に依らず定数は同じで、シェーダーは領域の `wet.x`（C++ の `Wet[0]`）を掛けて使う。
+濡れの応答がすべて 0 なら濡れ度に依らず定数は同じで、シェーダーは領域の `wet.x`（C++ の `Wet[0]`）を掛けて使う。殻の描画のシェーダーは今は `wet.x` と濡れの応答の定数を読まず、濡れ度を `P0` に書くだけで、使うのは照明の項目（`G6-GR34-FUR-LIGHTING`）である。
 領域数が 0 の材質は 1 にして既定の領域を書き、使わない領域の枠も `FurRegion` の既定値で埋める。
 
 ### マップの印
@@ -655,6 +665,19 @@ C++ は `Library/Core/Public/Rendering/FurTypes.h::FurMaterialGpuParams`、GLSL 
 | Flow | RG8 | UV 空間の方向の X の符号化値 | UV 空間の方向の Y の符号化値 | `v = 2 * rg - 1` が UV 空間の向き。ベクトルの長さは整い度で、ミップで縮む。正規化せず長さを強さとして読む |
 | DensityClump | RG8 | 密度の倍率（0 は素肌） | 束の強さの倍率 | 各値を密度・束の強さに掛ける |
 | Region | R8 | 領域 ID の符号化値 | 成分なし | `ID = round(r * 255)`。補間すると別の領域の値になるため `texelFetch` で読み、`FurRegionIndex` で表の外を最後の領域に寄せる |
+
+### 殻の描画での束縛の読み替え
+
+`GBufferPass.cpp` は `set 0` の通常材質用の枠をファーのマップとして読み替える。GR26 が材質ごとのテクスチャの枠を持つまでの暫定である。binding 1 はアルベドのまま。
+
+| binding | 殻の描画で読むマップ | シェーダーの読み方 |
+|---|---|---|
+| 3 | Length | `lengthTexture` の R に領域の長さ倍率とセルの乱数を掛け、殻上の毛の残存を判定する |
+| 4 | Flow | `flowTexture` の RG から接線を作って正規化する。中央付近は向きなしとして扱い、長さは整い度として使わない |
+| 5 | DensityClump | `densityClumpTexture` の R だけをセルの密度に掛ける。G と束の定数は現状未使用 |
+| 6 | Region | `regionTexture` の R を `texelFetch` で読む |
+
+マップを解決できない場合は有効の印を落とし、断片シェーダーが Length = 1、Flow = `(0.5, 0.5)`、DensityClump = `(1, 1)`、Region = 0 として扱う。`shadingModel.y` は切り抜きの閾値 0.5、`.z` は TAA 適用時に Hash、それ以外は Test、`.w` は TAA の位相（TAA なしは 0）。殻 0 以外の細い毛と遠距離の被覆の判定に使う。
 
 ## 12. 世界フィールドの枯れ度の層
 

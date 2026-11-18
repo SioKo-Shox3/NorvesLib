@@ -5371,6 +5371,14 @@ namespace Game
 
     void GameApplicationHandler::OnPostRender()
     {
+#if defined(NORVES_BRIDGE_ENABLED)
+        // EndFrame の後、次の AdvanceFrame の前に撮影を進める。
+        if (m_bBridgeEnabled)
+        {
+            m_BridgeAdapter.TickDeterministicCapture();
+        }
+#endif
+
 #if NORVES_BUILD_DEVELOPMENT
         if (m_M9WorldAcceptance)
         {

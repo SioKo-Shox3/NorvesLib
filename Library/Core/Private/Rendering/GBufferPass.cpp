@@ -15,6 +15,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/DepthConvention.h"
 #include "Rendering/SkinnedLodSelection.h"
+#include "Rendering/FurShellLod.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SparseResidencyShading.h"
 #include "Rendering/SpecularAntiAliasing.h"
@@ -70,13 +71,25 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(binding);
         }
 
+        bool IsFurShellDraw(const DrawCommand& command)
+        {
+            return command.Draw.PayloadKind == DrawPayloadKind::Skinned && command.Skinned.Fur;
+        }
+
+        GBufferProgramId ResolveGBufferProgramOverride(const DrawCommand& command)
+        {
+            return IsFurShellDraw(command) ? MakeGBufferProgramId(FurShellGBufferProgramName)
+                                           : kStandardGBufferProgramId;
+        }
+
         float ResolveGBufferDrawOpacity(const DrawCommand& command)
         {
             return command.Draw.PayloadKind == DrawPayloadKind::Skinned ? command.Skinned.Opacity : 1.0f;
         }
+        // 重ね描きに回す描画: ファーの殻・段の遷移・重ね描きの材質。
         bool IsGBufferOverlayDraw(const DrawCommand& command, const MaterialResourceData* material)
         {
-            return command.Draw.bLodCrossfade ||
+            return IsFurShellDraw(command) || command.Draw.bLodCrossfade ||
                    RequiresGBufferOverlayDraw(material, ResolveGBufferDrawOpacity(command));
         }
     } // namespace
@@ -267,6 +280,12 @@ namespace NorvesLib::Core::Rendering
                 NORVES_LOG_ERROR("GBufferPass", "Failed to initialize DynamicUniformAllocator");
                 return false;
             }
+            if (!m_FurUniformAllocator.Initialize(m_Device, 1104u, uboDescSetDesc))
+            {
+                NORVES_LOG_ERROR("GBufferPass", "ファーの定数アロケータを初期化できませんでした");
+                cleanupFailedInitialization();
+                return false;
+            }
         }
 
         // ========================================
@@ -405,6 +424,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultLinearSampler.reset();
         m_PuddleFieldSampler.reset();
         m_UniformAllocator.Shutdown();
+        m_FurUniformAllocator.Shutdown();
         m_DefaultEnvironmentBuffer.reset();
         m_DefaultPuddleSurfaceBuffer.reset();
         m_SceneView = nullptr;
@@ -736,7 +756,8 @@ namespace NorvesLib::Core::Rendering
                         ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                         : nullptr;
                 GetGBufferPipeline(context, materialData, command.Draw.PayloadKind == DrawPayloadKind::Skinned,
-                                   ResolveGBufferDrawOpacity(command), command.Draw.bLodCrossfade);
+                                   ResolveGBufferDrawOpacity(command), command.Draw.bLodCrossfade,
+                                   ResolveGBufferProgramOverride(command));
             }
             PrepareConstantMaterialTextures(context);
             m_bConstantTexturesPrepared = true;
@@ -765,6 +786,20 @@ namespace NorvesLib::Core::Rendering
             if (!matData || (bOverlayOnly && !IsGBufferOverlayDraw(command, matData)))
             {
                 continue;
+            }
+            if (IsFurShellDraw(command))
+            {
+                bool bWireframe = false;
+#if NORVES_BUILD_DEVELOPMENT
+                bWireframe = context.GetActiveDebugMode() == DebugViewMode::Wireframe;
+#endif
+                GBufferPipelineKey furKey = MakeGBufferPipelineKey(matData, true, bWireframe,
+                                                                    ResolveGBufferDrawOpacity(command));
+                furKey.Program = MakeGBufferProgramId(FurShellGBufferProgramName);
+                if (m_Pipelines.Find(furKey))
+                {
+                    continue;
+                }
             }
             if (matData->Metallic >= 0.0f && !matData->MetallicTexture.IsValid())
             {
@@ -877,7 +912,8 @@ namespace NorvesLib::Core::Rendering
             if (IsGBufferOverlayDraw(command, material))
             {
                 GetGBufferPipeline(context, material, command.Draw.PayloadKind == DrawPayloadKind::Skinned,
-                                   ResolveGBufferDrawOpacity(command), command.Draw.bLodCrossfade);
+                                   ResolveGBufferDrawOpacity(command), command.Draw.bLodCrossfade,
+                                   ResolveGBufferProgramOverride(command));
             }
         }
         PrepareConstantMaterialTextures(context, true);
@@ -988,6 +1024,16 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(PerObjectUBO, dissolveProtectBones) == 560u);
         static_assert(sizeof(PerObjectUBO) == 576u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
+        struct FurPerObjectUBO
+        {
+            PerObjectUBO Object;
+            FurMaterialGpuParams Material;
+            FurShellDrawGpuParams Draw;
+        };
+        static_assert(offsetof(FurPerObjectUBO, Material) == 576u);
+        static_assert(offsetof(FurPerObjectUBO, Draw) == 1072u);
+        static_assert(sizeof(FurPerObjectUBO) == 1104u);
+
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
         float projData[16];
@@ -1077,7 +1123,8 @@ namespace NorvesLib::Core::Rendering
         auto BuildMaterialDescriptor = [&](const DrawCommand& command) -> RHI::DescriptorSetPtr
         {
             const uint64_t materialKey = command.Draw.MaterialHandle.Id;
-            auto allocation = m_UniformAllocator.Allocate(context.FrameResources);
+            const bool bFurShell = IsFurShellDraw(command);
+            auto allocation = (bFurShell ? m_FurUniformAllocator : m_UniformAllocator).Allocate(context.FrameResources);
             if (!allocation.UniformBuffer)
             {
                 return nullptr;
@@ -1221,7 +1268,7 @@ namespace NorvesLib::Core::Rendering
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
             // ORM は metallic の枠に張り、シェーダーへフラグで伝える（descriptor の binding は増やさない）。
             // texture が解決できないときは別々の枠（既定値）の経路へ落とす。
-            RHI::TexturePtr ormTex = ResolveTexture(matORM, nullptr);
+            RHI::TexturePtr ormTex = bFurShell ? nullptr : ResolveTexture(matORM, nullptr);
             uboData.pomParams[2] = ormTex ? 1.0f : 0.0f;
             uboData.pomParams[3] = bMatNormalTwoChannel ? 1.0f : 0.0f;
 
@@ -1229,7 +1276,7 @@ namespace NorvesLib::Core::Rendering
             RHI::TexturePtr normalTex = ResolveTexture(matNormal, m_DefaultFlatNormalTexture);
             // テクスチャが無く材質のスカラー値があるときは、その値の 1x1 テクスチャを既定値の代わりに使う。
             RHI::TexturePtr metallicDefault = m_DefaultBlackTexture;
-            if (matMetallicValue >= 0.0f && !matMetallic.IsValid())
+            if (!bFurShell && matMetallicValue >= 0.0f && !matMetallic.IsValid())
             {
                 if (RHI::TexturePtr constantTexture = GetOrCreateConstantGrayTexture(matMetallicValue))
                 {
@@ -1237,16 +1284,34 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             RHI::TexturePtr roughnessDefault = m_DefaultMidGrayTexture;
-            if (matRoughnessValue >= 0.0f && !matRoughness.IsValid())
+            if (!bFurShell && matRoughnessValue >= 0.0f && !matRoughness.IsValid())
             {
                 if (RHI::TexturePtr constantTexture = GetOrCreateConstantGrayTexture(matRoughnessValue))
                 {
                     roughnessDefault = constantTexture;
                 }
             }
-            RHI::TexturePtr metallicTex = ResolveTexture(matMetallic, metallicDefault);
-            RHI::TexturePtr roughnessTex = ResolveTexture(matRoughness, roughnessDefault);
-            RHI::TexturePtr aoTex = ResolveTexture(matAO, m_DefaultWhiteTexture);
+            // テクスチャの読み替えは GR26 が材質ごとのテクスチャの枠を持つまでの暫定。
+            uint32_t furMapMask = 0u;
+            const auto ResolveFurTexture = [&](TextureHandle handle, uint32_t mask,
+                                                const RHI::TexturePtr& defaultTexture) -> RHI::TexturePtr
+            {
+                if (RHI::TexturePtr texture = ResolveTexture(handle, nullptr))
+                {
+                    furMapMask |= mask;
+                    return texture;
+                }
+                return defaultTexture;
+            };
+            RHI::TexturePtr metallicTex = bFurShell
+                ? ResolveFurTexture(command.Skinned.Fur->Maps.Length, FurMapMaskLength, metallicDefault)
+                : ResolveTexture(matMetallic, metallicDefault);
+            RHI::TexturePtr roughnessTex = bFurShell
+                ? ResolveFurTexture(command.Skinned.Fur->Maps.Flow, FurMapMaskFlow, roughnessDefault)
+                : ResolveTexture(matRoughness, roughnessDefault);
+            RHI::TexturePtr aoTex = bFurShell
+                ? ResolveFurTexture(command.Skinned.Fur->Maps.DensityClump, FurMapMaskDensityClump, m_DefaultWhiteTexture)
+                : ResolveTexture(matAO, m_DefaultWhiteTexture);
             if (ormTex)
             {
                 // シェーダーは ORM のとき metallic の枠だけを読むが、descriptor の3枠は同じ texture で埋める。
@@ -1254,7 +1319,9 @@ namespace NorvesLib::Core::Rendering
                 roughnessTex = ormTex;
                 aoTex = ormTex;
             }
-            RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
+            RHI::TexturePtr heightTex = bFurShell
+                ? ResolveFurTexture(command.Skinned.Fur->Maps.Region, FurMapMaskRegion, m_DefaultBlackTexture)
+                : ResolveTexture(matHeight, m_DefaultBlackTexture);
             RHI::TexturePtr emissiveTex = ResolveTexture(matEmissive, m_DefaultWhiteTexture);
 
             // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
@@ -1271,7 +1338,36 @@ namespace NorvesLib::Core::Rendering
             uboData.vtFeedbackParams[2] = static_cast<float>(
                 ResolveVirtualTextureFeedbackParam(textures, matHeight, heightTex.get(), feedbackTarget));
             uboData.vtFeedbackParams[3] = bMatDiffuseOnly ? 1.0f : 0.0f;
-            allocation.Write(&uboData, sizeof(PerObjectUBO));
+            if (bFurShell)
+            {
+                uboData.pomParams[0] = 0.0f;
+                uboData.pomParams[1] = 0.0f;
+                uboData.shadingModel[0] = static_cast<float>(ToGBufferShadingModelId(ShadingModel::Fur));
+                uboData.shadingModel[1] = 0.5f;
+                uboData.shadingModel[2] = static_cast<float>(context.bTemporalAAApplied ? GBufferAlphaClip::Hash
+                                                                                     : GBufferAlphaClip::Test);
+                uboData.shadingModel[3] = static_cast<float>(context.bTemporalAAApplied ? context.TemporalAAJitterIndex : 0u);
+                // ファーのフィードバックはアルベドだけ。ほかの枠はファー専用のマップとして読む。
+                uboData.vtFeedbackParams[0] = 0.0f;
+                uboData.vtFeedbackParams[1] = 0.0f;
+                uboData.vtFeedbackParams[2] = 0.0f;
+                uboData.vtFeedbackParams[3] = 0.0f;
+                FurPerObjectUBO furUbo{};
+                furUbo.Object = uboData;
+                furUbo.Material = PackFurMaterialGpuParams(*command.Skinned.Fur,
+                                                          std::max(uboData.shadingParams[0], 0.0f));
+                // 解決できなかったマップは、既定テクスチャを束縛しても有効の印を立てない。
+                furUbo.Material.Counts[2] &= furMapMask;
+                furUbo.Draw.Shell[0] = static_cast<float>(command.Skinned.ShellCount);
+                furUbo.Draw.Shell[1] = command.Skinned.LastShellFraction;
+                furUbo.Draw.Shell[2] = static_cast<float>(command.Skinned.ShellCount - 1u) + command.Skinned.LastShellFraction;
+                furUbo.Draw.Shell[3] = matRoughnessValue >= 0.0f ? matRoughnessValue : 0.5f;
+                allocation.Write(&furUbo, sizeof(furUbo));
+            }
+            else
+            {
+                allocation.Write(&uboData, sizeof(PerObjectUBO));
+            }
 
             allocation.DescriptorSet->BindTexture(1, albedoTex);
             allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
@@ -1362,8 +1458,9 @@ namespace NorvesLib::Core::Rendering
                     materials && cmd.Draw.MaterialHandle.IsValid() ? materials->GetData(cmd.Draw.MaterialHandle) : nullptr;
                 const float opacity = ResolveGBufferDrawOpacity(cmd);
                 const bool bOverlayMaterial =
-                    (m_SceneView || selection == DrawSelection::OverlayOnly || IsSkinnedGhostOpacity(opacity) ||
-                     cmd.Draw.bLodCrossfade) && IsGBufferOverlayDraw(cmd, materialData);
+                    IsFurShellDraw(cmd) ||
+                    ((m_SceneView || selection == DrawSelection::OverlayOnly || IsSkinnedGhostOpacity(opacity) ||
+                      cmd.Draw.bLodCrossfade) && IsGBufferOverlayDraw(cmd, materialData));
                 if (bOverlayMaterial != (overlayPass == 1))
                 {
                     continue;
@@ -1373,14 +1470,38 @@ namespace NorvesLib::Core::Rendering
                 const bool bSkinned = cmd.Draw.PayloadKind == DrawPayloadKind::Skinned;
                 if (bSkinned)
                 {
-                    // 姿勢の AnimatedBounds を WorldTransform で変換した保守的な境界で、主カメラの視錐台外を省く。
-                    if (!IsSkinnedDrawInView(cmd, skinnedViewFrustum))
+                    // ファーは世界の境界を毛の最大長だけ広げ、体の面が視錐台外でも殻が見えれば残す。
+                    Vector3 furCenter = cmd.Draw.WorldMatrix.GetTranslationRow();
+                    if (IsFurShellDraw(cmd) && cmd.Skinned.bHasLocalBounds)
+                    {
+                        AABB worldBounds;
+                        if (ComputeSkinnedWorldBounds(cmd.Skinned.LocalBounds, cmd.Draw.WorldMatrix, worldBounds))
+                        {
+                            furCenter = worldBounds.Center();
+                            const float length = ComputeFurMaxShellLengthMeters(*cmd.Skinned.Fur);
+                            const Vector3 expansion(length, length, length);
+                            worldBounds.Min -= expansion;
+                            worldBounds.Max += expansion;
+                            if (!IsSkinnedBoundsInView(worldBounds, Matrix4x4::Identity, skinnedViewFrustum))
+                            {
+                                continue;
+                            }
+                        }
+                    }
+                    else if (!IsSkinnedDrawInView(cmd, skinnedViewFrustum))
                     {
                         continue;
                     }
                     if (!TryPrepareSkinnedCommand(context, cmd, drawCommand))
                     {
                         continue;
+                    }
+                    if (IsFurShellDraw(drawCommand))
+                    {
+                        const float distance = (furCenter - Vector3(cameraPos[0], cameraPos[1], cameraPos[2])).Length();
+                        const FurShellSelection shells = SelectFurShells(drawCommand.Skinned.Fur->Params, distance);
+                        drawCommand.Skinned.ShellCount = shells.ShellCount;
+                        drawCommand.Skinned.LastShellFraction = shells.LastShellFraction;
                     }
                 }
                 else
@@ -1979,9 +2100,9 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    bool GBufferPass::PrepareProgramShaders(const ViewRenderContext& context, const MaterialResourceData& material)
+    bool GBufferPass::PrepareProgramShaders(const ViewRenderContext& context, GBufferProgramId id,
+                                             const MaterialResourceData* material)
     {
-        const GBufferProgramId id = material.ProgramId;
         const auto found = m_ProgramShaders.find(id);
         if (found != m_ProgramShaders.end())
         {
@@ -2014,15 +2135,20 @@ namespace NorvesLib::Core::Rendering
         if (!bValid && m_WarnedPrograms.emplace(id, true).second)
         {
             NORVES_LOG_WARNING("GBufferPass", "プログラム '%s' を読み込めないため標準で描画します (id=%u)",
-                               desc ? desc->Name.c_str() : material.Program.c_str(), id);
+                               desc ? desc->Name.c_str() : (material ? material->Program.c_str() : ""), id);
         }
         return bValid;
     }
 
     RHI::PipelinePtr GBufferPass::GetGBufferPipeline(const ViewRenderContext& context,
                                                      const MaterialResourceData* material,
-                                                     bool bSkinned, float opacity, bool bLodCrossfade)
+                                                     bool bSkinned, float opacity, bool bLodCrossfade,
+                                                     GBufferProgramId programOverride, bool* outUsingProgramOverride)
     {
+        if (outUsingProgramOverride)
+        {
+            *outUsingProgramOverride = false;
+        }
         if (!AreGBufferResourcesReady())
         {
             return nullptr;
@@ -2032,7 +2158,13 @@ namespace NorvesLib::Core::Rendering
 #if NORVES_BUILD_DEVELOPMENT
         bWireframe = context.GetActiveDebugMode() == DebugViewMode::Wireframe;
 #endif
-        GBufferPipelineKey key = MakeGBufferPipelineKey(m_SceneView ? material : nullptr, bSkinned, bWireframe, opacity);
+        GBufferPipelineKey key = MakeGBufferPipelineKey(
+            m_SceneView || programOverride != kStandardGBufferProgramId ? material : nullptr,
+            bSkinned, bWireframe, opacity);
+        if (programOverride != kStandardGBufferProgramId)
+        {
+            key.Program = programOverride;
+        }
         if (bLodCrossfade && key.Program == kStandardGBufferProgramId && !key.bAlphaClip)
         {
             key.bLodCrossfade = true;
@@ -2055,10 +2187,14 @@ namespace NorvesLib::Core::Rendering
                 key.bLodCrossfade = false;
                 pipeline = m_Pipelines.Find(key);
             }
+            if (outUsingProgramOverride)
+            {
+                *outUsingProgramOverride = pipeline && key.Program == programOverride;
+            }
             return pipeline;
         }
 
-        if (key.Program != kStandardGBufferProgramId && !PrepareProgramShaders(context, *material))
+        if (key.Program != kStandardGBufferProgramId && !PrepareProgramShaders(context, key.Program, material))
         {
             key.Program = kStandardGBufferProgramId;
         }
@@ -2098,6 +2234,10 @@ namespace NorvesLib::Core::Rendering
         {
             key.bLodCrossfade = false;
             pipeline = getOrCreate(key);
+        }
+        if (outUsingProgramOverride)
+        {
+            *outUsingProgramOverride = pipeline && key.Program == programOverride;
         }
         return pipeline;
     }
@@ -2300,7 +2440,16 @@ namespace NorvesLib::Core::Rendering
             context.Resources.Materials && source.Draw.MaterialHandle.IsValid()
                 ? context.Resources.Materials->GetData(source.Draw.MaterialHandle)
                 : nullptr;
-        outCommand.Pipeline = GetGBufferPipeline(context, material, true, source.Skinned.Opacity);
+        bool bUsingFurProgram = false;
+        outCommand.Pipeline = GetGBufferPipeline(context, material, true, source.Skinned.Opacity, false,
+                                                 ResolveGBufferProgramOverride(source), &bUsingFurProgram);
+        // 殻数は GBuffer の写しだけに設定する。標準へ落ちたときは体の面の UBO と束縛へ戻す。
+        outCommand.Skinned.ShellCount = 1u;
+        outCommand.Skinned.LastShellFraction = 1.0f;
+        if (IsFurShellDraw(source) && !bUsingFurProgram)
+        {
+            outCommand.Skinned.Fur.reset();
+        }
         return true;
     }
 

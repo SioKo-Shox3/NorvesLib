@@ -129,7 +129,7 @@ namespace Game::Bridge
     NorvesLib::Core::Container::String ValidateBridgeDeterministicCaptureRequest(
         const BridgeDeterministicCaptureRequest& request)
     {
-        if (request.SettleFrames < 1 || request.SettleFrames > 600)
+        if (request.SettleFrames > 600)
         {
             return "invalid_settle_frames";
         }

@@ -8042,7 +8042,7 @@
 - notes: マップの組は G6-S4（G6-GR91-FUR-MATERIAL-DATA の notes）の 4 枚。置き場は G6-S1（`Scripts/Blender/`。ロードマップ 1404 行の DogGame/art/generator ではない）。入力は G6-GR103-BLENDER-STAGES が張り直した土台メッシュ（UV0 が重ならない・アーマチュアとウェイト付き）で、提案『共通の土台を張り直す』を採る（G6-S3）ので、手描きの補正マスクは AI の再生成をまたいで効く（ロードマップ 1432 行）。頂点カラーの代わりの道（要件 GR91 (2) の 3 つめ）は Blender の中で頂点カラーを UV へ焼いて同じ 4 枚にするだけで、エンジンの頂点の ABI（Mesh3DVertex 32B・SkinnedMeshVertex 64B）は変えない。Blender 5.2.2 の同梱の Python に numpy 2.3.4 がある（`Y:/AI/blender/blender-5.2.2-windows-x64/5.2/python/lib/site-packages/numpy`。ロードマップ 1519 行の「要確認」はこれで解ける）。通常の Python の numpy は `Scripts/BakeAcesOutputLut.py` などの前例に合わせる。UniRig の骨格は 14 関節と粗く、骨の向きだけでは四肢の先と顔の流れが足りない（ロードマップ 1515 行）ので、設定の領域の表と補正マスクで補う前提にする。流れの RG8 は正規化しないで長さを整い度として読む（ミップの平均で縮む。ロードマップ 1390 行）ので、焼く値は単位長さで書く。この項目は Blender を起動しない（fur_flow.py を Blender で回すのは G6-GR91-FUR-MAPS-CHECK）。試験を足す理由: UV の向き（V の反転・鏡映・島の回転）の取り違えは毛が逆向きに流れるだけで、エラーもログも出ず、黙って起きる（ロードマップ 1516 行）。`Docs/Architecture/FurMaps.md`（新規）にマップの規約・設定 JSON の欄・出力の形を書く。ロードマップ 1398・1402〜1422・1485 行、要件 `#### GR91`。
 
 ## G6-GR34-SHELL-PASS: スキン済みの体の Fur の材質の部分だけを、同じ頂点・同じパレットで N 枚の殻としてインスタンス描画で GBuffer へ重ね、毛の判定・毛先の細り・自己遮蔽の AO・距離による殻数の LOD を入れる
-- status: todo
+- status: done
 - after: G6-GR91-FUR-MATERIAL-DATA, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR34
 - needs-gr: GR26, GR27, GR30, GR32
@@ -8215,7 +8215,7 @@
 - notes: SDK の仮想関数 `assetGetProperties`・`assetSetProperty`・`assetSave` は、今は NorvesEditor のブランチ `task/E4-001`(7537f47)にしかない。E4-001 は blocked で、統合ブランチにはまだ入っていない。NorvesLib のビルドが読む `NORVES_BRIDGE_SDK_DIR`(NorvesEditor のメインの作業ツリー)にこの口が無いうちは verify の 1 行目が落ちる。その場合は NorvesEditor を書き換えず、理由を書いてこのタスクを blocked にする。E4-001 が統合された後で todo に戻す。線の上の名前は `Docs/Plans/GameFeatureRoadmap.md` の GR137 の節に合わせる。Bridge のプロトコルの境界なので評価者を通す。
 
 ## GAME-GR137-CAPTURE-WIRE: NorvesLibBridgeAdapter に決定的な撮影(`viewport.captureDeterministic` と完了イベント `viewport.captureCompleted`)をつなぎ、能力 `viewport.capture` を広告する
-- status: todo
+- status: done
 - done-when: SDK の `IBridgeEngineAdapter` に入った `viewportCaptureDeterministic` を `NorvesLibBridgeAdapter` で上書きする。線の上のメソッド名・欄・エラーコードは、NorvesEditor の `bridge/spec/schema` にある `viewport.captureDeterministic` と `viewport.captureCompleted` の定義に合わせる。
 
   **(1) 受け付け**
@@ -8242,7 +8242,7 @@
     - 撮影中の 2 件目が拒否される。
     - 完了イベントの captureId が受け付けの応答と一致する。
     - 時間切れが理由付きの完了イベントになり、残った結果が次の撮影へ漏れない。
-- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path 'C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp' -Pattern 'viewportCaptureDeterministic' -Quiet)) { exit 1 }"`
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path 'C:/Users/oreor/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp' -Pattern 'viewportCaptureDeterministic' -Quiet)) { exit 1 }"`
 - verify: `cmake --build build --config Debug --target Game BridgeCaptureProtocolTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^BridgeCaptureProtocolTest$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Game/Bridge/NorvesLibBridgeAdapter.h, Game/Bridge/NorvesLibBridgeAdapter.cpp, Game/Bridge/BridgeDeterministicCapture.h, Game/Bridge/BridgeDeterministicCapture.cpp, Game/Bridge/BridgeCaptureProtocol.h, Game/Bridge/BridgeCaptureProtocol.cpp, Game/GameApplicationHandler.h, Game/GameApplicationHandler.cpp, Game/CMakeLists.txt, Test/Game/Bridge/BridgeCaptureProtocolTest.cpp, Test/Game/Bridge/CMakeLists.txt
