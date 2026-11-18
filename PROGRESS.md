@@ -12541,3 +12541,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 退避した配置の編集の操作を当て直し、読み込みの事前解析と Entity の持ち主への通知を足す: 着地(直し 0 回)
 - U5 退避したマーカーのデバッグ描画を当て直す: 着地(直し 0 回)
 - U3 ImGui の配置の画面と --imgui のときだけの登録: 着地(直し 0 回)
+
+- U1 シーンの読み込みを「読み・解析」「スキーマ照合」「ルート 1 つずつの生成」の 3 段に分ける: 着地(直し 2 回)
+- U2 payload の種類 `scene` とそのハンドラーを足す: 着地(直し 0 回)
+- Done（2026-11-18、run 20261118-124726 の反復 1）: `SceneSerializer` のシーン読み込みを 3 段に分けた。(a) ワーカーで呼べる `ReadDocumentFromFile`・`ReadDocumentFromAsset`（読みと JSON の構造の解析。World・ClassRegistry・TypeRegistry に触れない）、(b) GameThread の `BeginSpawn`（版 1・2 の移行と物理量の検証、`ReconcileWithSchema` 相当の照合、一時の ResourceRegistry を持つ `SceneSpawnJob` を作る）、(c) `SpawnNextRoot`（ルートを 1 つだけ生成し、最後のルートの後に EntityRefId を張り替える）と `CancelSpawn`（完了前に生成したルートを World から消す）。`LoadIntoWorld`・`LoadIntoWorldFromAsset` は (a)→(b)→(c) を順に回す形にし、統計・戻り値・ルートの順・ログの文言を変えていない。フレームをまたぐので、生成物は生ポインタでなく Entity の ObjectId と Component の ComponentId で控え、張り替えのときに World から引き直す。
+- Done（同）: セルの payload の種類 `scene`（`kScenePayloadKind`）と `ScenePayloadHandler`（`WorldPayloadHandlers`）を足した。Prepare（ワーカー）で `ReadDocumentFromAsset` し、準備済みの文書を排他つきの表に置く。CommitStep の最初の歩で `BeginSpawn`、以後の歩で `SetRootsPerStep`（既定 1）ぶん `SpawnNextRoot` を進める。セルが生成したルートの ObjectId を持ち（シーンのルートは `LoadIntoWorld` と同じく World のルートのまま）、休眠はルートの `SetActive`、解放は生成の途中なら `CancelSpawn`、済んでいればルートの `RemoveEntity` を予算ごとに行う。GameModeScope の `TrackStreaming` の Cleanup（StopAndJoin）でルートが消え、Component の資産の束縛も外れる。
+- Notes: `TryParseJson` は版 1・2 の移行と物理量の検証で ClassRegistry・TypeRegistry を引くので、ワーカーでは構造の解析（`ParseSceneDocumentStructure`）だけを行い、移行と検証（`FinalizeSceneDocument`）は `BeginSpawn` の頭で GameThread に回した。`TryParseJson` 自体の振る舞いは変えていない。資産パスの検証の `Identity` は排他つきの IdentityPool なのでワーカーから作ってよい。
+- Notes: done-when の `StreamingScenePayloadTest` は絶対規則 11 に従って作っていない。`SceneSerializerTest`・`SceneFileRoundTripTest`・`StreamingPayloadTest`・`StreamingCellStateMachineTest` はこのブランチに無く回していない。確かめは `cmake --build build --config Debug --target Game -- /m:1` の終了コード 0（`.harness/runs/20261118-124726/G12-GR40-SCENE-PAYLOAD-U2-verify.txt`）。
+- Next: Game のどのモードも `ScenePayloadHandler` をまだ登録していない。セルのマニフェストに `{"kind": "scene", "logicalPath": ...}` を書くモードが登録するときに、World と AssetSystem をハンドラーより長く生かし、`TrackStreaming` でモードの終わりにセルを外す。
