@@ -7930,7 +7930,7 @@
 - notes: 設計はロードマップ 2316 行（GR92 の設計 5）と 2320 行（マップの規模が未決の扱い）。今のコードの事実: `PrefabAsset` は `Resource` の派生（`Library/Core/Public/Object/PrefabAsset.h:39`）で、入れ子の番号は `m_NextNestedInstanceId`（同 65 行、採番は `PrefabAsset.cpp:407-413`）、循環の検査は `WouldCreateNestedPrefabCycle`（`PrefabAsset.cpp:140`、使う所は 402 行）にあり、ファイルの形式は無い。入れ子の instanceId の採番規則はファイルの往復で変えない（ロードマップ 2753 行のリスク）。谷ひとつ（全域常駐）でもオープン規模でも同じ形式にし、領域の出し入れ（読み込み・解放）は GR40（G12 前半）に任せる。AssetKind は増やさない（Raw の JSON）。Object/Resource の寿命と資産の読み込みの危険地帯なので評価者を通す。共有のファイル（`GameApplicationHandler.cpp`・`SceneCatalog.h`）は `--load-scene` の引数の読み取りと分岐だけを足して差分を小さくする。やらないこと: 領域のストリーミング（GR40）、Bridge（G12-GR92-BRIDGE-SCENE）、エディタの画面。
 
 ## G12-GR92-BRIDGE-SCENE: Bridge の向こうのエンジンの側に、シーンの保存・読み込み、クラスを指定した Entity の生成、Component の追加と全 Component のプロパティの設定を置く
-- status: todo
+- status: done
 - after: G12-GR92-ASSET-BIND, G12-GR92-PREFAB-FILE
 - gr: GR92
 - done-when: (1) Bridge SDK に依存しない部品 `Game/Bridge/BridgeSceneDocumentService.{h,cpp}`（`BridgeAssetPropertyEditor` と同じ置き方）が、シーンの保存・読み込み（`SaveToFile` / `LoadIntoWorld` につなぐだけ。資産の根 `Assets` の下の論理パスだけを開き、絶対パスと `..` と根の外は拒否して理由のコードを返す）、クラス名を指定した Entity の生成（`ClassRegistry` の FindClass → NewInstance。World に `SpawnEntityOfClass` を足す）、Component の追加、ScriptComponent に限らず全 Component のプロパティの設定と取得（設定の後に `OnPropertyApplied` を呼ぶ）を持つ。(2) `NorvesLibBridgeAdapter` は、SDK に既にある口だけをこの部品へつなぐ: `sceneCreateObject` の kind（今は無視している）、`objectSetProperty` / `objectGetSnapshot` を全 Component へ、`WireJsonToSerialized` に enum（整数）を足す。(3) 試験: `BridgeAssetPropertyEditTest` の実行ファイルに `BridgeSceneDocumentService` と場面の文書のケースのソースを足し（実行ファイルを増やさない）、クラス名を指定して Component 付きの Entity を作る・Component を足す・AssetRef（文字列）と enum を設定して取得した値が往復で一致する・保存 → 読み込みで Entity・Component・プロパティの数が一致する・根の外の論理パスを拒否する、を確かめる。`Game` が NORVES_BRIDGE_SDK_DIR の構成でビルドでき、既存の `BridgeAssetPropertyEditTest` のケースが通る。
@@ -7975,7 +7975,7 @@
 - notes: 要件 `#### GR93` の受け入れ確認の「実機」「実データの検証」（ロードマップ 2641・2642 行）。見本の `Gameplay.scene.json` は G12-GR93-EDIT-VIEW の保存で作ってよい。`validate_level.py` の引数の名前と地形のソースの指定は G12-GR93-VALIDATE で決めた形に合わせて直してよい。撮影を開いて目で確かめる。違ったら G12-GR93-EDIT-VIEW・G12-GR93-VALIDATE の paths の範囲で直す。
 
 ## G12-GR48-CROSSFADE: メッシュの LOD の間とメッシュ↔インポスターの切り替えを、相補の画面ドアのディザでつなぎ、ポッピングを出さない
-- status: todo
+- status: done
 - after: G12-GR48-IMPOSTOR-GBUFFER, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW
 - gr: GR48
 - needs-gr: GR27
@@ -8042,7 +8042,7 @@
 - notes: マップの組は G6-S4（G6-GR91-FUR-MATERIAL-DATA の notes）の 4 枚。置き場は G6-S1（`Scripts/Blender/`。ロードマップ 1404 行の DogGame/art/generator ではない）。入力は G6-GR103-BLENDER-STAGES が張り直した土台メッシュ（UV0 が重ならない・アーマチュアとウェイト付き）で、提案『共通の土台を張り直す』を採る（G6-S3）ので、手描きの補正マスクは AI の再生成をまたいで効く（ロードマップ 1432 行）。頂点カラーの代わりの道（要件 GR91 (2) の 3 つめ）は Blender の中で頂点カラーを UV へ焼いて同じ 4 枚にするだけで、エンジンの頂点の ABI（Mesh3DVertex 32B・SkinnedMeshVertex 64B）は変えない。Blender 5.2.2 の同梱の Python に numpy 2.3.4 がある（`Y:/AI/blender/blender-5.2.2-windows-x64/5.2/python/lib/site-packages/numpy`。ロードマップ 1519 行の「要確認」はこれで解ける）。通常の Python の numpy は `Scripts/BakeAcesOutputLut.py` などの前例に合わせる。UniRig の骨格は 14 関節と粗く、骨の向きだけでは四肢の先と顔の流れが足りない（ロードマップ 1515 行）ので、設定の領域の表と補正マスクで補う前提にする。流れの RG8 は正規化しないで長さを整い度として読む（ミップの平均で縮む。ロードマップ 1390 行）ので、焼く値は単位長さで書く。この項目は Blender を起動しない（fur_flow.py を Blender で回すのは G6-GR91-FUR-MAPS-CHECK）。試験を足す理由: UV の向き（V の反転・鏡映・島の回転）の取り違えは毛が逆向きに流れるだけで、エラーもログも出ず、黙って起きる（ロードマップ 1516 行）。`Docs/Architecture/FurMaps.md`（新規）にマップの規約・設定 JSON の欄・出力の形を書く。ロードマップ 1398・1402〜1422・1485 行、要件 `#### GR91`。
 
 ## G6-GR34-SHELL-PASS: スキン済みの体の Fur の材質の部分だけを、同じ頂点・同じパレットで N 枚の殻としてインスタンス描画で GBuffer へ重ね、毛の判定・毛先の細り・自己遮蔽の AO・距離による殻数の LOD を入れる
-- status: todo
+- status: done
 - after: G6-GR91-FUR-MATERIAL-DATA, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW, G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR34
 - needs-gr: GR26, GR27, GR30, GR32
@@ -8215,7 +8215,7 @@
 - notes: SDK の仮想関数 `assetGetProperties`・`assetSetProperty`・`assetSave` は、今は NorvesEditor のブランチ `task/E4-001`(7537f47)にしかない。E4-001 は blocked で、統合ブランチにはまだ入っていない。NorvesLib のビルドが読む `NORVES_BRIDGE_SDK_DIR`(NorvesEditor のメインの作業ツリー)にこの口が無いうちは verify の 1 行目が落ちる。その場合は NorvesEditor を書き換えず、理由を書いてこのタスクを blocked にする。E4-001 が統合された後で todo に戻す。線の上の名前は `Docs/Plans/GameFeatureRoadmap.md` の GR137 の節に合わせる。Bridge のプロトコルの境界なので評価者を通す。
 
 ## GAME-GR137-CAPTURE-WIRE: NorvesLibBridgeAdapter に決定的な撮影(`viewport.captureDeterministic` と完了イベント `viewport.captureCompleted`)をつなぎ、能力 `viewport.capture` を広告する
-- status: todo
+- status: done
 - done-when: SDK の `IBridgeEngineAdapter` に入った `viewportCaptureDeterministic` を `NorvesLibBridgeAdapter` で上書きする。線の上のメソッド名・欄・エラーコードは、NorvesEditor の `bridge/spec/schema` にある `viewport.captureDeterministic` と `viewport.captureCompleted` の定義に合わせる。
 
   **(1) 受け付け**
@@ -8242,7 +8242,7 @@
     - 撮影中の 2 件目が拒否される。
     - 完了イベントの captureId が受け付けの応答と一致する。
     - 時間切れが理由付きの完了イベントになり、残った結果が次の撮影へ漏れない。
-- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path 'C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp' -Pattern 'viewportCaptureDeterministic' -Quiet)) { exit 1 }"`
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path 'C:/Users/oreor/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp' -Pattern 'viewportCaptureDeterministic' -Quiet)) { exit 1 }"`
 - verify: `cmake --build build --config Debug --target Game BridgeCaptureProtocolTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^BridgeCaptureProtocolTest$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Game/Bridge/NorvesLibBridgeAdapter.h, Game/Bridge/NorvesLibBridgeAdapter.cpp, Game/Bridge/BridgeDeterministicCapture.h, Game/Bridge/BridgeDeterministicCapture.cpp, Game/Bridge/BridgeCaptureProtocol.h, Game/Bridge/BridgeCaptureProtocol.cpp, Game/GameApplicationHandler.h, Game/GameApplicationHandler.cpp, Game/CMakeLists.txt, Test/Game/Bridge/BridgeCaptureProtocolTest.cpp, Test/Game/Bridge/CMakeLists.txt

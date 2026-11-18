@@ -14,6 +14,7 @@ namespace Game::Bridge
 
     struct BridgeDeterministicCaptureRequest
     {
+        // エポックの 0 番から数えて落ち着かせるフレーム数（0〜600）。0 ならエポックの 0 番を観測した時点で撮影を要求する。
         uint32_t SettleFrames = 60;
         // PNG エンコーダの固定上限（現在 640×360）でも縮小される。拡大はしない。
         uint32_t MaxWidth = 640;

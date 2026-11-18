@@ -97,7 +97,9 @@ namespace NorvesLib::Core::Rendering
             outData.CustomData[0] = static_cast<float>(proxy.ImpostorCellResolution);
             outData.CustomData[1] = static_cast<float>(proxy.ImpostorAtlasWidth);
             outData.CustomData[2] = static_cast<float>(proxy.ImpostorAtlasHeight);
-            outData.CustomData[3] = proxy.LODSwitchDistance;
+            outData.CustomData[3] = proxy.RenderSubtype == BoardRenderSubtype::Impostor
+                                        ? proxy.LODCrossfadeValue
+                                        : proxy.LODSwitchDistance;
             for (float &value : outData.ShadingParams)
             {
                 value = -1.0f;
@@ -300,8 +302,12 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_MeshProxyIndex.end())
         {
             const uint8_t previousLODSelectionState = m_MeshProxies[indexIt->second].LODSelectionState;
+            const LODCrossfadeState previousLODCrossfade = m_MeshProxies[indexIt->second].LODCrossfade;
+            const float previousLODCrossfadeValue = m_MeshProxies[indexIt->second].LODCrossfadeValue;
             m_MeshProxies[indexIt->second] = proxy;
             m_MeshProxies[indexIt->second].LODSelectionState = previousLODSelectionState;
+            m_MeshProxies[indexIt->second].LODCrossfade = previousLODCrossfade;
+            m_MeshProxies[indexIt->second].LODCrossfadeValue = previousLODCrossfadeValue;
             NoteProxyChanged(m_MeshChangedIndices, indexIt->second, m_MeshProxies.size());
             return;
         }
@@ -376,8 +382,12 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_BoardProxyIndex.end())
         {
             const uint8_t previousLODSelectionState = m_BoardProxies[indexIt->second].LODSelectionState;
+            const LODCrossfadeState previousLODCrossfade = m_BoardProxies[indexIt->second].LODCrossfade;
+            const float previousLODCrossfadeValue = m_BoardProxies[indexIt->second].LODCrossfadeValue;
             m_BoardProxies[indexIt->second] = proxy;
             m_BoardProxies[indexIt->second].LODSelectionState = previousLODSelectionState;
+            m_BoardProxies[indexIt->second].LODCrossfade = previousLODCrossfade;
+            m_BoardProxies[indexIt->second].LODCrossfadeValue = previousLODCrossfadeValue;
             m_VisibleBoardProxies.clear();
             return;
         }
@@ -594,9 +604,11 @@ namespace NorvesLib::Core::Rendering
                 m_bMegaComponentIndexMayBeStale = true;
             }
             const bool bHiddenByImpostor = current.bHiddenByImpostor;
+            const float crossfadeValue = current.LODCrossfadeValue;
             current = proxy;
             current.bRayTracing = proxy.bRayTracing && IsMegaGeometryRayTracing(proxy.ComponentId);
             current.bHiddenByImpostor = bHiddenByImpostor;
+            current.LODCrossfadeValue = crossfadeValue;
             NoteMegaChanged(indexIt->second);
             return;
         }
@@ -718,8 +730,12 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_MeshProxyIndex.end())
         {
             const uint8_t previousLODSelectionState = m_MeshProxies[indexIt->second].LODSelectionState;
+            const LODCrossfadeState previousLODCrossfade = m_MeshProxies[indexIt->second].LODCrossfade;
+            const float previousLODCrossfadeValue = m_MeshProxies[indexIt->second].LODCrossfadeValue;
             m_MeshProxies[indexIt->second] = proxy;
             m_MeshProxies[indexIt->second].LODSelectionState = previousLODSelectionState;
+            m_MeshProxies[indexIt->second].LODCrossfade = previousLODCrossfade;
+            m_MeshProxies[indexIt->second].LODCrossfadeValue = previousLODCrossfadeValue;
             NoteProxyChanged(m_MeshChangedIndices, indexIt->second, m_MeshProxies.size());
             return;
         }
@@ -753,9 +769,11 @@ namespace NorvesLib::Core::Rendering
                 m_bMegaComponentIndexMayBeStale = true;
             }
             const bool bHiddenByImpostor = current.bHiddenByImpostor;
+            const float crossfadeValue = current.LODCrossfadeValue;
             current = proxy;
             current.bRayTracing = proxy.bRayTracing && IsMegaGeometryRayTracing(proxy.ComponentId);
             current.bHiddenByImpostor = bHiddenByImpostor;
+            current.LODCrossfadeValue = crossfadeValue;
             NoteMegaChanged(indexIt->second);
             return;
         }
@@ -908,6 +926,8 @@ namespace NorvesLib::Core::Rendering
     void SceneView::ClearAllProxies()
     {
         m_MeshProxies.clear();
+        m_ImpostorMeshCrossfadeValues.clear();
+        m_LODCrossfadeProxies.clear();
         m_SkinnedMeshProxies.clear();
         m_BoardProxies.clear();
         m_TransientBoardProxies.clear();
@@ -921,6 +941,8 @@ namespace NorvesLib::Core::Rendering
         m_bMegaComponentIndexMayBeStale = false;
         m_SuppressedMegaBoardIds.clear();
         m_NextSuppressedMegaBoardIds.clear();
+        m_ImpostorMegaCrossfadeValues.clear();
+        m_NextImpostorMegaCrossfadeValues.clear();
         m_MegaChangedIndices.clear();
         m_MegaUnsettledObjects.clear();
         m_LightProxyIndex.clear();
@@ -940,6 +962,8 @@ namespace NorvesLib::Core::Rendering
         m_bMegaComponentIndexMayBeStale = false;
         m_SuppressedMegaBoardIds.clear();
         m_NextSuppressedMegaBoardIds.clear();
+        m_ImpostorMegaCrossfadeValues.clear();
+        m_NextImpostorMegaCrossfadeValues.clear();
         m_MegaChangedIndices.clear();
         m_MegaUnsettledObjects.clear();
         AdvanceSceneGeneration();
@@ -1619,9 +1643,21 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::ApplyImpostorMegaSuppression()
     {
+        const auto applyState = [this](uint32_t index, bool bHidden, float value)
+        {
+            MegaGeometryProxy& proxy = m_MegaGeometryProxies[index];
+            if (proxy.bHiddenByImpostor != bHidden || proxy.LODCrossfadeValue != value)
+            {
+                proxy.bHiddenByImpostor = bHidden;
+                proxy.LODCrossfadeValue = value;
+                NoteMegaChanged(index);
+            }
+        };
+
         for (const auto& [objectId, boardId] : m_SuppressedMegaBoardIds)
         {
-            if (m_NextSuppressedMegaBoardIds.find(objectId) != m_NextSuppressedMegaBoardIds.end())
+            if (m_NextSuppressedMegaBoardIds.find(objectId) != m_NextSuppressedMegaBoardIds.end() ||
+                m_NextImpostorMegaCrossfadeValues.find(objectId) != m_NextImpostorMegaCrossfadeValues.end())
             {
                 continue;
             }
@@ -1630,13 +1666,11 @@ namespace NorvesLib::Core::Rendering
             {
                 continue;
             }
-            MegaGeometryProxy& proxy = m_MegaGeometryProxies[indexIt->second];
-            if (!proxy.bHiddenByImpostor)
+            if (!m_MegaGeometryProxies[indexIt->second].bHiddenByImpostor)
             {
                 continue;
             }
-            proxy.bHiddenByImpostor = false;
-            NoteMegaChanged(indexIt->second);
+            applyState(indexIt->second, false, 0.0f);
 
             // 元が戻る変更は次フレームのパケットで届くため、このフレームは板を残す。
             const auto boardIt = m_BoardProxyIndex.find(boardId);
@@ -1655,16 +1689,34 @@ namespace NorvesLib::Core::Rendering
             const auto indexIt = m_MegaGeometryProxyIndex.find(entry.first);
             if (indexIt != m_MegaGeometryProxyIndex.end())
             {
-                MegaGeometryProxy& proxy = m_MegaGeometryProxies[indexIt->second];
-                if (!proxy.bHiddenByImpostor)
-                {
-                    proxy.bHiddenByImpostor = true;
-                    NoteMegaChanged(indexIt->second);
-                }
+                applyState(indexIt->second, true, 0.0f);
+            }
+        }
+        for (const auto& entry : m_ImpostorMegaCrossfadeValues)
+        {
+            if (m_NextImpostorMegaCrossfadeValues.find(entry.first) != m_NextImpostorMegaCrossfadeValues.end() ||
+                m_NextSuppressedMegaBoardIds.find(entry.first) != m_NextSuppressedMegaBoardIds.end())
+            {
+                continue;
+            }
+            const auto indexIt = m_MegaGeometryProxyIndex.find(entry.first);
+            if (indexIt != m_MegaGeometryProxyIndex.end())
+            {
+                applyState(indexIt->second, false, 0.0f);
+            }
+        }
+        for (const auto& entry : m_NextImpostorMegaCrossfadeValues)
+        {
+            const auto indexIt = m_MegaGeometryProxyIndex.find(entry.first);
+            if (indexIt != m_MegaGeometryProxyIndex.end())
+            {
+                applyState(indexIt->second, false, entry.second);
             }
         }
         m_SuppressedMegaBoardIds.swap(m_NextSuppressedMegaBoardIds);
         m_NextSuppressedMegaBoardIds.clear();
+        m_ImpostorMegaCrossfadeValues.swap(m_NextImpostorMegaCrossfadeValues);
+        m_NextImpostorMegaCrossfadeValues.clear();
     }
 
     void SceneView::CullBoardProxy(BoardProxy& proxy,
@@ -1679,21 +1731,31 @@ namespace NorvesLib::Core::Rendering
                         proxy.Space == BoardSpace::WorldSpace &&
                         HasFlag(camera.CullingMask, proxy.LayerMask);
 
+        bool bDrawBoard = bVisible;
+        const MegaGeometryProxy* megaSource = nullptr;
+        bool bCrossfading = false;
+        proxy.LODCrossfadeValue = 0.0f;
         if (bVisible && proxy.RenderSubtype == BoardRenderSubtype::Impostor)
         {
+            const bool bHasMeshSource = m_MeshProxyIndex.find(proxy.SourceMeshComponentId) != m_MeshProxyIndex.end();
+            if (!bHasMeshSource)
+            {
+                megaSource = FindImpostorMegaProxy(proxy, bRebuiltMegaIndex);
+            }
+            uint32_t selected = 0;
             proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
             if (proxy.LODSwitchScreenSize > 0.0f)
             {
                 const float thresholds[2] = {proxy.LODSwitchScreenSize, 0.0f};
                 const float screenSize = ComputeBoundsScreenSize(proxy.WorldBounds, proxy.SortDepth, context);
-                proxy.LODSelectionState = static_cast<uint8_t>(SelectLODByScreenSizeWithHysteresis(
-                    screenSize, thresholds, 2, proxy.LODSelectionState));
+                selected = SelectLODByScreenSizeWithHysteresis(
+                    screenSize, thresholds, 2, proxy.LODSelectionState);
             }
             else if (proxy.LODSwitchDistance > 0.0f)
             {
                 if (context.bOrthographic && proxy.SortDepth <= 0.0f)
                 {
-                    proxy.LODSelectionState = 0;
+                    selected = 0;
                 }
                 else
                 {
@@ -1706,44 +1768,100 @@ namespace NorvesLib::Core::Rendering
                                                  ? proxy.LODSwitchDistance / proxy.SortDepth
                                                  : ComputeBoundsScreenSize(proxy.WorldBounds, proxy.SortDepth, context);
                     const float thresholds[2] = {threshold, 0.0f};
-                    proxy.LODSelectionState = static_cast<uint8_t>(SelectLODByScreenSizeWithHysteresis(
-                        screenSize, thresholds, 2, proxy.LODSelectionState));
+                    selected = SelectLODByScreenSizeWithHysteresis(
+                        screenSize, thresholds, 2, proxy.LODSelectionState);
                 }
             }
             else
             {
-                proxy.LODSelectionState = 1;
+                selected = 1;
             }
-            bVisible = proxy.LODSelectionState == 1;
+            // 遷移中は選び直さず、入口は元の段だけを値0で描く。
+            AdvanceLODCrossfade(proxy.LODCrossfade, selected, m_LODCrossfadeCullDeltaSeconds,
+                                DEFAULT_LOD_CROSSFADE_SECONDS, m_bLODCrossfadeCullSnap);
+            proxy.LODSelectionState = proxy.LODCrossfade.ToLevel;
+            bCrossfading = proxy.LODCrossfade.IsActive() && proxy.LODCrossfade.Progress > 0.0f;
+            if (bCrossfading)
+            {
+                const bool bIncomingBoard = proxy.LODCrossfade.ToLevel == 1;
+                proxy.LODCrossfadeValue = MakeLODCrossfadeValue(proxy.LODCrossfade.Progress, bIncomingBoard);
+                const float sourceValue = MakeLODCrossfadeValue(proxy.LODCrossfade.Progress, !bIncomingBoard);
+                // 板の錐台の結果によらず、元にも相補の値を渡す。
+                if (bHasMeshSource)
+                {
+                    m_ImpostorMeshCrossfadeValues[proxy.SourceMeshComponentId] = sourceValue;
+                }
+                else if (megaSource)
+                {
+                    // Mega は色味の A で 1/127 刻みに丸まるため、板にも同じ値を渡す。
+                    // 画素ごとの相補を保つため、保存前に同じ丸めを適用する。
+                    m_NextImpostorMegaCrossfadeValues[megaSource->ObjectId] =
+                        DecodeLODCrossfadeFromTint(PackLODCrossfadeIntoTint(0u, sourceValue));
+                }
+                bVisible = true;
+            }
+            else
+            {
+                const uint8_t shown = proxy.LODCrossfade.IsActive()
+                                          ? proxy.LODCrossfade.FromLevel
+                                          : proxy.LODCrossfade.ToLevel;
+                bVisible = shown == 1;
+            }
+
+            bDrawBoard = bVisible;
+            if (megaSource)
+            {
+                // 今回の GPU に届いている前回の元の状態に、板の描画だけを合わせる。
+                bDrawBoard = false;
+                proxy.LODCrossfadeValue = 0.0f;
+                if (!m_ImpostorMegaCrossfadeValues.empty() || !m_SuppressedMegaBoardIds.empty())
+                {
+                    if (!m_ImpostorMegaCrossfadeValues.empty())
+                    {
+                        const auto valueIt = m_ImpostorMegaCrossfadeValues.find(megaSource->ObjectId);
+                        if (valueIt != m_ImpostorMegaCrossfadeValues.end() && valueIt->second != 0.0f)
+                        {
+                            bDrawBoard = true;
+                            proxy.LODCrossfadeValue = -valueIt->second;
+                        }
+                    }
+                    if (!bDrawBoard && !m_SuppressedMegaBoardIds.empty())
+                    {
+                        bDrawBoard = m_SuppressedMegaBoardIds.find(megaSource->ObjectId) != m_SuppressedMegaBoardIds.end();
+                    }
+                }
+            }
         }
 
-        if (m_bEnableFrustumCulling && bVisible)
+        // 次回の抑制と今回の描画には、同じ板の錐台・距離の結果を使う。
+        bool bPassesCulling = bVisible || bDrawBoard;
+        if (m_bEnableFrustumCulling && bPassesCulling)
         {
-            bVisible = FrustumCull(proxy, viewProjection);
+            bPassesCulling = FrustumCull(proxy, viewProjection);
         }
 
-        if (m_bEnableDistanceCulling && bVisible)
+        if (m_bEnableDistanceCulling && bPassesCulling)
         {
-            bVisible = DistanceCull(proxy, cameraPosition);
+            bPassesCulling = DistanceCull(proxy, cameraPosition);
         }
 
-        if (bVisible)
+        if (bVisible && bPassesCulling)
         {
             if (proxy.RenderSubtype != BoardRenderSubtype::Impostor)
             {
                 proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
             }
-            if (ShouldSuppressMeshForImpostor(proxy))
+            if (!bCrossfading && ShouldSuppressMeshForImpostor(proxy))
             {
                 suppressedMeshComponentIds.insert(proxy.SourceMeshComponentId);
-                if (m_MeshProxyIndex.find(proxy.SourceMeshComponentId) == m_MeshProxyIndex.end())
+                if (megaSource)
                 {
-                    if (const MegaGeometryProxy* source = FindImpostorMegaProxy(proxy, bRebuiltMegaIndex))
-                    {
-                        m_NextSuppressedMegaBoardIds[source->ObjectId] = proxy.ComponentId;
-                    }
+                    m_NextSuppressedMegaBoardIds[megaSource->ObjectId] = proxy.ComponentId;
                 }
             }
+        }
+        if (bDrawBoard && bPassesCulling)
+        {
             m_VisibleBoardProxies.push_back(&proxy);
         }
     }
@@ -1758,6 +1876,7 @@ namespace NorvesLib::Core::Rendering
         outLODCopies.clear();
         const size_t firstVisible = outVisible.size();
         const auto& suppressedMeshComponentIds = m_SuppressedMeshComponentIds;
+        const auto& impostorCrossfadeValues = m_ImpostorMeshCrossfadeValues;
         for (size_t index = begin; index < end; ++index)
         {
             MeshProxy& proxy = m_MeshProxies[index];
@@ -1781,54 +1900,89 @@ namespace NorvesLib::Core::Rendering
             if (bVisible)
             {
                 proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+                uint32_t level = 0;
                 if (proxy.LODLevelCount > 1)
                 {
                     const float screenSize = ComputeBoundsScreenSize(proxy.WorldBounds, proxy.SortDepth, context);
-                    uint32_t level = ResolveMeshLODLevel(screenSize, &proxy.LODScreenSizeThresholds[0],
-                                                        proxy.LODLevelCount, proxy.ForcedLODLevel,
-                                                        proxy.LODSelectionState);
+                    level = ResolveMeshLODLevel(screenSize, &proxy.LODScreenSizeThresholds[0],
+                                                proxy.LODLevelCount, proxy.ForcedLODLevel,
+                                                proxy.LODSelectionState);
                     if (level >= 1 && !proxy.LODChain[level - 1].MeshHandle.IsValid())
                     {
                         level = 0;
                     }
-                    proxy.LODSelectionState = static_cast<uint8_t>(level);
                 }
-                else
-                {
-                    proxy.LODSelectionState = 0;
-                }
+                const bool bInImpostorTransition = impostorCrossfadeValues.find(proxy.ComponentId) != impostorCrossfadeValues.end();
+                // インポスターとの遷移と段の遷移を重ねず、遷移中は選び直さない。
+                AdvanceLODCrossfade(proxy.LODCrossfade, level, m_LODCrossfadeCullDeltaSeconds,
+                                    DEFAULT_LOD_CROSSFADE_SECONDS, m_bLODCrossfadeCullSnap || bInImpostorTransition);
+                proxy.LODSelectionState = proxy.LODCrossfade.ToLevel;
+                proxy.LODCrossfadeValue = 0.0f;
                 outVisible.push_back(&proxy);
             }
         }
 
+        const size_t visibleEnd = outVisible.size();
         size_t copyCount = 0;
-        for (size_t index = firstVisible; index < outVisible.size(); ++index)
+        size_t extraVisibleCount = 0;
+        for (size_t index = firstVisible; index < visibleEnd; ++index)
         {
-            if (outVisible[index]->LODSelectionState != 0)
+            const LODCrossfadeState& state = outVisible[index]->LODCrossfade;
+            if (state.IsActive() && state.Progress > 0.0f)
+            {
+                copyCount += 2;
+                ++extraVisibleCount;
+            }
+            else if ((state.IsActive() ? state.FromLevel : state.ToLevel) != 0)
             {
                 ++copyCount;
             }
         }
 
-        // 全ての写しの領域を先に確保し、可視一覧へ渡すポインタの再確保による無効化を防ぐ
+        // 全ての写しの領域を先に確保し、可視一覧へ渡すポインタの再確保による無効化を防ぐ。
         outLODCopies.reserve(copyCount);
-        for (size_t index = firstVisible; index < outVisible.size(); ++index)
+        outVisible.reserve(visibleEnd + extraVisibleCount);
+        const auto makeCopy = [&outLODCopies](const MeshProxy& proxy, uint8_t level, float value, bool bCastShadow) -> MeshProxy*
         {
-            const MeshProxy* proxy = outVisible[index];
-            const uint8_t level = proxy->LODSelectionState;
-            if (level == 0)
+            MeshProxy copy = proxy;
+            if (level != 0)
             {
+                const MeshLODChainLevel& lod = proxy.LODChain[level - 1];
+                copy.MeshHandle = lod.MeshHandle;
+                copy.SubMeshes = lod.SubMeshes;
+                copy.SubMeshCount = lod.SubMeshCount;
+            }
+            copy.LODLevel = level;
+            copy.LODCrossfadeValue = value;
+            copy.bCastShadow = bCastShadow;
+            outLODCopies.push_back(copy);
+            return &outLODCopies.back();
+        };
+        for (size_t index = firstVisible; index < visibleEnd; ++index)
+        {
+            MeshProxy& proxy = *outVisible[index];
+            const LODCrossfadeState& state = proxy.LODCrossfade;
+            if (state.IsActive() && state.Progress > 0.0f)
+            {
+                outVisible[index] = makeCopy(proxy, state.FromLevel,
+                                            MakeLODCrossfadeValue(state.Progress, false), false);
+                outVisible.push_back(makeCopy(proxy, state.ToLevel,
+                                             MakeLODCrossfadeValue(state.Progress, true), proxy.bCastShadow));
                 continue;
             }
 
-            MeshProxy copy = *proxy;
-            const MeshLODChainLevel& lod = proxy->LODChain[level - 1];
-            copy.MeshHandle = lod.MeshHandle;
-            copy.SubMeshes = lod.SubMeshes;
-            copy.SubMeshCount = lod.SubMeshCount;
-            copy.LODLevel = level;
-            outLODCopies.push_back(copy);
-            outVisible[index] = &outLODCopies.back();
+            // 入口は出る側の1段だけを値0で描く。
+            const uint8_t level = state.IsActive() ? state.FromLevel : state.ToLevel;
+            const auto impostorIt = impostorCrossfadeValues.find(proxy.ComponentId);
+            const float value = impostorIt != impostorCrossfadeValues.end() ? impostorIt->second : 0.0f;
+            if (level == 0)
+            {
+                proxy.LODCrossfadeValue = value;
+            }
+            else
+            {
+                outVisible[index] = makeCopy(proxy, level, value, proxy.bCastShadow);
+            }
         }
     }
 
@@ -1880,8 +2034,39 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void SceneView::SetLODCrossfadeClock(uint64_t frameNumber, float deltaSeconds)
+    {
+        m_bHasLODCrossfadeClock = true;
+        m_LODCrossfadeFrameNumber = frameNumber;
+        m_LODCrossfadeDeltaSeconds = deltaSeconds;
+    }
+
+    void SceneView::PrepareLODCrossfadeCullClock()
+    {
+        m_LODCrossfadeCullDeltaSeconds = 0.0f;
+        // 時計が無ければ即座に切り替える。
+        m_bLODCrossfadeCullSnap = !m_bHasLODCrossfadeClock;
+        if (!m_bHasLODCrossfadeClock)
+        {
+            return;
+        }
+        if (m_bHasAdvancedLODCrossfadeFrame && m_LastLODCrossfadeFrameNumber == m_LODCrossfadeFrameNumber)
+        {
+            return;
+        }
+        m_bLODCrossfadeCullSnap = !std::isfinite(m_LODCrossfadeDeltaSeconds) || m_LODCrossfadeDeltaSeconds <= 0.0f;
+        if (!m_bLODCrossfadeCullSnap)
+        {
+            m_LODCrossfadeCullDeltaSeconds = m_LODCrossfadeDeltaSeconds;
+        }
+        m_LastLODCrossfadeFrameNumber = m_LODCrossfadeFrameNumber;
+        m_bHasAdvancedLODCrossfadeFrame = true;
+    }
+
     void SceneView::CullProxies(Viewport *viewport)
     {
+        PrepareLODCrossfadeCullClock();
+        m_ImpostorMeshCrossfadeValues.clear();
         NORVES_STAT_TIME_START(cullingViewport);
 
         m_VisibleMeshProxies.clear();
@@ -1918,7 +2103,9 @@ namespace NorvesLib::Core::Rendering
 
         CullMeshProxies(viewProjection, cameraPosition, screenSizeContext, m_LODProxyCopies);
 
-        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
+        const size_t outgoingCount = static_cast<size_t>(std::count_if(m_VisibleMeshProxies.begin(), m_VisibleMeshProxies.end(),
+            [](const MeshProxy* proxy) { return proxy->LODCrossfade.IsActive() && proxy->LODCrossfadeValue < 0.0f; }));
+        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() - outgoingCount + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
 
         NORVES_STAT_TIME_END(cullingViewport, m_Stats.CullingTimeMs);
@@ -1926,6 +2113,8 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::CullProxies(const ViewportSnapshot &viewport)
     {
+        PrepareLODCrossfadeCullClock();
+        m_ImpostorMeshCrossfadeValues.clear();
         NORVES_STAT_TIME_START(cullingSnapshot);
         m_VisibleMeshProxies.clear();
         m_SuppressedMeshComponentIds.clear();
@@ -1981,7 +2170,9 @@ namespace NorvesLib::Core::Rendering
 
         CullMeshProxies(viewProjection, cameraPosition, screenSizeContext, m_LODProxyCopies);
 
-        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
+        const size_t outgoingCount = static_cast<size_t>(std::count_if(m_VisibleMeshProxies.begin(), m_VisibleMeshProxies.end(),
+            [](const MeshProxy* proxy) { return proxy->LODCrossfade.IsActive() && proxy->LODCrossfadeValue < 0.0f; }));
+        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() - outgoingCount + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
 
         NORVES_STAT_TIME_END(cullingSnapshot, m_Stats.CullingTimeMs);
@@ -1991,12 +2182,20 @@ namespace NorvesLib::Core::Rendering
     {
         NORVES_STAT_TIME_START(batching);
         m_Batcher.BeginBatching();
+        m_LODCrossfadeProxies.clear();
 
         for (MeshProxy *proxy : m_VisibleMeshProxies)
         {
             if (proxy)
             {
-                m_Batcher.AddMeshProxy(*proxy);
+                if (proxy->LODCrossfadeValue != 0.0f)
+                {
+                    m_LODCrossfadeProxies.push_back(proxy);
+                }
+                else
+                {
+                    m_Batcher.AddMeshProxy(*proxy);
+                }
             }
         }
 
@@ -2112,6 +2311,30 @@ namespace NorvesLib::Core::Rendering
                                        m_bEnableInstancing,
                                        m_MinInstanceCount);
 
+        for (const MeshProxy* proxy : m_LODCrossfadeProxies)
+        {
+            m_LODCrossfadeBatcher.Clear();
+            m_LODCrossfadeBatcher.BeginBatching();
+            m_LODCrossfadeBatcher.AddMeshProxy(*proxy);
+            m_LODCrossfadeBatcher.EndBatching();
+            m_LODCrossfadeBatcher.GenerateDrawCommands(m_LODCrossfadeCommands, m_LODCrossfadeInstanceData,
+                                                       false, m_MinInstanceCount);
+            const uint32_t instanceBase = static_cast<uint32_t>(m_InstanceData.size());
+            for (GPUSceneInstanceData& instance : m_LODCrossfadeInstanceData)
+            {
+                instance.NormalMatrix[3] = proxy->LODCrossfadeValue;
+                m_InstanceData.push_back(instance);
+            }
+            for (DrawCommand cmd : m_LODCrossfadeCommands)
+            {
+                // 非インスタンスの経路でも両方の欄がデータの位置を指す。
+                cmd.Draw.FirstInstance += instanceBase;
+                cmd.Draw.InstanceDataOffset += instanceBase;
+                cmd.Draw.bLodCrossfade = true;
+                m_DrawCommands.push_back(cmd);
+            }
+        }
+
         for (DrawCommand &cmd : m_DrawCommands)
         {
             cmd.CalculateSortKey(cmd.Draw.SortDepth, cmd.Draw.MaterialBlendMode);
@@ -2162,6 +2385,7 @@ namespace NorvesLib::Core::Rendering
             if (proxy.bVisible)
             {
                 proxy.SortDepth = 0.0f;
+                proxy.LODCrossfadeValue = 0.0f;
                 m_VisibleMeshProxies.push_back(&proxy);
             }
         }
@@ -2196,6 +2420,7 @@ namespace NorvesLib::Core::Rendering
                 if (proxy.bVisible)
                 {
                     proxy.SortDepth = 0.0f;
+                    proxy.LODCrossfadeValue = 0.0f;
                     m_VisibleMeshProxies.push_back(&proxy);
                 }
             }

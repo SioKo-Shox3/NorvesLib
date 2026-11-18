@@ -52,6 +52,7 @@ layout(std140, set = 0, binding = 0) uniform VisFrame
 #define MEGA_INSTANCE_BINDING 1
 #define MEGA_MESH_BINDING 22
 #include "Common/MegaInstanceTable.glsl"
+#include "Common/LodCrossfade.glsl"
 
 // binding 2: 描画の記録の表（Common/VisibilityBuffer.glsl が visRecords を宣言する）
 
@@ -145,6 +146,7 @@ void main()
     {
         return;
     }
+    const float lodCrossfade = LodCrossfadeFromTint(LoadMegaInstanceTint(instanceIndex));
     const uint id = VisEncodeId(recordNumber, triangleIndex);
     if (VisIsEmpty(id))
     {
@@ -250,6 +252,12 @@ void main()
             const float pixelDepth = (float(edge0) * depth[0] + float(edge1) * depth[1] + float(edge2) * depth[2]) * inverseArea;
             // 奥行きのクリップ（ハードは [0, 1] の外を描かない）
             if (!(pixelDepth >= depthMin && pixelDepth <= depthMax))
+            {
+                continue;
+            }
+
+            // 中心は (x + 0.5, y + 0.5) なので、整数の画素位置はハードの floor(gl_FragCoord.xy) と一致する。
+            if (LodCrossfadeShouldDiscard(lodCrossfade, vec2(x, y)))
             {
                 continue;
             }

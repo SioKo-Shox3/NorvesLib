@@ -476,6 +476,9 @@ namespace NorvesLib::Core::Rendering
          */
         void PrepareDrawCommands();
 
+        /** @brief 段の遷移を進める時計。描画のパケットのフレーム番号と前のフレームからの経過秒を渡す。呼ばれなければ遷移は即座に切り替える */
+        void SetLODCrossfadeClock(uint64_t frameNumber, float deltaSeconds);
+
         /**
          * @brief Viewport snapshotに対応するDrawCommand準備
          *
@@ -635,6 +638,8 @@ namespace NorvesLib::Core::Rendering
                              const SceneViewScreenSizeContext& context,
                              Container::VariableArray<MeshProxy>& outLODCopies);
 
+        // 同じフレームの複数のビューでは時間を一度だけ進める。
+        void PrepareLODCrossfadeCullClock();
         void AppendWorldBoardDrawCommands();
 
         /**
@@ -672,6 +677,20 @@ namespace NorvesLib::Core::Rendering
         // 前回と今回の抑制対象（ObjectId と板の ComponentId）。
         Container::UnorderedMap<uint64_t, uint64_t> m_SuppressedMegaBoardIds;
         Container::UnorderedMap<uint64_t, uint64_t> m_NextSuppressedMegaBoardIds;
+        // 板の選択が終わってから並列のメッシュのカリングが読む。
+        Container::UnorderedMap<uint64_t, float> m_ImpostorMeshCrossfadeValues;
+        Container::UnorderedMap<uint64_t, float> m_ImpostorMegaCrossfadeValues;
+        Container::UnorderedMap<uint64_t, float> m_NextImpostorMegaCrossfadeValues;
+
+        bool m_bHasLODCrossfadeClock = false;
+        bool m_bHasAdvancedLODCrossfadeFrame = false;
+        uint64_t m_LODCrossfadeFrameNumber = 0;
+        uint64_t m_LastLODCrossfadeFrameNumber = 0;
+        float m_LODCrossfadeDeltaSeconds = 0.0f;
+        // カリングの入口で決め、並列のチャンクからは読むだけにする。
+        float m_LODCrossfadeCullDeltaSeconds = 0.0f;
+        bool m_bLODCrossfadeCullSnap = true;
+
 
         // 可視Proxy（カリング後）
         Container::VariableArray<MeshProxy *> m_VisibleMeshProxies;
@@ -685,6 +704,10 @@ namespace NorvesLib::Core::Rendering
 
         // バッチャー
         MeshBatcher m_Batcher;
+        MeshBatcher m_LODCrossfadeBatcher;
+        Container::VariableArray<MeshProxy*> m_LODCrossfadeProxies;
+        Container::VariableArray<DrawCommand> m_LODCrossfadeCommands;
+        Container::VariableArray<GPUSceneInstanceData> m_LODCrossfadeInstanceData;
 
         // DrawCommand
         Container::VariableArray<DrawCommand> m_DrawCommands;

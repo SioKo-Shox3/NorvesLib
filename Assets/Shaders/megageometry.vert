@@ -30,6 +30,7 @@ layout(set = 0, binding = 0) uniform MVPData
 #define MEGA_INSTANCE_BINDING 8
 #define MEGA_MESH_BINDING 22
 #include "Common/MegaInstanceTable.glsl"
+#include "Common/LodCrossfade.glsl"
 
 // コマンドごとの描画情報（x = インスタンスの番号, y = デバッグ表示・LODの段の payload）。
 // コマンドの firstInstance が添え字（カリングが書いたコマンドの通しの位置）なので gl_InstanceIndex で引く。
@@ -47,11 +48,13 @@ layout(location = 5) out vec3 fragViewDir;  // ワールド空間でのカメラ
 layout(location = 6) flat out uint fragDebugPayload;
 layout(location = 7) out vec4 fragCurrentClip;
 layout(location = 8) out vec4 fragPreviousClip;
+layout(location = 9) flat out float fragLodCrossfade;
 
 void main()
 {
     uvec2 drawInfo = drawInfos[gl_InstanceIndex];
     const MegaInstance instance = LoadMegaInstance(drawInfo.x);
+    fragLodCrossfade = LodCrossfadeFromTint(instance.tint);
     mat4 world = instance.world;
     mat4 previousWorld = instance.previousWorld;
 

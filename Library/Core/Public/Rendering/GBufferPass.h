@@ -226,10 +226,13 @@ namespace NorvesLib::Core::Rendering
                                       const RHI::TexturePtr& depth);
         bool AreGBufferResourcesReady() const;
         void RefreshGBufferPrograms();
-        bool PrepareProgramShaders(const ViewRenderContext& context, const MaterialResourceData& material);
+        bool PrepareProgramShaders(const ViewRenderContext& context, GBufferProgramId id,
+                                   const MaterialResourceData* material);
         RHI::PipelinePtr GetGBufferPipeline(const ViewRenderContext& context,
                                             const MaterialResourceData* material,
-                                            bool bSkinned, float opacity = 1.0f);
+                                            bool bSkinned, float opacity = 1.0f, bool bLodCrossfade = false,
+                                            GBufferProgramId programOverride = kStandardGBufferProgramId,
+                                            bool* outUsingProgramOverride = nullptr);
         RHI::PipelinePtr CreateGBufferPipeline(const GBufferPipelineKey& key);
         bool TryPrepareSkinnedCommand(ViewRenderContext& context,
                                       const DrawCommand& source,
@@ -353,6 +356,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_GBufferVertexShader;
         RHI::ShaderPtr m_GBufferFragmentShader;
         RHI::ShaderPtr m_GBufferAlphaClipFragmentShader;
+        RHI::ShaderPtr m_GBufferCrossfadeFragmentShader;
         bool m_bPipelinesPrepared = false;
         bool m_bParallelAttachmentsReady = false;
         // 重ね描きの表はグラフの宣言段で準備し、記録中は読むだけにする。
@@ -381,6 +385,8 @@ namespace NorvesLib::Core::Rendering
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
+        // 同じ記述子配置で、ファーの材質と殻の描画定数を後置した UBO を借りる。
+        DynamicUniformAllocator m_FurUniformAllocator;
         // フレームの環境定数を借りられない文脈用。初期化時に一度だけ書く。
         RHI::BufferPtr m_DefaultEnvironmentBuffer;
         RHI::BufferPtr m_DefaultPuddleSurfaceBuffer;

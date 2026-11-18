@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "Rendering/FurTypes.h"
 #include "SkinnedMeshTypes.h"
 #include "MaterialTypes.h"
 #include "MeshTypes.h"
@@ -67,6 +68,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t FrameLeaseIndex = InvalidFrameLeaseIndex;
         SkinnedMeshPassKind PassKind = SkinnedMeshPassKind::None;
         float Opacity = 1.0f; // 部品の不透明度。1 未満は残像
+        uint32_t ShellCount = 1; // GBuffer で描く殻数。1 は体の面だけ。Fur の slot にだけ設定し、影では使わない。
+        float LastShellFraction = 1.0f; // 最後の殻を残す割合（0 より大きく 1 以下）。断片シェーダーの間引きに使う。
+        Container::TSharedPtr<const FurMaterialData> Fur; // Fur の slot の材質の写し。ほかの slot は null。
         Container::TSharedPtr<const SkinnedMeshFrameLease> FrameLease;
         Container::VariableArray<Math::Matrix4x4> BonePalette;
         // 姿勢から求めた AnimatedBounds。WorldMatrix を掛けると世界の境界になる。
@@ -121,6 +125,9 @@ namespace NorvesLib::Core::Rendering
         bool bCastShadow = true; // シャドウを落とすか
         bool bSkyMapProxy = false; // 空の遮蔽のマップが受け持つ樹冠か
         bool bInstanced = false; // インスタンシング描画か
+        // インスタンスのデータの NormalMatrix[3] に段の遷移のフェードの値を持つ描画か。
+        // GBuffer はディザの版で、解決の後の重ね描きとして描く。
+        bool bLodCrossfade = false;
 
         // カスタムデータ
         float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // シェーダーに渡すカスタムデータ

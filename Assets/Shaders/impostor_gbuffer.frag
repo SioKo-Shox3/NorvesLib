@@ -6,6 +6,7 @@
 #include "Common/GBufferEncoding.glsl"
 #include "Common/WetSurface.glsl"
 #include "Common/VelocityEncoding.glsl"
+#include "Common/LodCrossfade.glsl"
 
 layout(std140, set = 0, binding = 0) uniform ImpostorGBufferData
 {
@@ -36,6 +37,7 @@ layout(location = 7) flat in vec2 fragSizeWorld;
 layout(location = 8) flat in vec4 fragAtlasInfo;
 layout(location = 9) flat in float fragCellResolution;
 layout(location = 10) flat in vec3 fragTint;
+layout(location = 11) flat in float fragLodCrossfade;
 
 layout(location = 0) out vec4 outAlbedo;
 layout(location = 1) out vec4 outNormal;
@@ -125,6 +127,12 @@ void main()
 
     // 暗黙の画面微分を使う標本は切り抜きより前に済ませる。
     if (atlasColor.a < impostor.atlasParams.y)
+    {
+        discard;
+    }
+
+    // 段の遷移のディザ。値は customData.w、0 は遷移なし。
+    if (LodCrossfadeShouldDiscard(fragLodCrossfade, floor(gl_FragCoord.xy)))
     {
         discard;
     }

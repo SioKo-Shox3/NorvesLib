@@ -694,6 +694,16 @@ namespace NorvesLib::Core::Rendering
                 // シェーダー作成時の例外も通常の描画への代替として扱う。
                 m_DrawClearanceFragmentShader.reset();
             }
+            try
+            {
+                m_DrawCrossfadeFragmentShader = context.ShaderMgr->LoadShader(
+                    "megageometry_crossfade.frag", RHI::ShaderStage::Pixel);
+            }
+            catch (...)
+            {
+                // 読み込めないときは通常の描画へ戻す。
+                m_DrawCrossfadeFragmentShader.reset();
+            }
         }
         if (!m_DrawVertexShader || !m_DrawFragmentShader)
         {
@@ -967,10 +977,13 @@ namespace NorvesLib::Core::Rendering
         m_DrawTwoSidedPipeline.reset();
         m_DrawClearancePipeline.reset();
         m_DrawClearanceTwoSidedPipeline.reset();
+        m_DrawCrossfadePipeline.reset();
+        m_DrawCrossfadeTwoSidedPipeline.reset();
         m_DrawWireframePipeline.reset();
         m_DrawVertexShader.reset();
         m_DrawFragmentShader.reset();
         m_DrawClearanceFragmentShader.reset();
+        m_DrawCrossfadeFragmentShader.reset();
 
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
@@ -1002,6 +1015,9 @@ namespace NorvesLib::Core::Rendering
         m_DefaultTerrainSplatArray.reset();
 
         m_Instances.clear();
+        m_LodCrossfadePositions.clear();
+        m_SectionLodCrossfadeStamps.clear();
+        m_LodCrossfadeStamp = 0;
         m_SceneInstanceDeltas.clear();
 #if NORVES_BUILD_DEVELOPMENT
         m_SceneInstanceDeltaStats = SceneInstanceDeltaStats{};
@@ -1027,12 +1043,25 @@ namespace NorvesLib::Core::Rendering
         instance.Handle = proxy.MegaMeshHandle;
         std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
         std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
-        instance.Tint = proxy.Tint;
+        instance.Tint = PackLODCrossfadeIntoTint(proxy.Tint, proxy.LODCrossfadeValue);
+        instance.bLodCrossfade = proxy.LODCrossfadeValue != 0.0f;
         instance.VariationSeed = proxy.VariationSeed;
         instance.bCastShadow = proxy.bCastShadow;
         instance.WorldBounds = proxy.WorldBounds;
         instance.SceneSlot = proxy.SceneSlot;
         return instance;
+    }
+
+    void MegaGeometryPass::UpdateLodCrossfadePosition(size_t position)
+    {
+        if (m_Instances[position].bLodCrossfade)
+        {
+            m_LodCrossfadePositions.insert(position);
+        }
+        else if (!m_LodCrossfadePositions.empty())
+        {
+            m_LodCrossfadePositions.erase(position);
+        }
     }
 
     bool MegaGeometryPass::PatchInstancesFromChangedSlots(const ViewRenderContext &context)
@@ -1293,6 +1322,11 @@ namespace NorvesLib::Core::Rendering
 
             for (const PreviousEntry &entry : previous)
             {
+                // 書き換わる位置と切った末尾を外し、新しい位置は書いた後に登録する。
+                if (entry.Instance.bLodCrossfade)
+                {
+                    m_LodCrossfadePositions.erase(entry.Position);
+                }
                 if (entry.NewPosition != NoPosition)
                 {
                     continue;
@@ -1359,6 +1393,7 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 m_Instances[position] = MakeMegaMeshInstance(proxies[position]);
+                UpdateLodCrossfadePosition(position);
                 if (plan.bStructural && plan.Previous == NoPosition)
                 {
                     const uint32_t tableSlot = proxies[position].SceneSlot;
@@ -1401,6 +1436,7 @@ namespace NorvesLib::Core::Rendering
             {
                 const MegaMeshInstance before = m_Instances[position];
                 m_Instances[position] = MakeMegaMeshInstance(proxies[position]);
+                UpdateLodCrossfadePosition(position);
                 m_Instances[position].TableSlot = before.TableSlot;
                 NoteShadowPatched(position, before, m_Instances[position]);
                 MarkSceneTableDirty(position);
@@ -1425,6 +1461,7 @@ namespace NorvesLib::Core::Rendering
                          (actual.SceneSlot != 0 && actual.TableSlot == actual.SceneSlot)) &&
                         actual.Handle.Id == expected.Handle.Id &&
                         actual.bCastShadow == expected.bCastShadow && actual.Tint == expected.Tint &&
+                        actual.bLodCrossfade == expected.bLodCrossfade &&
                         actual.VariationSeed == expected.VariationSeed &&
                         std::memcmp(actual.WorldMatrix, expected.WorldMatrix, sizeof(expected.WorldMatrix)) == 0 &&
                         std::memcmp(actual.PreviousWorldMatrix, expected.PreviousWorldMatrix,
@@ -1484,6 +1521,7 @@ namespace NorvesLib::Core::Rendering
             // VSM のキャッシュ: 並びが変わるので、次に表を作るときに前の並びと鍵で引いて比べる
             BeginShadowRebuild(false);
             m_Instances.clear();
+            m_LodCrossfadePositions.clear();
             m_InstanceSourceRevision = bFromMirror ? context.SnapshotMegaRevision : 0;
             m_InstanceSourceProxies = bFromMirror ? static_cast<const void *>(context.SnapshotMegaGeometryProxies) : nullptr;
 
@@ -1500,6 +1538,10 @@ namespace NorvesLib::Core::Rendering
                     }
 
                     m_Instances.push_back(MakeMegaMeshInstance(proxy));
+                    if (m_Instances.back().bLodCrossfade)
+                    {
+                        m_LodCrossfadePositions.insert(m_Instances.size() - 1u);
+                    }
                 }
                 // 無効な proxy を除いた並びは写しの位置と対応しない。揃うまで差分の起点にしない
                 if (m_Instances.size() != megaGeometryProxies.size())
@@ -5159,6 +5201,47 @@ namespace NorvesLib::Core::Rendering
         // 解決のパスが分かるときは、パイプラインの準備まで含めて判定する（使えないのに止めると画面が空になる）
         const bool bSkipGBufferDraw = ShouldSkipGBufferDraw(command.DebugMode);
 
+        // 遷移中の個体だけから描く順の行・メッシュ・区間を引く。
+        const bool bHasLodCrossfade = !m_LodCrossfadePositions.empty();
+        if (bHasLodCrossfade)
+        {
+            if (m_SectionLodCrossfadeStamps.size() < sectionCount)
+            {
+                m_SectionLodCrossfadeStamps.resize(sectionCount, 0u);
+            }
+            ++m_LodCrossfadeStamp;
+            if (m_LodCrossfadeStamp == 0u)
+            {
+                std::fill(m_SectionLodCrossfadeStamps.begin(), m_SectionLodCrossfadeStamps.end(), 0u);
+                m_LodCrossfadeStamp = 1u;
+            }
+            for (const size_t instanceIndex : m_LodCrossfadePositions)
+            {
+                if (instanceIndex >= m_SceneInstanceRows.size())
+                {
+                    continue;
+                }
+                const uint32_t row = m_SceneInstanceRows[instanceIndex];
+                if (row >= instanceTable.size())
+                {
+                    continue;
+                }
+                const uint32_t meshIndex = instanceTable[row].MeshIndex;
+                if (meshIndex < tables.Meshes.size())
+                {
+                    const uint32_t sectionIndex = tables.Meshes[meshIndex].SectionIndex;
+                    if (sectionIndex < sectionCount)
+                    {
+                        m_SectionLodCrossfadeStamps[sectionIndex] = m_LodCrossfadeStamp;
+                    }
+                }
+            }
+        }
+        const auto sectionHasLodCrossfade = [&](uint32_t sectionIndex) -> bool
+        {
+            return bHasLodCrossfade && m_SectionLodCrossfadeStamps[sectionIndex] == m_LodCrossfadeStamp;
+        };
+
         // ビジビリティバッファのラスタが引く、このフレームの描画の写し（カリングの結果のバッファと区間の表）
         const auto buildVisibilityPlan = [&](VisibilityDrawPlan &plan) -> void
         {
@@ -5194,14 +5277,16 @@ namespace NorvesLib::Core::Rendering
             }
             plan.StatsBuffer = statsBuffer;
             plan.bStatsEnabled = statsSlot != nullptr;
-            for (const Section &section : sections)
+            for (uint32_t sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex)
             {
+                const Section &section = sections[sectionIndex];
                 VisibilityDrawPlan::Section planSection;
                 planSection.VertexBuffer = section.Representative->VertexBuffer;
                 planSection.IndexBuffer = section.Representative->IndexBuffer;
                 planSection.Capacity = section.Capacity;
                 planSection.CommandBase = section.CommandBase;
                 planSection.Material = section.Representative->Material;
+                planSection.bLodCrossfade = sectionHasLodCrossfade(sectionIndex);
                 plan.Sections.push_back(planSection);
             }
         };
@@ -5250,6 +5335,16 @@ namespace NorvesLib::Core::Rendering
                     if (clearancePipeline)
                     {
                         pipeline = clearancePipeline;
+                    }
+                }
+                else if (sectionHasLodCrossfade(sectionIndex) && command.DebugMode == DebugViewMode::Normal &&
+                         defaultPipeline.get() == m_DrawPipeline.get())
+                {
+                    const RHI::PipelinePtr &crossfadePipeline = gpuData->Material.bTwoSided
+                        ? m_DrawCrossfadeTwoSidedPipeline : m_DrawCrossfadePipeline;
+                    if (crossfadePipeline)
+                    {
+                        pipeline = crossfadePipeline;
                     }
                 }
                 if (currentPipeline.get() != pipeline.get())
@@ -5646,6 +5741,7 @@ namespace NorvesLib::Core::Rendering
         // VSM のキャッシュ: 並びが変わるので、次に表を作るときに今の並びと鍵で引いて比べる
         BeginShadowRebuild(true);
         m_Instances.push_back(instance);
+        UpdateLodCrossfadePosition(m_Instances.size() - 1u);
         m_InstanceSourceRevision = 0;
         m_InstanceSourceProxies = nullptr;
         // 前のフレームの HZB の契約: 席の表を決め直すので全量の再同期として数える
@@ -5660,6 +5756,7 @@ namespace NorvesLib::Core::Rendering
         // VSM のキャッシュ: 前に表へ載せた投影物の境界を無効化へ積む
         BeginShadowRebuild(false);
         m_Instances.clear();
+        m_LodCrossfadePositions.clear();
         FlushShadowRebuildWithoutInstances();
         m_InstanceSourceRevision = 0;
         m_InstanceSourceProxies = nullptr;
@@ -7624,6 +7721,8 @@ namespace NorvesLib::Core::Rendering
             m_DrawTwoSidedPipeline.reset();
             m_DrawClearancePipeline.reset();
             m_DrawClearanceTwoSidedPipeline.reset();
+            m_DrawCrossfadePipeline.reset();
+            m_DrawCrossfadeTwoSidedPipeline.reset();
             m_DrawWireframePipeline.reset();
             return true;
         }
@@ -7634,6 +7733,8 @@ namespace NorvesLib::Core::Rendering
             m_DrawTwoSidedPipeline.reset();
             m_DrawClearancePipeline.reset();
             m_DrawClearanceTwoSidedPipeline.reset();
+            m_DrawCrossfadePipeline.reset();
+            m_DrawCrossfadeTwoSidedPipeline.reset();
             m_DrawWireframePipeline.reset();
             return false;
         }
@@ -7642,6 +7743,8 @@ namespace NorvesLib::Core::Rendering
         m_DrawTwoSidedPipeline.reset();
         m_DrawClearancePipeline.reset();
         m_DrawClearanceTwoSidedPipeline.reset();
+        m_DrawCrossfadePipeline.reset();
+        m_DrawCrossfadeTwoSidedPipeline.reset();
         m_DrawWireframePipeline.reset();
 
         if (!CreateDrawPipelineVariant(RHI::PolygonMode::Fill, RHI::CullMode::Back, m_DrawPipeline, m_DrawFragmentShader))
@@ -7694,6 +7797,29 @@ namespace NorvesLib::Core::Rendering
         {
             NORVES_LOG_WARNING("MegaGeometryPass", "視界確保のパイプラインを作れないため、該当区間を通常のパイプラインで描きます");
             m_bClearancePipelineWarningLogged = true;
+        }
+
+        // 段の遷移の変種が使えない区間は、通常のパイプラインへ戻す。
+        const auto createCrossfadePipeline = [this](RHI::CullMode cullMode, RHI::PipelinePtr &pipeline)
+        {
+            try
+            {
+                if (m_DrawCrossfadeFragmentShader)
+                {
+                    CreateDrawPipelineVariant(RHI::PolygonMode::Fill, cullMode, pipeline, m_DrawCrossfadeFragmentShader);
+                }
+            }
+            catch (...)
+            {
+                pipeline.reset();
+            }
+        };
+        createCrossfadePipeline(RHI::CullMode::Back, m_DrawCrossfadePipeline);
+        createCrossfadePipeline(RHI::CullMode::None, m_DrawCrossfadeTwoSidedPipeline);
+        if ((!m_DrawCrossfadePipeline || !m_DrawCrossfadeTwoSidedPipeline) && !m_bCrossfadePipelineWarningLogged)
+        {
+            NORVES_LOG_WARNING("MegaGeometryPass", "段の遷移のパイプラインを作れないため、該当区間を通常のパイプラインで描きます");
+            m_bCrossfadePipelineWarningLogged = true;
         }
 
         return true;

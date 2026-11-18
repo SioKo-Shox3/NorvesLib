@@ -330,6 +330,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
     Private/Rendering/FurMaterialGpu.cpp
+    Private/Rendering/FurShellLod.cpp
     Private/Rendering/GpuResourceStore.cpp
     Private/Rendering/TextureAsyncLoadQueue.cpp
     Private/Rendering/TextureAssetLoader.cpp
@@ -781,6 +782,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/MeshTypes.h
     Public/Rendering/SkinnedMeshTypes.h
     Public/Rendering/FurTypes.h
+    Public/Rendering/FurShellLod.h
     Public/Rendering/MaterialTypes.h
     Public/Rendering/ITextureHandleRegistrar.h
     Public/Rendering/ProceduralMeshGPUData.h
