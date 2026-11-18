@@ -202,7 +202,9 @@ void main()
     float ao = mix(mvp.fur.occlusion.x, 1.0, pow(height, mvp.fur.occlusion.y));
     vec3 outputNormal = normalize(mix(normal, flowTangent, mvp.fur.strand.w * height));
 
-    outAlbedo = vec4(albedo, 1.0);
+    // wetShading.w は WetGloss × W なので、領域の濡れやすさを掛けて g = kGloss・w とする。
+    float wetGloss = mvp.fur.wetShading.w * wetSusceptibility;
+    outAlbedo = vec4(albedo, GBufferEncodeFurWetGloss(wetGloss));
     outNormal = GBufferEncodeNormal(outputNormal, GBUFFER_SHADING_MODEL_FUR, 0u);
     outMaterial = GBufferEncodeMaterialForShadingModel(
         vec3(0.0, roughness, ao), wetness, GBUFFER_SHADING_MODEL_FUR);

@@ -57,7 +57,7 @@ albedo' = mix(albedo, vec3(lum), kDesat × w) × mix(1, kDark, w)
 roughness' = mix(roughness, kWetRough, w)
 ```
 
-長さは `L' = L × mix(1, kShort, w)`、毛の半径は `r' = r × (1 + kThick × w)` とする。近い画素では毛先ほど束を寄せる。毛の中心を、一束の UV 幅 `ClumpSize` に相当する粗い格子（幅は少なくとも 1 セル）の塊の中心へ `kClump × w × G × h` の割合で寄せ、毛のセルの内側に収める。`G` は DensityClump マップの G で、マップがなければ 1、`h` は殻の高さの割合である。垂れは頂点で毛の力に `(0, −1, 0) × kSag × W` を足す。照明では GBuffer の `P0` の `w` を使い、Kajiya-Kay の 2 つのローブの指数と強さに `1 + kGloss × w` を掛ける。
+長さは `L' = L × mix(1, kShort, w)`、毛の半径は `r' = r × (1 + kThick × w)` とする。近い画素では毛先ほど束を寄せる。毛の中心を、一束の UV 幅 `ClumpSize` に相当する粗い格子（幅は少なくとも 1 セル）の塊の中心へ `kClump × w × G × h` の割合で寄せ、毛のセルの内側に収める。`G` は DensityClump マップの G で、マップがなければ 1、`h` は殻の高さの割合である。垂れは頂点で毛の力に `(0, −1, 0) × kSag × W` を足す。照明では GBuffer の `Albedo.a` から復号した `g = kGloss × w` を使い、Kajiya-Kay の 2 つのローブの指数と強さに `1 + g` を掛ける。
 
 | 係数 | `FurParams` の欄との対応 |
 |---|---|
@@ -68,15 +68,15 @@ roughness' = mix(roughness, kWetRough, w)
 | `kThick` | `WetThicken` |
 | `kClump` | `WetClump` |
 | `kSag` | `WetSag` |
-| `kGloss` | 照明の全体の値（下記） |
+| `kGloss` | `WetGloss`（画素の `g = kGloss × w` を `Albedo.a` で照明へ渡す） |
 
-`FurParams` の濡れの欄の既定値はすべて 0 で、各材質の応答を加えない。ただし `WetGloss` は現在の照明には使われず、下記の全体の値が使われる。
+`FurParams` の濡れの欄の既定値はすべて 0 で、各材質の応答を加えない。
 
 `PackFurMaterialGpuParams` は濡れの各応答に `W` を掛けて `wetGeometry`・`wetShading` に詰める。各補間の項は `w` について一次なので、FS は掛け済みの係数と `s` を使って上の `w = W × s` の式を求める。垂れだけは頂点で `s` を読まず、`W` のまま使う。
 
-材質の濡れの応答がすべて 0、または `W = 0` のとき、FS の色・粗さ・毛の切り抜きは濡れを入れる前とビット単位で同じになるよう、差の形で計算し `×1`・`+0` にする。ただし応答が 0 でも `W > 0` なら `P0` は `w` となり、以前の `W` と異なる場合があるため、FS の全出力が同じとは限らない。照明も材質の応答 0 だけでは変化を抑えられない。`W = 0` なら `w = 0` となり、照明のローブも同じである。
+材質の濡れの応答がすべて 0、または `W = 0` のとき、FS の色・粗さ・毛の切り抜きは濡れを入れる前とビット単位で同じになるよう、差の形で計算し `×1`・`+0` にする。照明は Fur の `P0` を読まず `Albedo.a` の `g` を使う。`WetGloss = 0` または `W = 0` なら `g = 0`・`A = 1.0` となり、照明の掛け算は `×1` で濡れを入れる前と同じになる。応答が 0 でも `W > 0` なら `P0` は `w` になるが、照明の結果には影響しない。
 
-遅延照明は画素ごとに材質の値を読めないため、`shadingModelParams[0].w` に全体の `kGloss` を置く。`LightingPass.cpp` のローカル定数は仮の 1.0 であり、材質の `WetGloss` は現在の照明には届かない。
+毛の FS は `wetShading.w = WetGloss × W` に領域の `s` を掛けて `g = kGloss × w` とし、Fur の画素の `Albedo.a` に `A = 1 − g × 252/255` を書く。照明は Fur の画素だけ `g = (1 − A) × 255/252` を復号する。`g` の分解能は `1/252`、`A` の下限は `3/255` で空の判定（`A < 0.01`）と重ならない。`g = 0` では `A = 1.0`・復号値 0・倍率 1 がいずれもちょうどになる。汎用の GBuffer・MegaGeometry の書き手は Fur の ID で `A ≥ 0.01` なら 1.0 にそろえ、テクスチャの alpha によるつやを防ぐ。空の印は保つ。
 
 基準のアルベドは乾いたきれいな色を前提とする。AI 生成のアルベドに光や濡れが焼き込まれていると暗化が二重に掛かる。SSR は Fur を飛ばすため、濡れ毛のつやは直接光と IBL で出す。GBuffer の Albedo は 8 bit の線形なので、暗化した暗い毛色では階調が不足する可能性がある（`G6-GR35-WET-CHECK` の撮影で見る）。
 
@@ -87,7 +87,7 @@ roughness' = mix(roughness, kWetRough, w)
 | `WetDarken` | 0.38 | `kDark = 0.62` |
 | `WetDesaturate` | 0.3 | 仮 |
 | `WetRoughness` | 0.3 | 乾いた粗さ 0.5 → 濡れて 0.35 |
-| `WetGloss` | 1.0 | 照明は今は全体の値を使う |
+| `WetGloss` | 1.0 | 2 つのローブの指数と強さの倍率 `1 + w` |
 | `WetLengthCollapse` | 0.3 | `kShort = 0.7` |
 | `WetThicken` | 0.5 | 仮 |
 | `WetClump` | 0.6 | 仮 |
@@ -101,7 +101,7 @@ roughness' = mix(roughness, kWetRough, w)
 
 直接光の拡散は、`clamp((N·L + w) / (1 + w), 0, 1) × AO` を拡散 BRDF・光・影に掛ける。ここで `w = FurWrap`、AO は SSAO を重ねる前の GBuffer の材質 AO である。毛の AO は殻の自己遮蔽なので直接光にも掛ける。ほかの材質の直接光には AO を掛けない。
 
-鏡面は Kajiya-Kay の 2 ローブで、`Ti = normalize(T + N × shift_i)`、`sinTH_i = sqrt(max(1 - (Ti·H)², 0))` とする。各ローブは `smoothstep(-1, 0, Ti·H) × sinTH_i^e_i × (e_i + 2) / (2π)`。1 つめは色なし、2 つめには毛色を掛け、それぞれの強さで加算してから光・`max(N·L, 0)`・影を掛ける。指数には下限を適用する前の GBuffer の粗さ `r` を使い、`α = r²`、`e1 = clamp(2 / max(α², 1e-6) - 2, 1, 2048)`、`e2 = max(e1 × FurSecondaryExponentScale, 1)` とする。`FurApplyWetLobes` は GBuffer の `P0` の濡れ `w` を使い、2 つのローブの指数と強さに `1 + kGloss × w` を掛ける。
+鏡面は Kajiya-Kay の 2 ローブで、`Ti = normalize(T + N × shift_i)`、`sinTH_i = sqrt(max(1 - (Ti·H)², 0))` とする。各ローブは `smoothstep(-1, 0, Ti·H) × sinTH_i^e_i × (e_i + 2) / (2π)`。1 つめは色なし、2 つめには毛色を掛け、それぞれの強さで加算してから光・`max(N·L, 0)`・影を掛ける。指数には下限を適用する前の GBuffer の粗さ `r` を使い、`α = r²`、`e1 = clamp(2 / max(α², 1e-6) - 2, 1, 2048)`、`e2 = max(e1 × FurSecondaryExponentScale, 1)` とする。`FurApplyWetLobes` は GBuffer の `Albedo.a` から復号した `g` を使い、2 つのローブの指数と強さに `1 + g` を掛ける。
 
 逆光の透過は `pow(saturate(V·−L), p) × (1 - AO) × 毛色 × 光 × 強さ × 影` を拡散へ足す。AO は直接光と同じ材質 AO、`p = FurTransmissionPower` である。
 
@@ -123,7 +123,7 @@ roughness' = mix(roughness, kWetRough, w)
 | `FurTransmissionStrength` | 1.0 | `furShadingParams.z` | 逆光の透過の強さ |
 | `FurSsaoWeight` | 0.3 | `furShadingParams.w` | Fur の画素に SSAO を掛ける割合 |
 
-`shadingModelParams[0].w` は Fur の濡れのつや `kGloss` で、`LightingPass.cpp` のローカル定数による全体の値 1.0（仮）を使う。C++ の `ShadingModelLightingConstants` に対応する欄はない。
+`shadingModelParams[0].w` は予約（0）である。
 
 ## 既知の限界
 
@@ -134,10 +134,10 @@ roughness' = mix(roughness, kWetRough, w)
 - 密度マップの R でセル自体の大きさが変わり、値が場所によって変化するとセルが歪む。DensityClump の G と束の幅は濡れの束でだけ使い、乾いた束の強さ `ClumpStrength` は使わない。Flow の長さも整い度としては使わない。
 - 頂点の押し出しは全体の `L` に基づく。Length と領域の長さ倍率は断片の残存判定に使い、領域の倍率が 1 を超えても最外殻を `L` より外へ押し出さない。濡れによる長さの縮みも断片の破棄で行い、頂点の押し出しは縮めない。
 - アルベドを含むテクスチャは通常の `texture` で読み、sparse の常駐確認・粗いミップへの退避・VT フィードバックを行わない。アルベドが VT の場合、未常駐領域の表示を保証できない。
-- アルベドの alpha や材質の `BaseColor`・被覆率、法線・粗さ・発光の各テクスチャは殻シェーダーでは使わない。殻 0 を含めアルベドの alpha は 1 として書く。
+- アルベドの alpha や材質の `BaseColor`・被覆率、法線・粗さ・発光の各テクスチャは殻シェーダーでは使わない。殻 0 を含め出力の `Albedo.a` には濡れのつや `g` を符号化する。
 - 毛の FS（`skinned_fur_gbuffer.frag`）は材質の一つの粗さ（`furShellParams.w`）に濡れを適用し、領域表の `FurMaterialRegion::lobes` を書かないため、領域ごとのハイライトの違いはまだ出ない。
 - 束の寄せは毛が自分のセルの中でしか判定されないため、中心をセルの内側に収める。束感は主に塊の境目の分け目として出る。遠い画素の被覆の期待値の分岐には束の寄せがない。
-- 垂れには領域の濡れやすさを掛けない。材質ごとの `WetGloss` は照明に届かない。
+- 垂れには領域の濡れやすさを掛けない。
 - 逆光の透過は `1 - AO` を掛けるため、AO が 1 に近い毛先ほど弱くなる。
 - パストレーサーと RT にはスキンが入らないため、毛も対象外である（GR104）。
 

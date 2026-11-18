@@ -4787,10 +4787,7 @@ namespace NorvesLib::Core::Rendering
             sanitizeNonNegative(constants.FurMinSpecularRoughness, defaults.FurMinSpecularRoughness);
         params.shadingModelParams[0][2] =
             sanitizeNonNegative(constants.EyeSpecularBoostPerP0, defaults.EyeSpecularBoostPerP0);
-        // Fur の濡れのつや kGloss（毛の 2 つのローブの指数と強さに 1 + kGloss × P0 を掛ける。仮の値）。
-        // 遅延照明は画素ごとに材質の値を読めないので、材質の FurParams::WetGloss ではなく全体の値を使う。
-        constexpr float FurWetGloss = 1.0f;
-        params.shadingModelParams[0][3] = FurWetGloss;
+        params.shadingModelParams[0][3] = 0.0f;
         params.shadingModelParams[1][0] =
             sanitizeClamped(constants.FurPrimaryShift, defaults.FurPrimaryShift, -1.0f, 1.0f);
         params.shadingModelParams[1][1] =

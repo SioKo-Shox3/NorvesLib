@@ -10,6 +10,7 @@ struct ShadingModelSurface
     uint id;
     float p0;
     float p1;
+    float furWetGloss; // Fur の濡れのつや g = kGloss・w。Albedo.a から復号。Fur 以外は 0。
     vec3 albedo;
     float metallic;
     float roughness;
@@ -61,7 +62,7 @@ void EvaluateShadingModelDirect(ShadingModelSurface s,
     if (s.id == GBUFFER_SHADING_MODEL_FUR)
     {
         FurShadingConstants furConstants = MakeFurShadingConstants(c0, c1, c2);
-        EvaluateFurDirect(N, s.T, V, L, H, s.albedo, diffuseBrdf, s.strandRoughness, s.ao, s.p0,
+        EvaluateFurDirect(N, s.T, V, L, H, s.albedo, diffuseBrdf, s.strandRoughness, s.ao, s.furWetGloss,
                           lightRadiance, NdotLSigned, shadow, furConstants, diffuse, specular);
     }
     else if (s.id == GBUFFER_SHADING_MODEL_EYE)

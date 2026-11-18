@@ -12589,3 +12589,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: kGloss は遅延照明が画素ごとに材質の値を読めないため、照明の空き枠 `shadingModelParams[0].w` に全体の値（1.0、仮）として置いた。材質の `WetGloss` は照明に届かず、応答 0 の材質でも W > 0 の画素はつやが強まる。束の寄せは毛が自分のセルでしか判定されないためセルの内側に収め、束感は主に塊の境目の分け目として出る。垂れは頂点で領域の濡れやすさを掛けない。
 - Notes: 要起票: 材質ごとの濡れのつや `FurParams::WetGloss` を照明へ届ける作業（GBuffer の空きか照明の材質の表を、`lighting.frag`・`Common/ShadingModels.glsl`・`LightingPass.h` を通して読む）がどのタスクにも無い。今は全体の kGloss で代わりにしている（`Docs/Architecture/FurRendering.md` の濡れの節）。
 - Notes: 要起票: 合成のファントムの材質 `Assets/Materials/Fur/phantom.furmat.json`（G6-GR91-FUR-MATERIAL-ASSET が書式とともに置く）に、濡れの応答の出発点（WetDarken 0.38 = kDark 0.62 など。`Docs/Architecture/FurRendering.md` の表）を入れる作業がどのタスクにも無い。G6-GR91-FUR-MATERIAL-ASSET の done-when には濡れの値が無い。
+- U5 濡れのつや g = kGloss·w を Fur の画素の Albedo.a に符号化して照明へ届け、全体の kGloss の口を消す: 着地(直し 0 回)

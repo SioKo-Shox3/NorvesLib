@@ -299,7 +299,8 @@ void main()
         albedo, material.y, material.x, normal, normalize(geometricNormal), u_Environment.params,
         ResolveWetSurfaceResponse(-1.0, mvp.shadingParams.x, id == GBUFFER_SHADING_MODEL_DEFAULT_LIT),
         rainExposure, puddleCavity, fragWorldPos.xz);
-    outAlbedo = vec4(albedo, mvp.shadingParams.z > 0.5 ? 1.0 : textureSamples.Albedo.a);
+    outAlbedo = vec4(albedo, GBufferAlbedoAlphaForShadingModel(
+        mvp.shadingParams.z > 0.5 ? 1.0 : textureSamples.Albedo.a, id));
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
 
     // 視差補正済みの UV で標本した材質値をシェーディングモデルに応じて P0 と書く。
