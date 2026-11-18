@@ -5,6 +5,8 @@
 #include "ViewportSnapshot.h"
 #include "SceneProxy.h"
 #include "Rendering/ImpostorBatch.h"
+#include "Rendering/LayerImpostor.h"
+#include "Debug/DebugConfig.h"
 #include "DrawCommand.h"
 #include "PathTracingTransportScope.h"
 #include "RasterDirectBrdf.h"
@@ -172,6 +174,27 @@ namespace NorvesLib::Core::Rendering
          * @param proxy 追加するProxy
          */
         void AddMegaGeometryProxy(const MegaGeometryProxy &proxy);
+
+        /// 散布の個体を遠方で描くインポスターを登録する。無効な記述では以前の登録を保つ。
+        bool SetMegaMeshImpostor(MegaGeometry::MegaMeshHandle mesh, const MegaMeshImpostorDesc& desc);
+        /// 登録を外し、次のカリングから対象の個体を Mega に戻す。
+        void ClearMegaMeshImpostor(MegaGeometry::MegaMeshHandle mesh);
+        void ClearMegaMeshImpostors();
+        const MegaMeshImpostorDesc* FindMegaMeshImpostor(MegaGeometry::MegaMeshHandle mesh) const;
+
+        /// このフレームに描く散布のインポスター。
+        struct LayerImpostorInstance
+        {
+            uint64_t ObjectId = 0; // 散布の proxy の鍵
+            uint32_t ProxyIndex = 0; // 同じフレームの GenerateCommands まで有効な番号
+            float CrossfadeValue = 0.0f; // 板に渡す符号付きの遷移値。0 は遷移なし
+            bool bVisible = false; // 板の境界球が視錐台にかかる
+            bool bCastShadow = false; // 視錐台によらない太陽の影
+        };
+        const Container::VariableArray<LayerImpostorInstance>& GetLayerImpostorInstances() const
+        {
+            return m_LayerImpostorInstances;
+        }
 
         /** @brief ComponentId ごとの TLAS への参加を設定し、保持中の proxy にも反映する。除外の印は proxy の全消去後も保持する。 */
         void SetMegaGeometryRayTracing(uint64_t componentId, bool bRayTracing);
@@ -596,6 +619,42 @@ namespace NorvesLib::Core::Rendering
         const SceneViewStats &GetStats() const { return m_Stats; }
 
     private:
+        // 同じメッシュと XZ セルに属する個体の境界。
+        struct LayerImpostorCell
+        {
+            uint64_t MeshId = 0;
+            Container::VariableArray<uint32_t> ProxyIndices;
+            BoundingBox Bounds = BoundingBox::CreateInvalid();
+            float MinRadius = std::numeric_limits<float>::max();
+            float MaxRadius = 0.0f;
+            bool bValidBounds = true;
+        };
+
+        struct LayerImpostorSelectionState
+        {
+            uint8_t Selection = 0;
+            LODCrossfadeState Crossfade;
+        };
+
+#if NORVES_ENABLE_LOGGING
+        struct LayerImpostorLogStats
+        {
+            uint32_t Groups = 0;
+            uint32_t Mixed = 0;
+            uint32_t Mesh = 0;
+            uint32_t Impostor = 0;
+            uint32_t Crossfading = 0;
+            uint32_t Shadow = 0;
+        };
+        void LogLayerImpostorStats(const LayerImpostorLogStats& stats);
+#endif
+
+        // セルの索引を必要なときだけ作り直し、消えた個体の状態を捨てる。
+        void RebuildLayerImpostorCells();
+        void CullLayerImpostors(const Math::Vector3& cameraPosition,
+                                const SceneViewScreenSizeContext& context,
+                                const Math::Matrix4x4& viewProjection);
+
         /**
          * @brief 視錐台カリングを実行
          * @param proxy チェック対象のProxy
@@ -681,6 +740,20 @@ namespace NorvesLib::Core::Rendering
         Container::UnorderedMap<uint64_t, float> m_ImpostorMeshCrossfadeValues;
         Container::UnorderedMap<uint64_t, float> m_ImpostorMegaCrossfadeValues;
         Container::UnorderedMap<uint64_t, float> m_NextImpostorMegaCrossfadeValues;
+
+        // 散布は板と交わらない鍵・状態の表で管理する。
+        Container::UnorderedMap<uint64_t, MegaMeshImpostorDesc> m_MegaMeshImpostors;
+        Container::VariableArray<LayerImpostorCell> m_LayerImpostorCells;
+        Container::UnorderedMap<uint64_t, LayerImpostorSelectionState> m_LayerImpostorStates;
+        Container::UnorderedSet<uint64_t> m_SuppressedLayerMegaIds;
+        Container::UnorderedSet<uint64_t> m_NextSuppressedLayerMegaIds;
+        Container::UnorderedMap<uint64_t, float> m_LayerMegaCrossfadeValues;
+        Container::UnorderedMap<uint64_t, float> m_NextLayerMegaCrossfadeValues;
+        Container::VariableArray<LayerImpostorInstance> m_LayerImpostorInstances;
+        bool m_bLayerImpostorCellsDirty = false;
+#if NORVES_ENABLE_LOGGING
+        LayerImpostorLogStats m_LastLayerImpostorLogStats;
+#endif
 
         bool m_bHasLODCrossfadeClock = false;
         bool m_bHasAdvancedLODCrossfadeFrame = false;
