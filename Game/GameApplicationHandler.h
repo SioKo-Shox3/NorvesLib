@@ -311,6 +311,10 @@ namespace Game
         float m_ShishaSunElevationDegrees = 40.0f;
         /// --shisha-overcast で曇天を指定したか。
         bool m_bShishaOvercast = false;
+        /// --shisha-vanish-set で指定された消滅のセット。
+        NorvesLib::Core::Container::String m_ShishaVanishSet = TEXT("ash");
+        /// 消滅のセットが指定済みか。
+        bool m_bShishaVanishSetSet = false;
         /// 数値引数が指定済みか。
         bool m_bShishaCameraOrbitSet = false;
         bool m_bShishaScaleSet = false;

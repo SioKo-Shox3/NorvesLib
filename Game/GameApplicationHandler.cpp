@@ -1161,6 +1161,8 @@ namespace Game
         m_DogMovementCaptureDir = {};
 #if NORVES_BUILD_DEVELOPMENT
         m_ShishaShowcaseScene = {};
+        m_ShishaVanishSet = TEXT("ash");
+        m_bShishaVanishSetSet = false;
         m_ShishaCameraOrbit = 0.0f;
         m_ShishaScale = 1.0f;
         m_ShishaSunElevationDegrees = 40.0f;
@@ -1947,7 +1949,7 @@ namespace Game
                 m_DogMovementCaptureDir = dogCaptureDir;
                 continue;
             }
-            // シ者の場面とカメラ・太陽・天候の指定は開発ビルドの専用モードに渡す。
+            // シ者の場面とカメラ・太陽・天候・消滅の指定は開発ビルドの専用モードに渡す。
             String shishaValue;
             if (args[i] == TEXT("--shisha-showcase") ||
                 TryStripPrefix(args[i], TEXT("--shisha-showcase="), shishaValue))
@@ -2045,6 +2047,28 @@ namespace Game
                 m_bShishaSunElevationSet = true;
 #else
                 LOG_ERROR("--shisha-sun-elevation は開発ビルドだけで使えます");
+                return false;
+#endif
+                continue;
+            }
+            if (args[i] == TEXT("--shisha-vanish-set") ||
+                TryStripPrefix(args[i], TEXT("--shisha-vanish-set="), shishaValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                if (m_bShishaVanishSetSet)
+                {
+                    LOG_ERROR("--shisha-vanish-set が重複しています");
+                    return false;
+                }
+                if (shishaValue != TEXT("ash") && shishaValue != TEXT("light"))
+                {
+                    LOG_ERROR("--shisha-vanish-set は ash または light で指定してください");
+                    return false;
+                }
+                m_ShishaVanishSet = shishaValue;
+                m_bShishaVanishSetSet = true;
+#else
+                LOG_ERROR("--shisha-vanish-set は開発ビルドだけで使えます");
                 return false;
 #endif
                 continue;
@@ -4226,6 +4250,11 @@ namespace Game
             LOG_ERROR("--shisha-sun-elevation には --shisha-showcase が必要です");
             return false;
         }
+        if (m_bShishaVanishSetSet && m_ShishaShowcaseScene.empty())
+        {
+            LOG_ERROR("--shisha-vanish-set には --shisha-showcase が必要です");
+            return false;
+        }
         if (m_bShishaOvercast && m_ShishaShowcaseScene.empty())
         {
             LOG_ERROR("--shisha-overcast には --shisha-showcase が必要です");
@@ -6021,7 +6050,8 @@ namespace Game
         registerMode(
             ShishaShowcase,
             [sceneName = m_ShishaShowcaseScene, orbit = m_ShishaCameraOrbit, scale = m_ShishaScale,
-             sunElevation = m_ShishaSunElevationDegrees, bOvercast = m_bShishaOvercast](
+             sunElevation = m_ShishaSunElevationDegrees, bOvercast = m_bShishaOvercast,
+             vanishSet = m_ShishaVanishSet](
                 const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<ShishaShowcaseMode>();
@@ -6030,6 +6060,7 @@ namespace Game
                 mode->GetData().m_StandinScale = scale;
                 mode->GetData().m_SunElevationDegrees = sunElevation;
                 mode->GetData().m_bOvercast = bOvercast;
+                mode->GetData().m_VanishSet = vanishSet;
                 return mode;
             });
 #endif
