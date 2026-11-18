@@ -12617,3 +12617,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
 - Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
 - 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。
+- U1 NVAUD v1 の定数・型と、v0 だけ・v1 だけ・両方を読むパーサ: 着地(直し 0 回)
