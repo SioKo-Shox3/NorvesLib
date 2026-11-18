@@ -1,8 +1,9 @@
-﻿// 画面に依存しないレベルマーカーの配置編集と保存・読み込みを提供する。
+﻿// 画面に依存しないレベルマーカーと地形マスクの編集・保存・読み込みを提供する。
 #pragma once
 
 #include "Container/String.h"
 #include "Container/VariableArray.h"
+#include "Gameplay/Level/LevelPaintMask.h"
 #include "Math/GeometryTypes.h"
 #include "Scene/LevelSnap.h"
 #include <cstddef>
@@ -53,6 +54,10 @@ namespace NorvesLib::Modules::Gameplay::Level
         static constexpr float kDefaultRayDistance = 2000.0f;
         static constexpr float kDefaultMaxDrop = 500.0f;
         static constexpr float kDefaultPickRadius = 1.5f;
+        /// 草の密度の基準値。乗算時に中立となる値。
+        static constexpr uint8_t kGrassDensityBaselineValue = 255;
+        /// 枯れの基準値。手続きで生成した基準値に差し替えるまで使う。
+        static constexpr uint8_t kDrynessBaselineValue = 0;
 
         /// 持ち主への通知先を借用する。nullptr で通知先を外す。
         void SetEntityOwner(ILevelEditEntityOwner* owner);
@@ -112,7 +117,44 @@ namespace NorvesLib::Modules::Gameplay::Level
         bool LoadMarkers(Core::World& world, const Core::Container::String& filePath,
                          Core::Container::VariableArray<Core::Entity*>* pOutRoots = nullptr);
 
+        /// 全層を配置へ合わせ、置き場の PNG を読む。ファイルが無い層は基準値で始める。
+        /// 読めない層があれば状態を保って false。成功時に置き場と各層の読込記録を保持する。
+        /// エラー出力は最初に空にする。
+        bool BindPaintMasks(const LevelPaintMaskLayout& layout, const Core::Container::String& masksDirectory,
+                            Core::Container::String* pOutError = nullptr);
+        /// 全層を空にし、置き場と読込記録を忘れる。
+        void UnbindPaintMasks();
+        /// 全層が配置に合わせ済みなら true。
+        bool HasPaintMasks() const;
+        /// 合わせた配置。合わせていなければ無効な配置を返す。
+        const LevelPaintMaskLayout& GetPaintMaskLayout() const;
+        /// 覚えている置き場を返す。
+        const Core::Container::String& GetPaintMaskDirectory() const;
+        /// 無効な層・合わせていない場合は nullptr。
+        const LevelPaintMask* GetPaintMask(ELevelPaintLayer layer) const;
+        /// 最後の BindPaintMasks・LoadPaintMasks でファイルから読んだ層なら true。
+        bool WasPaintMaskLoadedFromFile(ELevelPaintLayer layer) const;
+
+        /// 地面の点の XZ を中心に塗る・消す。変わった標本数を返す。
+        /// 合わせていない場合や無効な層では 0。
+        uint32_t PaintMask(ELevelPaintLayer layer, const Math::Vector3& groundPoint, const LevelPaintBrush& brush);
+        uint32_t EraseMask(ELevelPaintLayer layer, const Math::Vector3& groundPoint, const LevelPaintBrush& brush);
+        /// 基準値を差し替える。bResetValues なら値も戻す。未設定・無効な層・標本数違いは false。
+        bool SetPaintMaskBaseline(ELevelPaintLayer layer, Core::Container::Span<const uint8_t> baseline, bool bResetValues);
+
+        /// 全層を指定の置き場へ保存する。空なら覚えている置き場を使う。
+        /// 成功した層の変更の印を消す。一層でも失敗すれば false で、成功したファイルは残る。
+        /// 保存数は成功時のみ返し、保存数とエラー出力は最初に空にする。
+        bool SavePaintMasks(const Core::Container::String& masksDirectory, size_t* pOutSavedLayers = nullptr,
+                            Core::Container::String* pOutError = nullptr);
+        /// 覚えている置き場から全層を読み直す。基準値は保ち、無い層の値は基準値へ戻す。
+        /// 読めない層があれば状態を保って false。未設定なら false。エラー出力は最初に空にする。
+        bool LoadPaintMasks(Core::Container::String* pOutError = nullptr);
+
     private:
+        LevelPaintMask m_PaintMasks[kLevelPaintLayerCount];
+        bool m_bPaintMaskLoadedFromFile[kLevelPaintLayerCount] = {};
+        Core::Container::String m_PaintMaskDirectory;
         ILevelEditEntityOwner* m_pEntityOwner = nullptr;
         uint64_t m_SelectedObjectId = 0;
     };
