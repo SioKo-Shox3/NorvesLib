@@ -8154,7 +8154,7 @@
 - notes: 設計はロードマップ 2363 行（GR93 の 5. 草の密度・枯れのペイント）。マスクの形式は GR42（草の場）・GR45（枯れ度の地図）・GR89（地形のマスクの cook）で決まるので needs-gr に入れた（ロードマップ 2761 行のリスク）。G5 の `G5-GR42-GRASS-FIELD-ASSET` と `G5-GR89-TERRAIN-MASKS` が採った層の名前と寸法に合わせ、新しい形式を作らない。作者の方針（企画で保留の提案もエンジンの機能として採る）により、『枯れた草地』も採る前提で枯れのマスクの初期値の生成を入れる。GR89 の cook の試験の名前は、その束が決めた名前で verify に足してよい。やらないこと: 草の描画（GR43）、枯れ度の実行時の評価（GR45）。
 
 ## G12-GR48-LAYER-SHADOW: 大規模の配置の層の遠い個体をインポスターで描き、インポスターが切り抜いた形の影を太陽の影へ落とす
-- status: todo
+- status: done
 - after: G12-GR48-CROSSFADE, G12-GR47-INSTANCE-VARIATION, G12-GR47-PLACEMENT-COOK, G12-GR47-SCATTER-COLLIDERS
 - gr: GR48
 - needs-gr: GR47
