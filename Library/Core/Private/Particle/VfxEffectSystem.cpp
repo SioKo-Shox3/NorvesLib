@@ -17,6 +17,11 @@ namespace NorvesLib::Core::Particle
 {
     namespace
     {
+        constexpr VfxRandomDraw kLifetimeRandomDraw = static_cast<VfxRandomDraw>(9u);
+        static_assert(static_cast<uint32_t>(kLifetimeRandomDraw) > static_cast<uint32_t>(VfxRandomDraw::Activation));
+        static_assert(static_cast<uint32_t>(kLifetimeRandomDraw) > Rendering::kGpuSkinRandomDrawBonePick &&
+            static_cast<uint32_t>(kLifetimeRandomDraw) < Rendering::kGpuSkinRandomDrawAttemptBase);
+
         bool IsFinite(const Math::Vector3& value)
         {
             return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
@@ -86,7 +91,7 @@ namespace NorvesLib::Core::Particle
             }
             case VfxModuleType::InitLifetime:
             {
-                constexpr const char* names[] = {"Lifetime"};
+                constexpr const char* names[] = {"Lifetime", "LifetimeMax"};
                 return ArgumentAt(names, index);
             }
             case VfxModuleType::InitColor:
@@ -101,7 +106,8 @@ namespace NorvesLib::Core::Particle
             }
             case VfxModuleType::InitShape:
             {
-                constexpr const char* names[] = {"Shape", "Radius", "ConeAngle", "ConeLength", "BoxHalfExtents", "CameraBoxHalfWidth", "CameraBoxHeight"};
+                constexpr const char* names[] = {"Shape", "Radius", "ConeAngle", "ConeLength", "BoxHalfExtents", "CameraBoxHalfWidth", "CameraBoxHeight",
+                    "SkinAccept", "SkinNormalSpeed", "SkinVelocityInheritance", "BoneRole", "BoneBindPosition"};
                 return ArgumentAt(names, index);
             }
             case VfxModuleType::Acceleration:
@@ -165,7 +171,8 @@ namespace NorvesLib::Core::Particle
             case VfxModuleType::GpuSpriteRenderer:
             {
                 constexpr const char* names[] = {"Orientation", "Blend", "Pass", "SoftDistance", "Lighting", "FogInfluence",
-                    "StreakShutterSeconds", "SubPixelCompensation", "NearFadeDistance", "Texture", "DrawInSlotOrder", "FlipbookFrames"};
+                    "StreakShutterSeconds", "SubPixelCompensation", "NearFadeDistance", "Texture", "DrawInSlotOrder", "FlipbookFrames",
+                    "SpinSpeedMin", "SpinSpeedMax", "PlateSides", "PlateJitter", "MaxSize", "MaxScreenFraction"};
                 return ArgumentAt(names, index);
             }
             default:
@@ -266,8 +273,17 @@ namespace NorvesLib::Core::Particle
             Rendering::GpuParticleBurst Burst{};
         };
 
+        struct PendingRateSegment
+        {
+            VfxEffectHandle Handle;
+            uint32_t EmitterIndex = 0u;
+            uint32_t Epoch = 0u;
+            double SpawnAmount = 0.0;
+        };
+
         Rendering::GpuParticleEmitterAllocator Allocator{Rendering::kGpuParticlePoolCapacity};
         VariableArray<PendingBurst> Bursts;
+        VariableArray<PendingRateSegment> RateSegments;
         uint32_t OverflowCount = 0u;
         float PendingDeltaTime = 0.0f;
         float PendingUnscaledDeltaTime = 0.0f;
@@ -356,6 +372,7 @@ namespace NorvesLib::Core::Particle
         if (m_GpuState)
         {
             m_GpuState->Bursts.clear();
+            m_GpuState->RateSegments.clear();
             m_GpuState->OverflowCount = 0u;
         }
     }
@@ -383,6 +400,81 @@ namespace NorvesLib::Core::Particle
             return false;
         }
         m_Instances[handle.Index].Desc.bEnabled = bEnabled;
+        return true;
+    }
+
+    bool VfxEffectSystem::SetEmitterEnabled(VfxEffectHandle handle, uint32_t emitterIndex, bool bEnabled)
+    {
+        if (!IsLiveInstance(handle) || emitterIndex >= m_Instances[handle.Index].Emitters.size())
+        {
+            return false;
+        }
+        m_Instances[handle.Index].Emitters[emitterIndex].bEnabled = bEnabled;
+        return true;
+    }
+
+    bool VfxEffectSystem::SetEmitterSpawnRate(VfxEffectHandle handle, uint32_t emitterIndex, float ratePerSecond)
+    {
+        if (!IsLiveInstance(handle) || emitterIndex >= m_Instances[handle.Index].Emitters.size() || !std::isfinite(ratePerSecond))
+        {
+            return false;
+        }
+        InstanceSlot& slot = m_Instances[handle.Index];
+        EmitterState& emitter = slot.Emitters[emitterIndex];
+        const float nextRate = ratePerSecond < 0.0f ? -1.0f : ratePerSecond;
+        if (emitter.Executor == VfxExecutor::Gpu && emitter.SpawnRateOverride != nextRate && emitter.GpuPendingDeltaTime > 0.0f)
+        {
+            // GPU の写しを作るまでの区間を、変更前の生成率で確定する。
+            float previousRate = emitter.SpawnRateOverride;
+            if (previousRate < 0.0f)
+            {
+                previousRate = 0.0f;
+                const VfxEmitterAsset& asset = slot.Asset.Emitters[emitterIndex];
+                for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
+                {
+                    const VfxModule& module = asset.Modules[moduleIndex];
+                    if (module.Type == VfxModuleType::SpawnRate)
+                    {
+                        previousRate += module.Values[emitter.Bindings[moduleIndex].Arguments[0]].Vector.x;
+                    }
+                }
+            }
+            GpuExecutionState& gpu = EnsureGpuState();
+            GpuExecutionState::PendingRateSegment* pending = nullptr;
+            for (GpuExecutionState::PendingRateSegment& candidate : gpu.RateSegments)
+            {
+                if (candidate.Handle == handle && candidate.EmitterIndex == emitterIndex && candidate.Epoch == emitter.GpuEpoch)
+                {
+                    pending = &candidate;
+                    break;
+                }
+            }
+            if (pending == nullptr)
+            {
+                gpu.RateSegments.push_back({handle, emitterIndex, emitter.GpuEpoch, 0.0});
+                pending = &gpu.RateSegments.back();
+            }
+            if (previousRate > 0.0f)
+            {
+                pending->SpawnAmount += static_cast<double>(previousRate) * emitter.GpuPendingDeltaTime;
+            }
+            emitter.GpuPendingDeltaTime = 0.0f;
+        }
+        emitter.SpawnRateOverride = nextRate;
+        return true;
+    }
+
+    bool VfxEffectSystem::SetInstanceSkinSource(VfxEffectHandle handle, uint64_t componentId,
+        const Rendering::GpuSkinHumanoidJointTable* joints, uint32_t jointCount)
+    {
+        if (!IsLiveInstance(handle))
+        {
+            return false;
+        }
+        VfxInstanceDesc& desc = m_Instances[handle.Index].Desc;
+        desc.SkinComponentId = componentId;
+        desc.SkinJoints = joints != nullptr ? *joints : Rendering::GpuSkinHumanoidJointTable{};
+        desc.SkinJointCount = jointCount;
         return true;
     }
 
@@ -590,7 +682,10 @@ namespace NorvesLib::Core::Particle
                 const float emitterDeltaTime = emitter.TimeChannel == VfxTimeChannel::Unscaled ? unscaledDeltaTime : deltaTime;
                 if (emitter.Executor == VfxExecutor::Gpu)
                 {
-                    emitter.GpuPendingDeltaTime += emitter.TimeChannel == VfxTimeChannel::Unscaled ? gpuDeltaTime : deltaTime;
+                    if (emitter.bEnabled)
+                    {
+                        emitter.GpuPendingDeltaTime += emitter.TimeChannel == VfxTimeChannel::Unscaled ? gpuDeltaTime : deltaTime;
+                    }
                     if (slot.Desc.bEnabled)
                     {
                         const VfxEmitterAsset& asset = slot.Asset.Emitters[emitterIndex];
@@ -598,7 +693,7 @@ namespace NorvesLib::Core::Particle
                         {
                             const VfxModule& module = asset.Modules[moduleIndex];
                             const ModuleBinding& binding = emitter.Bindings[moduleIndex];
-                            if (module.Type == VfxModuleType::SpawnBurst)
+                            if (module.Type == VfxModuleType::SpawnBurst && emitter.bEnabled)
                             {
                                 const double time = module.Values[binding.Arguments[1]].Vector.x;
                                 if (start <= time && time < end)
@@ -696,28 +791,35 @@ namespace NorvesLib::Core::Particle
                 }
 
                 const VfxEmitterAsset& asset = slot.Asset.Emitters[emitterIndex];
-                float rate = 0.0f;
-                for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
+                if (emitter.bEnabled)
                 {
-                    const VfxModule& module = asset.Modules[moduleIndex];
-                    if (module.Type == VfxModuleType::SpawnRate)
+                    float rate = 0.0f;
+                    for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
                     {
-                        rate += module.Values[emitter.Bindings[moduleIndex].Arguments[0]].Vector.x;
-                    }
-                }
-                const uint32_t continuousCount = VfxAdvanceSpawnAccumulator(emitter.SpawnAccumulator, rate, emitterDeltaTime);
-                SpawnParticles(slot, emitter, continuousCount, slot.Desc.Position, end, 0.0f, context);
-
-                for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
-                {
-                    const VfxModule& module = asset.Modules[moduleIndex];
-                    const ModuleBinding& binding = emitter.Bindings[moduleIndex];
-                    if (module.Type == VfxModuleType::SpawnBurst)
-                    {
-                        const double time = module.Values[binding.Arguments[1]].Vector.x;
-                        if (start <= time && time < end)
+                        const VfxModule& module = asset.Modules[moduleIndex];
+                        if (module.Type == VfxModuleType::SpawnRate)
                         {
-                            SpawnParticles(slot, emitter, module.Values[binding.Arguments[0]].UInt, slot.Desc.Position, end, 0.0f, context);
+                            rate += module.Values[emitter.Bindings[moduleIndex].Arguments[0]].Vector.x;
+                        }
+                    }
+                    if (emitter.SpawnRateOverride >= 0.0f)
+                    {
+                        rate = emitter.SpawnRateOverride;
+                    }
+                    const uint32_t continuousCount = VfxAdvanceSpawnAccumulator(emitter.SpawnAccumulator, rate, emitterDeltaTime);
+                    SpawnParticles(slot, emitter, continuousCount, slot.Desc.Position, end, 0.0f, context);
+
+                    for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
+                    {
+                        const VfxModule& module = asset.Modules[moduleIndex];
+                        const ModuleBinding& binding = emitter.Bindings[moduleIndex];
+                        if (module.Type == VfxModuleType::SpawnBurst)
+                        {
+                            const double time = module.Values[binding.Arguments[1]].Vector.x;
+                            if (start <= time && time < end)
+                            {
+                                SpawnParticles(slot, emitter, module.Values[binding.Arguments[0]].UInt, slot.Desc.Position, end, 0.0f, context);
+                            }
                         }
                     }
                 }
@@ -771,7 +873,7 @@ namespace NorvesLib::Core::Particle
     }
 
     Rendering::GpuEmitterParams VfxEffectSystem::PackGpuEmitterParams(const InstanceSlot& slot, uint32_t emitterIndex,
-        EmitterState& emitter, const VariableArray<uint32_t>& frameIndices, Rendering::GpuParticleScene& out)
+        EmitterState& emitter, const VariableArray<uint32_t>& frameIndices, Rendering::GpuParticleScene& out, bool& outSkinResolved)
     {
         Rendering::GpuEmitterParams params{};
         params.PlaneCollision.ChildEmitter = Rendering::kGpuParticleInvalidEmitter;
@@ -802,6 +904,13 @@ namespace NorvesLib::Core::Particle
         };
         params.Seed = emitter.StreamSeed;
         params.Lifetime = emitter.Lifetime;
+        params.LifetimeMax = emitter.LifetimeMax == 0.0f ? emitter.Lifetime : emitter.LifetimeMax;
+        params.SpinSpeedMin = emitter.SpinSpeedMin;
+        params.SpinSpeedMax = emitter.SpinSpeedMax;
+        params.MaxSize = emitter.MaxSize;
+        params.MaxScreenFraction = emitter.MaxScreenFraction;
+        params.PlateSides = emitter.PlateSides;
+        params.PlateJitter = emitter.PlateJitter;
         const Math::Vector3 position = emitter.Shape == VfxSpawnShape::CameraBox ? emitter.Offset : slot.Desc.Position + emitter.Offset;
         const auto copyVector3 = [](float* destination, const Math::Vector3& value)
         {
@@ -837,6 +946,37 @@ namespace NorvesLib::Core::Particle
         if (emitter.TimeChannel == VfxTimeChannel::Unscaled)
         {
             params.Flags |= Rendering::kGpuEmitterFlagUnscaledTime;
+        }
+
+        outSkinResolved = true;
+        if (emitter.Shape == VfxSpawnShape::SkinSurface)
+        {
+            Rendering::GpuSkinSurfaceEmitterDesc desc;
+            desc.NormalSpeed = emitter.SkinNormalSpeed;
+            desc.VelocityInheritance = emitter.SkinVelocityInheritance;
+            desc.Accept = emitter.SkinAccept;
+            if (desc.Accept == Rendering::GpuSkinAcceptMode::BoneMask)
+            {
+                desc.Mask.Kind = Rendering::GpuSkinBoneSelectKind::HumanoidRole;
+                desc.Mask.HumanoidRole = emitter.BoneRole;
+            }
+            outSkinResolved = Rendering::ApplyGpuSkinSurfaceEmitter(desc, slot.Desc.SkinJoints, slot.Desc.SkinJointCount, params);
+        }
+        else if (emitter.Shape == VfxSpawnShape::Bone)
+        {
+            Rendering::GpuBoneEmitterDesc desc;
+            desc.Bone.Kind = Rendering::GpuSkinBoneSelectKind::HumanoidRole;
+            desc.Bone.HumanoidRole = emitter.BoneRole;
+            desc.BindPosition[0] = emitter.BoneBindPosition.x;
+            desc.BindPosition[1] = emitter.BoneBindPosition.y;
+            desc.BindPosition[2] = emitter.BoneBindPosition.z;
+            desc.VelocityInheritance = emitter.SkinVelocityInheritance;
+            outSkinResolved = Rendering::ApplyGpuBoneEmitter(desc, slot.Desc.SkinJoints, slot.Desc.SkinJointCount, params);
+        }
+        if (!outSkinResolved && !emitter.bGpuSkinSourceWarned)
+        {
+            LOG_WARNING("GPU エミッタ %s のスキンの骨を解決できないため生成を止めます", slot.Asset.Emitters[emitterIndex].Name.c_str());
+            emitter.bGpuSkinSourceWarned = true;
         }
 
         params.CurveKeyOffset = static_cast<uint32_t>(out.CurveKeys.size());
@@ -1035,8 +1175,10 @@ namespace NorvesLib::Core::Particle
 
         VariableArray<Rendering::GpuParticleSpawnRequest> requests;
         VariableArray<Rendering::GpuParticleSpawnState> states;
+        VariableArray<uint8_t> skinSourcesResolved;
         requests.reserve(references.size());
         states.reserve(references.size());
+        skinSourcesResolved.reserve(references.size());
         out.Emitters.reserve(references.size());
         for (uint32_t frameIndex = 0u; frameIndex < references.size(); ++frameIndex)
         {
@@ -1053,14 +1195,20 @@ namespace NorvesLib::Core::Particle
             frame.World = Math::MatrixUtils::CreateTranslation(slot.Desc.Position);
             frame.PreviousWorld = Math::MatrixUtils::CreateTranslation(
                 slot.bHasPreviousGpuPosition ? slot.PreviousGpuPosition : slot.Desc.Position);
-            frame.bEnabled = slot.Desc.bEnabled;
-            frame.Params = PackGpuEmitterParams(slot, reference.EmitterIndex, emitter, frameIndices[reference.InstanceIndex], out);
+            frame.bEnabled = slot.Desc.bEnabled && emitter.bEnabled;
+            if (emitter.Shape == VfxSpawnShape::SkinSurface || emitter.Shape == VfxSpawnShape::Bone)
+            {
+                frame.SkinComponentId = slot.Desc.SkinComponentId;
+            }
+            bool bSkinResolved = true;
+            frame.Params = PackGpuEmitterParams(slot, reference.EmitterIndex, emitter, frameIndices[reference.InstanceIndex], out, bSkinResolved);
+            skinSourcesResolved.push_back(bSkinResolved ? 1u : 0u);
             frame.Params.PoolOffset = range.Offset;
             frame.Params.Capacity = range.Capacity;
             out.Emitters.push_back(frame);
 
             float rate = 0.0f;
-            if (slot.Desc.bEnabled)
+            if (frame.bEnabled && bSkinResolved)
             {
                 const VfxEmitterAsset& asset = slot.Asset.Emitters[reference.EmitterIndex];
                 for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
@@ -1071,10 +1219,49 @@ namespace NorvesLib::Core::Particle
                         rate += module.Values[emitter.Bindings[moduleIndex].Arguments[0]].Vector.x;
                     }
                 }
+                if (emitter.SpawnRateOverride >= 0.0f)
+                {
+                    rate = emitter.SpawnRateOverride;
+                }
             }
-            requests.push_back({frameIndex, rate, slot.Desc.bEnabled ? emitter.GpuPendingDeltaTime : 0.0f,
-                slot.Desc.bEnabled ? emitter.GpuPendingBurstCount : 0u, range.Capacity});
+            const bool bCanSpawn = frame.bEnabled && bSkinResolved;
+            float spawnDeltaTime = bCanSpawn ? emitter.GpuPendingDeltaTime : 0.0f;
+            if (bCanSpawn)
+            {
+                for (const GpuExecutionState::PendingRateSegment& pending : gpu.RateSegments)
+                {
+                    if (pending.Handle.Index == reference.InstanceIndex && pending.Handle.Generation == slot.Generation &&
+                        pending.EmitterIndex == reference.EmitterIndex && pending.Epoch == emitter.GpuEpoch)
+                    {
+                        // 変更後の区間を加え、生成数の期待値としてプランナーに渡す。
+                        const double remainder = rate > 0.0f ? static_cast<double>(rate) * spawnDeltaTime : 0.0;
+                        rate = static_cast<float>(std::fmin(pending.SpawnAmount + remainder,
+                            static_cast<double>(std::numeric_limits<float>::max())));
+                        spawnDeltaTime = 1.0f;
+                        break;
+                    }
+                }
+            }
+            requests.push_back({frameIndex, rate, spawnDeltaTime,
+                bCanSpawn ? emitter.GpuPendingBurstCount : 0u, emitter.bEnabled && bSkinResolved ? range.Capacity : 0u});
             states.push_back({emitter.SpawnAccumulator, emitter.NextSerial});
+        }
+        for (Rendering::GpuParticleEmitterFrame& frame : out.Emitters)
+        {
+            const auto suppressUnresolvedChild = [&skinSourcesResolved](uint32_t& childIndex)
+            {
+                if (childIndex != Rendering::kGpuParticleInvalidEmitter && skinSourcesResolved[childIndex] == 0u)
+                {
+                    childIndex = Rendering::kGpuParticleInvalidEmitter;
+                }
+            };
+            suppressUnresolvedChild(frame.Params.PlaneCollision.ChildEmitter);
+            suppressUnresolvedChild(frame.Params.HeightFieldCollision.ChildEmitter);
+            suppressUnresolvedChild(frame.Params.DepthCollision.ChildEmitter);
+            suppressUnresolvedChild(frame.Params.PlaneChild.SecondChildEmitter);
+            suppressUnresolvedChild(frame.Params.HeightFieldChild.SecondChildEmitter);
+            suppressUnresolvedChild(frame.Params.DepthChild.SecondChildEmitter);
+            suppressUnresolvedChild(frame.Params.ShelterChildEmitter);
         }
         out.JobSpawnCount = Rendering::GpuParticleSpawnPlanner::Plan(
             Container::Span<const Rendering::GpuParticleSpawnRequest>(requests.data(), requests.size()),
@@ -1084,7 +1271,7 @@ namespace NorvesLib::Core::Particle
             const FrameReference& reference = references[frameIndex];
             InstanceSlot& slot = m_Instances[reference.InstanceIndex];
             EmitterState& emitter = slot.Emitters[reference.EmitterIndex];
-            if (slot.Desc.bEnabled)
+            if (out.Emitters[frameIndex].bEnabled && skinSourcesResolved[frameIndex] != 0u)
             {
                 emitter.SpawnAccumulator = states[frameIndex].Accumulator;
                 emitter.NextSerial = states[frameIndex].NextSerial;
@@ -1111,7 +1298,8 @@ namespace NorvesLib::Core::Particle
             }
             EmitterState& emitter = slot.Emitters[pending.EmitterIndex];
             const uint32_t frameIndex = frameIndices[pending.Handle.Index][pending.EmitterIndex];
-            if (frameIndex == Rendering::kGpuParticleInvalidEmitter || emitter.GpuEpoch != pending.Epoch)
+            if (frameIndex == Rendering::kGpuParticleInvalidEmitter || emitter.GpuEpoch != pending.Epoch ||
+                skinSourcesResolved[frameIndex] == 0u)
             {
                 continue;
             }
@@ -1134,6 +1322,7 @@ namespace NorvesLib::Core::Particle
         gpu.PendingDeltaTime = 0.0f;
         gpu.PendingUnscaledDeltaTime = 0.0f;
         gpu.Bursts.clear();
+        gpu.RateSegments.clear();
         gpu.OverflowCount = 0u;
         for (uint32_t instanceIndex = 0u; instanceIndex < m_Instances.size(); ++instanceIndex)
         {
@@ -1458,12 +1647,20 @@ namespace NorvesLib::Core::Particle
         emitter.VelocityMin = Math::Vector3(0.0f, 0.0f, 0.0f);
         emitter.VelocityMax = Math::Vector3(0.0f, 0.0f, 0.0f);
         emitter.Lifetime = 1.0f;
+        emitter.LifetimeMax = 0.0f;
+        emitter.SpinSpeedMin = 0.0f;
+        emitter.SpinSpeedMax = 0.0f;
+        emitter.MaxSize = 0.0f;
+        emitter.MaxScreenFraction = 0.0f;
+        emitter.PlateSides = 0u;
+        emitter.PlateJitter = 0.0f;
         emitter.Color = Math::Vector4(1.0f, 1.0f, 1.0f, 1.0f);
         emitter.Size = Math::Vector2(8.0f, 8.0f);
         emitter.bHasVelocity = false;
         emitter.bHasRenderer = false;
         emitter.bHasMeshRenderer = false;
         emitter.FlipbookIndex = -1;
+        bool bGpuRendererRefreshed = false;
         for (uint32_t moduleIndex = 0u; moduleIndex < asset.Modules.size(); ++moduleIndex)
         {
             const VfxModule& module = asset.Modules[moduleIndex];
@@ -1481,6 +1678,7 @@ namespace NorvesLib::Core::Particle
                 break;
             case VfxModuleType::InitLifetime:
                 emitter.Lifetime = first.Vector.x;
+                emitter.LifetimeMax = module.Values[binding.Arguments[1]].Vector.x;
                 break;
             case VfxModuleType::InitColor:
                 emitter.Color = first.Vector;
@@ -1496,6 +1694,11 @@ namespace NorvesLib::Core::Particle
                 emitter.BoxHalfExtents = ToVector3(module.Values[binding.Arguments[4]]);
                 emitter.CameraBoxHalfWidth = module.Values[binding.Arguments[5]].Vector.x;
                 emitter.CameraBoxHeight = module.Values[binding.Arguments[6]].Vector.x;
+                emitter.SkinAccept = static_cast<Rendering::GpuSkinAcceptMode>(module.Values[binding.Arguments[7]].UInt);
+                emitter.SkinNormalSpeed = module.Values[binding.Arguments[8]].Vector.x;
+                emitter.SkinVelocityInheritance = module.Values[binding.Arguments[9]].Vector.x;
+                emitter.BoneRole = module.Values[binding.Arguments[10]].UInt;
+                emitter.BoneBindPosition = ToVector3(module.Values[binding.Arguments[11]]);
                 break;
             case VfxModuleType::Acceleration:
                 emitter.Acceleration += ToVector3(first);
@@ -1569,6 +1772,18 @@ namespace NorvesLib::Core::Particle
                         emitter.FlipbookIndex = static_cast<int32_t>(index);
                         break;
                     }
+                }
+                break;
+            case VfxModuleType::GpuSpriteRenderer:
+                if (!bGpuRendererRefreshed)
+                {
+                    emitter.SpinSpeedMin = module.Values[binding.Arguments[12]].Vector.x;
+                    emitter.SpinSpeedMax = module.Values[binding.Arguments[13]].Vector.x;
+                    emitter.PlateSides = module.Values[binding.Arguments[14]].UInt;
+                    emitter.PlateJitter = module.Values[binding.Arguments[15]].Vector.x;
+                    emitter.MaxSize = module.Values[binding.Arguments[16]].Vector.x;
+                    emitter.MaxScreenFraction = module.Values[binding.Arguments[17]].Vector.x;
+                    bGpuRendererRefreshed = true;
                 }
                 break;
             case VfxModuleType::MeshRenderer:
@@ -1784,7 +1999,8 @@ namespace NorvesLib::Core::Particle
                     particle.Velocity = tangent * localVelocity.x + bitangent * localVelocity.y + *orientationNormal * localVelocity.z;
                 }
             }
-            if (emitter.Shape != VfxSpawnShape::Point)
+            if (emitter.Shape != VfxSpawnShape::Point && emitter.Shape != VfxSpawnShape::SkinSurface &&
+                emitter.Shape != VfxSpawnShape::Bone)
             {
                 const float a = draw(VfxRandomDraw::ShapeA);
                 const float b = draw(VfxRandomDraw::ShapeB);
@@ -1828,6 +2044,10 @@ namespace NorvesLib::Core::Particle
             particle.BaseColor = particle.Color;
             particle.BaseSize = particle.Size;
             particle.Lifetime = emitter.Lifetime;
+            if (emitter.LifetimeMax > emitter.Lifetime)
+            {
+                particle.Lifetime += (emitter.LifetimeMax - emitter.Lifetime) * draw(kLifetimeRandomDraw);
+            }
             particle.BirthTime = birthTime;
             particle.Age = age;
             if (age > 0.0f)

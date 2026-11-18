@@ -200,6 +200,55 @@ GpuParticleLook GpuParticleEvaluateLook(GpuEmitterParams e, GpuParticle p)
     return look;
 }
 
+// 位相と角速度は生成用の乱数を消費せず、通し番号から別々に求める。
+float GpuParticleSpinAngle(GpuEmitterParams e, GpuParticle p)
+{
+    const float twoPi = 6.28318530717958647692;
+    float phase = twoPi * VfxHashToUnitFloat(VfxPcgHash(p.meta.x ^ 0x50484153u));
+    float speed = mix(e.lifetimeMaxSpinSpeedMinMaxMaxSize.y, e.lifetimeMaxSpinSpeedMinMaxMaxSize.z,
+        VfxHashToUnitFloat(VfxPcgHash(p.meta.x ^ 0x5350494Eu)));
+    float age = (p.meta.z & kGpuParticleFlagStuck) != 0u ? p.velLife.x : p.posAge.w;
+    return phase + speed * age;
+}
+
+// 半径だけを揺らして頂点の角度順を保ち、粒ごとに同じ多角形を再現する。
+vec2 GpuParticlePlateVertex(GpuEmitterParams e, uint serial, uint index)
+{
+    const float twoPi = 6.28318530717958647692;
+    float angle = twoPi * float(index) / float(e.plateSides);
+    float u = VfxHashToUnitFloat(VfxPcgHash(serial ^ VfxPcgHash(index + 0x504C4154u)));
+    float radius = 1.0 - clamp(e.plateJitter, 0.0, 1.0) * u;
+    return radius * vec2(cos(angle), sin(angle));
+}
+
+// 半径の揺らぎで凹んだ輪郭にも対応し、線分への最短距離と交差数で符号つき距離を求める。
+float GpuParticlePlateDistance(GpuEmitterParams e, uint serial, vec2 point)
+{
+    float distanceSquared = 8.0;
+    bool inside = false;
+    vec2 previous = GpuParticlePlateVertex(e, serial, e.plateSides - 1u);
+    for (uint index = 0u; index < e.plateSides; ++index)
+    {
+        vec2 current = GpuParticlePlateVertex(e, serial, index);
+        vec2 edge = current - previous;
+        vec2 offset = point - previous;
+        float t = clamp(dot(offset, edge) / max(dot(edge, edge), 1.0e-12), 0.0, 1.0);
+        vec2 nearest = offset - t * edge;
+        distanceSquared = min(distanceSquared, dot(nearest, nearest));
+        if ((previous.y > point.y) != (current.y > point.y))
+        {
+            float crossingX = previous.x + (point.y - previous.y) * edge.x / edge.y;
+            if (point.x < crossingX)
+            {
+                inside = !inside;
+            }
+        }
+        previous = current;
+    }
+    float distanceToEdge = sqrt(distanceSquared);
+    return inside ? -distanceToEdge : distanceToEdge;
+}
+
 // 深度をカメラの前方距離に直す。クリア値は十分遠い背景として扱う。
 float GpuParticleSceneLinearDepth(float deviceDepth)
 {

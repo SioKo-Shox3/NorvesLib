@@ -12,6 +12,7 @@ layout(location = 4) flat out uint vOrientation;
 layout(location = 5) out float vStreakAspect;
 layout(location = 6) flat out float vFlipbookPhase;
 layout(location = 7) flat out float vFlipbookSeed;
+layout(location = 8) flat out uint vParticleSerial;
 
 const vec2 kParticleCorners[6] = vec2[](
     vec2(-1.0, -1.0),
@@ -33,6 +34,7 @@ void main()
     vStreakAspect = 0.0;
     vFlipbookPhase = -1.0;
     vFlipbookSeed = 0.0;
+    vParticleSerial = 0u;
 
     uint instanceIndex = uint(gl_InstanceIndex);
     uint slot = instanceIndex;
@@ -79,6 +81,30 @@ void main()
         return;
     }
 
+    // 寿命曲線の後で長い辺を制限し、縦横の比率を保つ。
+    float diameter = max(look.size.x, look.size.y);
+    float maxSize = e.lifetimeMaxSpinSpeedMinMaxMaxSize.w;
+    if (maxSize > 0.0 && diameter > maxSize)
+    {
+        look.size *= maxSize / diameter;
+        diameter = maxSize;
+    }
+    if (e.maxScreenFraction > 0.0)
+    {
+        // 描画定数には View と Projection が別々にある。中心の同次座標で透視・平行の両方を扱う。
+        vec4 centerClip = drawConstants.projection * drawConstants.view * vec4(p.posAge.xyz, 1.0);
+        float screenHeight = drawConstants.targetSizeInvSize.y;
+        if (centerClip.w > 0.0 && screenHeight > 0.0)
+        {
+            float diameterPixels = diameter * abs(drawConstants.projection[1][1]) * 0.5 * screenHeight / centerClip.w;
+            float maxDiameterPixels = e.maxScreenFraction * screenHeight;
+            if (diameterPixels > maxDiameterPixels)
+            {
+                look.size *= maxDiameterPixels / diameterPixels;
+            }
+        }
+    }
+
     vec2 corner = kParticleCorners[gl_VertexIndex];
     uint orientation = GpuParticleOrientation(e);
     if (orientation > 2u)
@@ -95,7 +121,9 @@ void main()
     if (orientation == 1u)
     {
         vec3 head = p.posAge.xyz;
-        vec3 relativeVelocity = p.velLife.xyz - drawConstants.cameraVelocity.xyz;
+        // 固着中の x は自転の停止年齢なので、姿勢を切り替えた場合も速度として扱わない。
+        vec3 velocity = (p.meta.z & kGpuParticleFlagStuck) != 0u ? vec3(0.0) : p.velLife.xyz;
+        vec3 relativeVelocity = velocity - drawConstants.cameraVelocity.xyz;
         vec3 tail = head - relativeVelocity * e.streakShutterSeconds * look.stretch;
         if (any(isnan(tail)) || any(isinf(tail)))
         {
@@ -219,6 +247,14 @@ void main()
 
         vec3 worldPos = center + right * (0.5 * corner.x * look.size.x) +
             up * (0.5 * corner.y * look.size.y);
+        if (any(notEqual(e.lifetimeMaxSpinSpeedMinMaxMaxSize.yz, vec2(0.0))))
+        {
+            float angle = GpuParticleSpinAngle(e, p);
+            float c = cos(angle);
+            float s = sin(angle);
+            vec2 localOffset = mat2(c, s, -s, c) * (0.5 * corner * look.size);
+            worldPos = center + right * localOffset.x + up * localOffset.y;
+        }
         gl_Position = drawConstants.projection * drawConstants.view * vec4(worldPos, 1.0);
         vWorldPos = worldPos;
         vColor = look.color;
@@ -237,4 +273,5 @@ void main()
     vQuadUV = corner;
     vEmitterIndex = emitterIndex;
     vOrientation = orientation;
+    vParticleSerial = p.meta.x;
 }

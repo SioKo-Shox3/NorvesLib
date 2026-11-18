@@ -128,7 +128,11 @@ namespace NorvesLib::Core::Particle
         /// @brief 箱の中で生成する。
         Box = 3,
         /// @brief カメラを中心にした箱の中で生成する。
-        CameraBox = 4
+        CameraBox = 4,
+        /// @brief スキンの表面から生成する。
+        SkinSurface = 5,
+        /// @brief 骨のバインド位置から生成する。
+        Bone = 6
     };
 
     /// @brief 寿命の曲線を掛ける量。値は VfxValue::UInt の列挙添字と一致する。
