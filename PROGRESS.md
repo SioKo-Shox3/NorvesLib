@@ -12391,3 +12391,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: scene.save・scene.load・object.addComponent の線の上の口と getCapabilities への掲載は足していない（SDK に口が無く、SDK は NorvesEditor のリポジトリにある。項目の notes の決定どおり）。`SaveScene`・`LoadScene`・`AddComponent` は今は Game の中から呼ばれず、SDK に口ができたらこの部品へつなぐ。
 - Notes: 判断: `kind` に未知の名前（SDK の見本の `"object"` のような汎用の分類を含む）や Entity でないクラスが来たら、基底の Entity に落とさず accepted:false にした。保存先の親ディレクトリは作らない（無ければ save_failed）。
 - Notes: 既知の限界: スナップショットの enum が文字列から JSON の数に変わったので、受け取り側が文字列を前提にしていれば合わせる必要がある。`LoadScene` は途中で失敗しても生成できたルートが World に残る（`SceneSerializer::LoadIntoWorld` と同じ）。
+- U4 退避した配置の編集の操作を当て直し、読み込みの事前解析と Entity の持ち主への通知を足す: 着地(直し 0 回)
