@@ -12374,3 +12374,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 読み込みで表を SkinnedMeshAssetLease に持たせ、GPU のバッファへ 1 回だけ上げる: 着地(直し 1 回)
 - U6 放出のシェーダーとシミュレーションのパスで SkinSurface・Bone を出す: 着地(直し 0 回)
 - Done: `GpuEmitterParams`（304 B）に SkinSurface（形 5）・Bone（形 6）の欄、`GpuSkinSource`（96 B）、`GpuParticleEmitterFrame::SkinComponentId`、`humanoid_v1` のロールか骨の組から骨・マスクを決める `GpuSkinEmitter.h` の道具。
+- U4 消滅の効果の定義（norves.vanish）と、ファイルとキーの分かるエラーで拒否する読み込みを作る: 着地(直し 0 回)

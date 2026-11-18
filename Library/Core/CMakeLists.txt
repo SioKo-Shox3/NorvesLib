@@ -87,6 +87,7 @@ set(PRIVATE_SOURCES
     Private/Particle/VfxEffectSystem.cpp
     Private/Particle/DefeatBloodSequence.cpp
     Private/Particle/DefeatBloodPresenter.cpp
+    Private/Particle/VanishEffectDefinition.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalJointIndex.h
@@ -697,6 +698,7 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxSimulationMath.h
     Public/Particle/DefeatBloodSequence.h
     Public/Particle/DefeatBloodPresenter.h
+    Public/Particle/VanishEffectDefinition.h
     Public/Engine/ApplicationProcessor.h
     Public/Engine/FixedStepSettings.h
     # Animation
