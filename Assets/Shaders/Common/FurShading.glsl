@@ -54,7 +54,7 @@ struct FurShadingConstants
     float transmissionStrength;   // c2.z: 逆光の透過の強さ。
 };
 
-// 照明の shadingModelParams[0]・[1] と furShadingParams から定数を組み立てる。
+// 照明の shadingModelParams[0] の wrap・[1] と furShadingParams から定数を組み立てる（[0].w は予約）。
 FurShadingConstants MakeFurShadingConstants(vec4 c0, vec4 c1, vec4 c2)
 {
     FurShadingConstants k;
@@ -77,10 +77,15 @@ float FurStrandExponentFromRoughness(float roughness)
     return clamp(2.0 / alphaSquared - 2.0, 1.0, 2048.0);
 }
 
-// 濡れ度（GBuffer の P0）で指数 ×(1 + kGloss·w) と強さの増しを入れる口。今は恒等。
-void FurApplyWetLobes(float wetness, inout float primaryExponent, inout float secondaryExponent,
+// Albedo.a から復号した濡れのつや g で、2 つのローブの指数と強さに 1 + g を掛ける。g = 0 なら恒等。
+void FurApplyWetLobes(float wetGloss, inout float primaryExponent, inout float secondaryExponent,
                       inout float primaryStrength, inout float secondaryStrength)
 {
+    float gain = 1.0 + clamp(wetGloss, 0.0, 1.0);
+    primaryExponent *= gain;
+    secondaryExponent *= gain;
+    primaryStrength *= gain;
+    secondaryStrength *= gain;
 }
 
 // 毛の接線を法線の方向へずらす。
@@ -100,10 +105,10 @@ float FurKajiyaKayLobe(vec3 T, vec3 H, float exponent)
 
 // N・T・V・L・H は正規化済み。T は FurDecodeFlowTangent で復元した毛の向き。
 // strandRoughness は GBuffer に書かれた粗さ（照明が下限へ上げる前の値）。
-// ao は GBuffer の材質の AO（画面空間 AO を掛ける前）、wetness は P0。
+// ao は GBuffer の材質の AO（画面空間 AO を掛ける前）、wetGloss は Albedo.a から復号した g = kGloss・w。
 // lightRadiance は減衰込みの光の放射輝度（N·L・影を含まない）。
 void EvaluateFurDirect(vec3 N, vec3 T, vec3 V, vec3 L, vec3 H,
-                       vec3 albedo, vec3 diffuseBrdf, float strandRoughness, float ao, float wetness,
+                       vec3 albedo, vec3 diffuseBrdf, float strandRoughness, float ao, float wetGloss,
                        vec3 lightRadiance, float NdotLSigned, float shadow,
                        FurShadingConstants k,
                        inout vec3 diffuse, inout vec3 specular)
@@ -116,7 +121,7 @@ void EvaluateFurDirect(vec3 N, vec3 T, vec3 V, vec3 L, vec3 H,
     float e2 = max(e1 * k.secondaryExponentScale, 1.0);
     float s1 = k.primaryStrength;
     float s2 = k.secondaryStrength;
-    FurApplyWetLobes(wetness, e1, e2, s1, s2);
+    FurApplyWetLobes(wetGloss, e1, e2, s1, s2);
     vec3 T1 = FurShiftTangent(T, N, k.primaryShift);
     vec3 T2 = FurShiftTangent(T, N, k.secondaryShift);
     vec3 lobes = vec3(s1 * FurKajiyaKayLobe(T1, H, e1)) + albedo * (s2 * FurKajiyaKayLobe(T2, H, e2));

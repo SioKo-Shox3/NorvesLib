@@ -40,7 +40,9 @@ void main()
     uint shellCount = FurShellCount();
     uint shellIndex = uint(gl_InstanceIndex);
     float shellHeight = FurShellHeight(shellIndex, shellCount);
-    vec3 shellDirection = baseNormal + mvp.furDrawForce.xyz * shellHeight;
+    // 濡れによる垂れを重力の向き（Y が上）に加える。wetGeometry.w は kSag に濡れ度 W を掛けた値。
+    vec3 furForce = mvp.furDrawForce.xyz + vec3(0.0, -1.0, 0.0) * mvp.fur.wetGeometry.w;
+    vec3 shellDirection = baseNormal + furForce * shellHeight;
     shellDirection = dot(shellDirection, shellDirection) > 0.000001 ? normalize(shellDirection) : baseNormal;
     vec3 shellOffset = shellDirection * (mvp.fur.growth.x * shellHeight);
     worldPos.xyz += shellOffset;
