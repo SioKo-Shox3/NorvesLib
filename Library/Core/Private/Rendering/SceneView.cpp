@@ -106,6 +106,49 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        void FillLayerImpostorInstanceData(const MegaGeometryProxy& proxy,
+                                           const MegaMeshImpostorDesc& desc,
+                                           const Math::Vector3& center,
+                                           float halfSize,
+                                           float crossfadeValue,
+                                           GPUSceneInstanceData& outData)
+        {
+            Math::Matrix4x4 world = proxy.WorldTransform;
+            world.SetTranslationRow(center);
+            Math::Matrix4x4 previousWorld = proxy.PreviousWorldTransform;
+            previousWorld.SetTranslationRow(Math::MatrixUtils::TransformPointRowVector(previousWorld, desc.BoundsCenter));
+            Math::MatrixUtils::CopyToShaderData(world, outData.World);
+            Math::MatrixUtils::CopyToShaderData(previousWorld, outData.PreviousWorld);
+
+            for (float& value : outData.NormalMatrix)
+            {
+                value = 0.0f;
+            }
+            // 焼きの正射影は境界球の中心から半径の範囲なので、一辺は半径の 2 倍。
+            outData.NormalMatrix[0] = 2.0f * halfSize;
+            outData.NormalMatrix[1] = 2.0f * halfSize;
+            outData.NormalMatrix[2] = 0.5f;
+            outData.NormalMatrix[3] = 0.5f;
+            outData.NormalMatrix[8] = 1.0f;
+            outData.NormalMatrix[9] = 1.0f;
+            outData.NormalMatrix[10] = static_cast<float>(desc.AxisCellCountX);
+            outData.NormalMatrix[11] = static_cast<float>(desc.AxisCellCountY);
+
+            constexpr float colorScale = 1.0f / 255.0f;
+            outData.ObjectColor[0] = static_cast<float>(proxy.Tint & 0xFFu) * colorScale;
+            outData.ObjectColor[1] = static_cast<float>((proxy.Tint >> 8) & 0xFFu) * colorScale;
+            outData.ObjectColor[2] = static_cast<float>((proxy.Tint >> 16) & 0xFFu) * colorScale;
+            outData.ObjectColor[3] = 1.0f;
+            outData.CustomData[0] = static_cast<float>(desc.CellResolution);
+            outData.CustomData[1] = static_cast<float>(desc.AtlasWidth);
+            outData.CustomData[2] = static_cast<float>(desc.AtlasHeight);
+            outData.CustomData[3] = crossfadeValue;
+            for (float& value : outData.ShadingParams)
+            {
+                value = -1.0f;
+            }
+        }
+
         // BillboardComponent::BuildBoardProxy と同じ式で、板の基点から各頂点を包む境界を作る。
         void BuildTransientBoardBounds(BoardProxy& proxy)
         {
@@ -124,6 +167,17 @@ namespace NorvesLib::Core::Rendering
             const float maxX = std::max(std::abs(left), std::abs(right));
             const float maxY = std::max(std::abs(bottom), std::abs(top));
             proxy.WorldBounds.Radius = std::sqrt(maxX * maxX + maxY * maxY);
+        }
+
+        // 非数が同じ欄に残る更新でも索引を作り直し続けない。
+        bool SameLayerImpostorBounds(const BoundingSphere& lhs, const BoundingSphere& rhs)
+        {
+            const auto same = [](float a, float b)
+            {
+                return a == b || (std::isnan(a) && std::isnan(b));
+            };
+            return same(lhs.CenterX, rhs.CenterX) && same(lhs.CenterY, rhs.CenterY) &&
+                   same(lhs.CenterZ, rhs.CenterZ) && same(lhs.Radius, rhs.Radius);
         }
 
         float ComputeDistanceToBounds(const BoundingSphere &bounds,
@@ -588,11 +642,50 @@ namespace NorvesLib::Core::Rendering
         NoteProxyChanged(m_LightChangedIndices, index, m_LightProxies.size());
     }
 
+    bool SceneView::SetMegaMeshImpostor(MegaGeometry::MegaMeshHandle mesh, const MegaMeshImpostorDesc& desc)
+    {
+        if (!mesh.IsValid() || !desc.IsValid())
+        {
+            return false;
+        }
+        m_MegaMeshImpostors[mesh.Id] = desc;
+        m_bLayerImpostorCellsDirty = true;
+        return true;
+    }
+
+    void SceneView::ClearMegaMeshImpostor(MegaGeometry::MegaMeshHandle mesh)
+    {
+        if (m_MegaMeshImpostors.erase(mesh.Id) != 0)
+        {
+            m_bLayerImpostorCellsDirty = true;
+        }
+    }
+
+    void SceneView::ClearMegaMeshImpostors()
+    {
+        if (!m_MegaMeshImpostors.empty())
+        {
+            m_MegaMeshImpostors.clear();
+            m_bLayerImpostorCellsDirty = true;
+        }
+    }
+
+    const MegaMeshImpostorDesc* SceneView::FindMegaMeshImpostor(MegaGeometry::MegaMeshHandle mesh) const
+    {
+        const auto it = m_MegaMeshImpostors.find(mesh.Id);
+        return it != m_MegaMeshImpostors.end() ? &it->second : nullptr;
+    }
+
     void SceneView::AddMegaGeometryProxy(const MegaGeometryProxy &proxy)
     {
         if (!proxy.IsValid())
         {
             return;
+        }
+
+        if (IsMegaScatterProxyKey(proxy.ObjectId))
+        {
+            m_bLayerImpostorCellsDirty = true;
         }
 
         auto indexIt = m_MegaGeometryProxyIndex.find(proxy.ObjectId);
@@ -682,9 +775,23 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t removeIndex = indexIt->second;
         const uint32_t lastIndex = static_cast<uint32_t>(m_MegaGeometryProxies.size() - 1);
-        if (!IsMegaScatterProxyKey(objectId))
+        if (IsMegaScatterProxyKey(objectId))
+        {
+            m_bLayerImpostorCellsDirty = true;
+            // 同じ鍵が次のカリング前に再利用されても、以前の個体の状態を継がせない。
+            m_LayerImpostorStates.erase(objectId);
+            m_SuppressedLayerMegaIds.erase(objectId);
+            m_NextSuppressedLayerMegaIds.erase(objectId);
+            m_LayerMegaCrossfadeValues.erase(objectId);
+            m_NextLayerMegaCrossfadeValues.erase(objectId);
+        }
+        else
         {
             m_bMegaComponentIndexMayBeStale = true;
+        }
+        if (removeIndex != lastIndex && IsMegaScatterProxyKey(m_MegaGeometryProxies[lastIndex].ObjectId))
+        {
+            m_bLayerImpostorCellsDirty = true;
         }
         m_MegaGeometryProxyIndex.erase(indexIt);
 
@@ -713,6 +820,10 @@ namespace NorvesLib::Core::Rendering
 
             const uint32_t lastIndex = static_cast<uint32_t>(m_MegaGeometryProxies.size() - 1);
             m_bMegaComponentIndexMayBeStale = true;
+            if (index != lastIndex && IsMegaScatterProxyKey(m_MegaGeometryProxies[lastIndex].ObjectId))
+            {
+                m_bLayerImpostorCellsDirty = true;
+            }
             m_MegaGeometryProxyIndex.erase(objectId);
             if (index != lastIndex)
             {
@@ -764,6 +875,12 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_MegaGeometryProxyIndex.end())
         {
             MegaGeometryProxy& current = m_MegaGeometryProxies[indexIt->second];
+            if (IsMegaScatterProxyKey(proxy.ObjectId) &&
+                (!SameLayerImpostorBounds(current.WorldBounds, proxy.WorldBounds) ||
+                 current.MegaMeshHandle != proxy.MegaMeshHandle || current.bVisible != proxy.bVisible))
+            {
+                m_bLayerImpostorCellsDirty = true;
+            }
             if (!IsMegaScatterProxyKey(proxy.ObjectId) && current.ComponentId != proxy.ComponentId)
             {
                 m_bMegaComponentIndexMayBeStale = true;
@@ -925,6 +1042,16 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::ClearAllProxies()
     {
+        m_LayerImpostorCells.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
+        m_LayerImpostorStates.clear();
+        m_SuppressedLayerMegaIds.clear();
+        m_NextSuppressedLayerMegaIds.clear();
+        m_LayerMegaCrossfadeValues.clear();
+        m_NextLayerMegaCrossfadeValues.clear();
+        m_LayerImpostorInstances.clear();
+        m_bLayerImpostorCellsDirty = true;
         m_MeshProxies.clear();
         m_ImpostorMeshCrossfadeValues.clear();
         m_LODCrossfadeProxies.clear();
@@ -956,6 +1083,16 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::ClearMegaGeometryProxies()
     {
+        m_LayerImpostorCells.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
+        m_LayerImpostorStates.clear();
+        m_SuppressedLayerMegaIds.clear();
+        m_NextSuppressedLayerMegaIds.clear();
+        m_LayerMegaCrossfadeValues.clear();
+        m_NextLayerMegaCrossfadeValues.clear();
+        m_LayerImpostorInstances.clear();
+        m_bLayerImpostorCellsDirty = true;
         m_MegaGeometryProxies.clear();
         m_MegaGeometryProxyIndex.clear();
         m_MegaComponentObjectIds.clear();
@@ -1719,6 +1856,308 @@ namespace NorvesLib::Core::Rendering
         m_NextImpostorMegaCrossfadeValues.clear();
     }
 
+    void SceneView::RebuildLayerImpostorCells()
+    {
+        m_LayerImpostorCells.clear();
+        if (!m_MegaMeshImpostors.empty())
+        {
+            Container::UnorderedMap<uint64_t, Container::UnorderedMap<uint64_t, uint32_t>> cellIndices;
+            for (uint32_t index = 0; index < static_cast<uint32_t>(m_MegaGeometryProxies.size()); ++index)
+            {
+                const MegaGeometryProxy& proxy = m_MegaGeometryProxies[index];
+                if (!IsMegaScatterProxyKey(proxy.ObjectId) || !proxy.MegaMeshHandle.IsValid() || !proxy.bVisible ||
+                    m_MegaMeshImpostors.find(proxy.MegaMeshHandle.Id) == m_MegaMeshImpostors.end())
+                {
+                    continue;
+                }
+
+                const BoundingSphere& bounds = proxy.WorldBounds;
+                const uint64_t cellKey = MakeLayerImpostorCellKey(bounds.CenterX, bounds.CenterZ);
+                auto& meshCells = cellIndices[proxy.MegaMeshHandle.Id];
+                auto cellIt = meshCells.find(cellKey);
+                if (cellIt == meshCells.end())
+                {
+                    const uint32_t cellIndex = static_cast<uint32_t>(m_LayerImpostorCells.size());
+                    cellIt = meshCells.emplace(cellKey, cellIndex).first;
+                    m_LayerImpostorCells.emplace_back();
+                    m_LayerImpostorCells.back().MeshId = proxy.MegaMeshHandle.Id;
+                }
+                LayerImpostorCell& cell = m_LayerImpostorCells[cellIt->second];
+                cell.ProxyIndices.push_back(index);
+
+                const float minX = bounds.CenterX - bounds.Radius;
+                const float minY = bounds.CenterY - bounds.Radius;
+                const float minZ = bounds.CenterZ - bounds.Radius;
+                const float maxX = bounds.CenterX + bounds.Radius;
+                const float maxY = bounds.CenterY + bounds.Radius;
+                const float maxZ = bounds.CenterZ + bounds.Radius;
+                if (!std::isfinite(bounds.Radius) || bounds.Radius < 0.0f ||
+                    !std::isfinite(minX) || !std::isfinite(minY) || !std::isfinite(minZ) ||
+                    !std::isfinite(maxX) || !std::isfinite(maxY) || !std::isfinite(maxZ))
+                {
+                    // 境界が不正な組は帯を決めず、個体ごとに選ぶ。
+                    cell.bValidBounds = false;
+                    continue;
+                }
+                cell.Bounds.Expand(minX, minY, minZ);
+                cell.Bounds.Expand(maxX, maxY, maxZ);
+                cell.MinRadius = std::min(cell.MinRadius, bounds.Radius);
+                cell.MaxRadius = std::max(cell.MaxRadius, bounds.Radius);
+            }
+        }
+
+        for (auto it = m_LayerImpostorStates.begin(); it != m_LayerImpostorStates.end();)
+        {
+            if (m_MegaGeometryProxyIndex.find(it->first) == m_MegaGeometryProxyIndex.end())
+            {
+                it = m_LayerImpostorStates.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        m_bLayerImpostorCellsDirty = false;
+    }
+
+#if NORVES_ENABLE_LOGGING
+    void SceneView::LogLayerImpostorStats(const LayerImpostorLogStats& stats)
+    {
+        const LayerImpostorLogStats& last = m_LastLayerImpostorLogStats;
+        if (stats.Groups != last.Groups || stats.Mixed != last.Mixed || stats.Mesh != last.Mesh ||
+            stats.Impostor != last.Impostor || stats.Crossfading != last.Crossfading || stats.Shadow != last.Shadow)
+        {
+            NORVES_LOG_INFO("SceneView", "LAYER_IMPOSTOR groups=%u mixed=%u mesh=%u impostor=%u crossfading=%u shadow=%u",
+                            stats.Groups, stats.Mixed, stats.Mesh, stats.Impostor, stats.Crossfading, stats.Shadow);
+            m_LastLayerImpostorLogStats = stats;
+        }
+    }
+#endif
+
+    void SceneView::CullLayerImpostors(const Math::Vector3& cameraPosition,
+                                       const SceneViewScreenSizeContext& context,
+                                       const Math::Matrix4x4& viewProjection)
+    {
+        m_LayerImpostorInstances.clear();
+        if (m_MegaMeshImpostors.empty() && m_SuppressedLayerMegaIds.empty() && m_LayerMegaCrossfadeValues.empty())
+        {
+#if NORVES_ENABLE_LOGGING
+            LogLayerImpostorStats({});
+#endif
+            return;
+        }
+        if (m_bLayerImpostorCellsDirty)
+        {
+            RebuildLayerImpostorCells();
+        }
+
+#if NORVES_ENABLE_LOGGING
+        LayerImpostorLogStats stats;
+        stats.Groups = static_cast<uint32_t>(m_LayerImpostorCells.size());
+#endif
+        for (const LayerImpostorCell& cell : m_LayerImpostorCells)
+        {
+            const auto descIt = m_MegaMeshImpostors.find(cell.MeshId);
+            if (descIt == m_MegaMeshImpostors.end())
+            {
+                continue;
+            }
+            const MegaMeshImpostorDesc& desc = descIt->second;
+            LayerImpostorBand band = LayerImpostorBand::Mixed;
+            if (cell.bValidBounds && std::isfinite(cameraPosition.x) &&
+                std::isfinite(cameraPosition.y) && std::isfinite(cameraPosition.z))
+            {
+                const auto nearest = [](float position, float minValue, float maxValue)
+                {
+                    return std::max({minValue - position, 0.0f, position - maxValue});
+                };
+                const auto farthest = [](float position, float minValue, float maxValue)
+                {
+                    return std::max(std::abs(position - minValue), std::abs(position - maxValue));
+                };
+                const BoundingBox& bounds = cell.Bounds;
+                const float minDistance = std::hypot(nearest(cameraPosition.x, bounds.MinX, bounds.MaxX),
+                                                     nearest(cameraPosition.y, bounds.MinY, bounds.MaxY),
+                                                     nearest(cameraPosition.z, bounds.MinZ, bounds.MaxZ));
+                const float maxDistance = std::hypot(farthest(cameraPosition.x, bounds.MinX, bounds.MaxX),
+                                                     farthest(cameraPosition.y, bounds.MinY, bounds.MaxY),
+                                                     farthest(cameraPosition.z, bounds.MinZ, bounds.MaxZ));
+                band = ClassifyLayerImpostorCell(minDistance, maxDistance, cell.MinRadius, cell.MaxRadius,
+                                                 desc.SwitchScreenSize, context.bOrthographic,
+                                                 context.TanHalfFovY, context.OrthoHeight);
+            }
+#if NORVES_ENABLE_LOGGING
+            if (band == LayerImpostorBand::Mixed)
+            {
+                ++stats.Mixed;
+            }
+#endif
+            const float thresholds[2] = {desc.SwitchScreenSize, 0.0f};
+            for (const uint32_t index : cell.ProxyIndices)
+            {
+                const MegaGeometryProxy& proxy = m_MegaGeometryProxies[index];
+                LayerImpostorSelectionState& state = m_LayerImpostorStates[proxy.ObjectId];
+                uint32_t selected = band == LayerImpostorBand::Impostor ? 1u : 0u;
+                if (band == LayerImpostorBand::Mixed)
+                {
+                    const float distance = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+                    const float screenSize = ComputeBoundsScreenSize(proxy.WorldBounds, distance, context);
+                    selected = SelectLODByScreenSizeWithHysteresis(screenSize, thresholds, 2, state.Selection);
+                }
+                AdvanceLODCrossfade(state.Crossfade, selected, m_LODCrossfadeCullDeltaSeconds,
+                                    DEFAULT_LOD_CROSSFADE_SECONDS, m_bLODCrossfadeCullSnap);
+                state.Selection = state.Crossfade.ToLevel;
+#if NORVES_ENABLE_LOGGING
+                if (state.Selection == 0)
+                {
+                    ++stats.Mesh;
+                }
+                else
+                {
+                    ++stats.Impostor;
+                }
+                if (state.Crossfade.IsActive() && state.Crossfade.Progress > 0.0f)
+                {
+                    ++stats.Crossfading;
+                }
+#endif
+                if (state.Crossfade.IsActive() && state.Crossfade.Progress > 0.0f)
+                {
+                    const bool bIncomingImpostor = state.Crossfade.ToLevel == 1;
+                    const float value = MakeLODCrossfadeValue(state.Crossfade.Progress, !bIncomingImpostor);
+                    m_NextLayerMegaCrossfadeValues[proxy.ObjectId] =
+                        DecodeLODCrossfadeFromTint(PackLODCrossfadeIntoTint(0u, value));
+                }
+                else
+                {
+                    // 遷移を始めた瞬間は、それまで表示していた段だけを保つ。
+                    const uint8_t shown = state.Crossfade.IsActive()
+                                              ? state.Crossfade.FromLevel
+                                              : state.Crossfade.ToLevel;
+                    if (shown == 1)
+                    {
+                        m_NextSuppressedLayerMegaIds.insert(proxy.ObjectId);
+                    }
+                }
+            }
+        }
+
+        const auto appendInstance = [&](uint64_t objectId, float crossfadeValue, bool bHidden)
+        {
+            const auto indexIt = m_MegaGeometryProxyIndex.find(objectId);
+            if (indexIt == m_MegaGeometryProxyIndex.end())
+            {
+                return;
+            }
+            const MegaGeometryProxy& proxy = m_MegaGeometryProxies[indexIt->second];
+            const MegaMeshImpostorDesc* desc = FindMegaMeshImpostor(proxy.MegaMeshHandle);
+            LayerImpostorPlacement placement;
+            if (!desc || !ComputeLayerImpostorPlacement(proxy.WorldTransform, *desc, placement))
+            {
+                return;
+            }
+            LayerImpostorInstance instance;
+            instance.ObjectId = objectId;
+            instance.ProxyIndex = indexIt->second;
+            instance.CrossfadeValue = crossfadeValue;
+            instance.bVisible = true;
+            if (m_bEnableFrustumCulling)
+            {
+                const Math::ClipSpaceSphereBounds clipBounds =
+                    Math::MatrixUtils::TransformSphereToClipSpace(viewProjection, placement.Center, placement.HalfSize);
+                instance.bVisible = Math::MatrixUtils::IntersectsClipSpace(clipBounds, Math::ClipSpaceDepthRange::ZeroToOne);
+            }
+            if (bHidden && desc->bCastShadow && proxy.bCastShadow)
+            {
+                const float distance = std::hypot(placement.Center.x - cameraPosition.x,
+                                                  placement.Center.y - cameraPosition.y,
+                                                  placement.Center.z - cameraPosition.z);
+                instance.bCastShadow = desc->ShadowDistance == 0.0f ||
+                                       distance <= desc->ShadowDistance + placement.HalfSize;
+            }
+#if NORVES_ENABLE_LOGGING
+            if (instance.bCastShadow)
+            {
+                ++stats.Shadow;
+            }
+#endif
+            m_LayerImpostorInstances.push_back(instance);
+        };
+
+        // 今の GPU に届いている前回の Mega の状態に板を合わせる。
+        for (const auto& entry : m_LayerMegaCrossfadeValues)
+        {
+            if (entry.second != 0.0f)
+            {
+                appendInstance(entry.first, -entry.second, false);
+            }
+        }
+        for (const uint64_t objectId : m_SuppressedLayerMegaIds)
+        {
+            const auto fadeIt = m_LayerMegaCrossfadeValues.find(objectId);
+            if (fadeIt == m_LayerMegaCrossfadeValues.end() || fadeIt->second == 0.0f)
+            {
+                appendInstance(objectId, 0.0f, true);
+            }
+        }
+
+        const auto applyState = [this](uint32_t index, bool bHidden, float value)
+        {
+            MegaGeometryProxy& proxy = m_MegaGeometryProxies[index];
+            if (proxy.bHiddenByImpostor != bHidden || proxy.LODCrossfadeValue != value)
+            {
+                proxy.bHiddenByImpostor = bHidden;
+                proxy.LODCrossfadeValue = value;
+                NoteMegaChanged(index);
+            }
+        };
+        const auto restoreIfUnused = [&](uint64_t objectId)
+        {
+            if (m_NextSuppressedLayerMegaIds.find(objectId) != m_NextSuppressedLayerMegaIds.end() ||
+                m_NextLayerMegaCrossfadeValues.find(objectId) != m_NextLayerMegaCrossfadeValues.end())
+            {
+                return;
+            }
+            const auto indexIt = m_MegaGeometryProxyIndex.find(objectId);
+            if (indexIt != m_MegaGeometryProxyIndex.end())
+            {
+                applyState(indexIt->second, false, 0.0f);
+            }
+        };
+        for (const uint64_t objectId : m_SuppressedLayerMegaIds)
+        {
+            restoreIfUnused(objectId);
+        }
+        for (const auto& entry : m_LayerMegaCrossfadeValues)
+        {
+            restoreIfUnused(entry.first);
+        }
+        for (const uint64_t objectId : m_NextSuppressedLayerMegaIds)
+        {
+            const auto indexIt = m_MegaGeometryProxyIndex.find(objectId);
+            if (indexIt != m_MegaGeometryProxyIndex.end())
+            {
+                applyState(indexIt->second, true, 0.0f);
+            }
+        }
+        for (const auto& entry : m_NextLayerMegaCrossfadeValues)
+        {
+            const auto indexIt = m_MegaGeometryProxyIndex.find(entry.first);
+            if (indexIt != m_MegaGeometryProxyIndex.end())
+            {
+                applyState(indexIt->second, false, entry.second);
+            }
+        }
+        m_SuppressedLayerMegaIds.swap(m_NextSuppressedLayerMegaIds);
+        m_NextSuppressedLayerMegaIds.clear();
+        m_LayerMegaCrossfadeValues.swap(m_NextLayerMegaCrossfadeValues);
+        m_NextLayerMegaCrossfadeValues.clear();
+#if NORVES_ENABLE_LOGGING
+        LogLayerImpostorStats(stats);
+#endif
+        // 複数の Viewport では、最後にカリングした Viewport の判定が残る。
+    }
+
     void SceneView::CullBoardProxy(BoardProxy& proxy,
                                    const CameraProxy& camera,
                                    const Math::Matrix4x4& viewProjection,
@@ -2065,6 +2504,7 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::CullProxies(Viewport *viewport)
     {
+        m_LayerImpostorInstances.clear();
         PrepareLODCrossfadeCullClock();
         m_ImpostorMeshCrossfadeValues.clear();
         NORVES_STAT_TIME_START(cullingViewport);
@@ -2100,6 +2540,7 @@ namespace NorvesLib::Core::Rendering
                            m_SuppressedMeshComponentIds, bRebuiltMegaIndex);
         }
         ApplyImpostorMegaSuppression();
+        CullLayerImpostors(cameraPosition, screenSizeContext, viewProjection);
 
         CullMeshProxies(viewProjection, cameraPosition, screenSizeContext, m_LODProxyCopies);
 
@@ -2113,6 +2554,7 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::CullProxies(const ViewportSnapshot &viewport)
     {
+        m_LayerImpostorInstances.clear();
         PrepareLODCrossfadeCullClock();
         m_ImpostorMeshCrossfadeValues.clear();
         NORVES_STAT_TIME_START(cullingSnapshot);
@@ -2167,6 +2609,7 @@ namespace NorvesLib::Core::Rendering
                            m_SuppressedMeshComponentIds, bRebuiltMegaIndex);
         }
         ApplyImpostorMegaSuppression();
+        CullLayerImpostors(cameraPosition, screenSizeContext, viewProjection);
 
         CullMeshProxies(viewProjection, cameraPosition, screenSizeContext, m_LODProxyCopies);
 
@@ -2297,6 +2740,160 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    // 板の束とは別に、層の可視個体の束と視錐台外も含む影の一覧を作る。
+    void SceneView::AppendLayerImpostorBatches()
+    {
+        if (m_LayerImpostorInstances.empty())
+        {
+            return;
+        }
+
+        struct VisibleLayerImpostor
+        {
+            const MegaGeometryProxy* Proxy;
+            const MegaMeshImpostorDesc* Desc;
+            float CenterX;
+            float CenterY;
+            float CenterZ;
+            float HalfSize;
+            float CrossfadeValue;
+        };
+        Container::VariableArray<VisibleLayerImpostor> visible;
+        Container::UnorderedMap<uint64_t, uint32_t> shadowAtlasByMesh;
+        for (const LayerImpostorInstance& instance : m_LayerImpostorInstances)
+        {
+            if ((!instance.bVisible && !instance.bCastShadow) || instance.ProxyIndex >= m_MegaGeometryProxies.size())
+            {
+                continue;
+            }
+            const MegaGeometryProxy& proxy = m_MegaGeometryProxies[instance.ProxyIndex];
+            if (proxy.ObjectId != instance.ObjectId)
+            {
+                continue;
+            }
+            const MegaMeshImpostorDesc* desc = FindMegaMeshImpostor(proxy.MegaMeshHandle);
+            LayerImpostorPlacement placement;
+            if (!desc || !ComputeLayerImpostorPlacement(proxy.WorldTransform, *desc, placement))
+            {
+                continue;
+            }
+
+            if (instance.bVisible)
+            {
+                visible.push_back({&proxy, desc, placement.Center.x, placement.Center.y, placement.Center.z,
+                                   placement.HalfSize, instance.CrossfadeValue});
+            }
+            if (!instance.bCastShadow)
+            {
+                continue;
+            }
+
+            uint32_t atlasIndex;
+            const auto cached = shadowAtlasByMesh.find(proxy.MegaMeshHandle.Id);
+            if (cached != shadowAtlasByMesh.end())
+            {
+                atlasIndex = cached->second;
+            }
+            else
+            {
+                atlasIndex = static_cast<uint32_t>(m_ImpostorShadowAtlases.size());
+                for (uint32_t index = 0; index < m_ImpostorShadowAtlases.size(); ++index)
+                {
+                    const ImpostorShadowAtlas& atlas = m_ImpostorShadowAtlases[index];
+                    if (atlas.AlbedoAtlas == desc->AlbedoAtlas && atlas.Layout == desc->Layout &&
+                        atlas.AxisCellCountX == desc->AxisCellCountX && atlas.AxisCellCountY == desc->AxisCellCountY &&
+                        atlas.CellResolution == desc->CellResolution && atlas.AtlasWidth == desc->AtlasWidth &&
+                        atlas.AtlasHeight == desc->AtlasHeight)
+                    {
+                        atlasIndex = index;
+                        break;
+                    }
+                }
+                if (atlasIndex == m_ImpostorShadowAtlases.size())
+                {
+                    ImpostorShadowAtlas atlas;
+                    atlas.AlbedoAtlas = desc->AlbedoAtlas;
+                    atlas.Layout = desc->Layout;
+                    atlas.AxisCellCountX = desc->AxisCellCountX;
+                    atlas.AxisCellCountY = desc->AxisCellCountY;
+                    atlas.CellResolution = desc->CellResolution;
+                    atlas.AtlasWidth = desc->AtlasWidth;
+                    atlas.AtlasHeight = desc->AtlasHeight;
+                    m_ImpostorShadowAtlases.push_back(atlas);
+                }
+                shadowAtlasByMesh.emplace(proxy.MegaMeshHandle.Id, atlasIndex);
+            }
+
+            ImpostorShadowCaster caster;
+            caster.Key = instance.ObjectId;
+            caster.Center[0] = placement.Center.x;
+            caster.Center[1] = placement.Center.y;
+            caster.Center[2] = placement.Center.z;
+            caster.HalfSize = placement.HalfSize;
+            caster.AxisX[0] = placement.AxisX.x;
+            caster.AxisX[1] = placement.AxisX.y;
+            caster.AxisX[2] = placement.AxisX.z;
+            caster.AxisY[0] = placement.AxisY.x;
+            caster.AxisY[1] = placement.AxisY.y;
+            caster.AxisY[2] = placement.AxisY.z;
+            caster.AxisZ[0] = placement.AxisZ.x;
+            caster.AxisZ[1] = placement.AxisZ.y;
+            caster.AxisZ[2] = placement.AxisZ.z;
+            caster.AtlasIndex = atlasIndex;
+            m_ImpostorShadowCasters.push_back(caster);
+        }
+
+        // 板と同じ鍵で束ね、同じ組の中では元の可視一覧の順序を保つ。
+        std::stable_sort(visible.begin(), visible.end(),
+                         [](const VisibleLayerImpostor& lhs, const VisibleLayerImpostor& rhs)
+                         {
+                             if (lhs.Desc->AlbedoAtlas != rhs.Desc->AlbedoAtlas)
+                             {
+                                 return lhs.Desc->AlbedoAtlas < rhs.Desc->AlbedoAtlas;
+                             }
+                             if (lhs.Desc->NormalAtlas != rhs.Desc->NormalAtlas)
+                             {
+                                 return lhs.Desc->NormalAtlas < rhs.Desc->NormalAtlas;
+                             }
+                             if (lhs.Desc->OrmAtlas != rhs.Desc->OrmAtlas)
+                             {
+                                 return lhs.Desc->OrmAtlas < rhs.Desc->OrmAtlas;
+                             }
+                             if (lhs.Desc->DepthAtlas != rhs.Desc->DepthAtlas)
+                             {
+                                 return lhs.Desc->DepthAtlas < rhs.Desc->DepthAtlas;
+                             }
+                             return lhs.Desc->Layout < rhs.Desc->Layout;
+                         });
+
+        const size_t firstLayerBatch = m_ImpostorBatches.size();
+        for (const VisibleLayerImpostor& item : visible)
+        {
+            const MegaMeshImpostorDesc& desc = *item.Desc;
+            if (m_ImpostorBatches.size() == firstLayerBatch ||
+                m_ImpostorBatches.back().AlbedoAtlas != desc.AlbedoAtlas ||
+                m_ImpostorBatches.back().NormalAtlas != desc.NormalAtlas ||
+                m_ImpostorBatches.back().OrmAtlas != desc.OrmAtlas ||
+                m_ImpostorBatches.back().DepthAtlas != desc.DepthAtlas ||
+                m_ImpostorBatches.back().Layout != desc.Layout)
+            {
+                ImpostorBatch batch;
+                batch.AlbedoAtlas = desc.AlbedoAtlas;
+                batch.NormalAtlas = desc.NormalAtlas;
+                batch.OrmAtlas = desc.OrmAtlas;
+                batch.DepthAtlas = desc.DepthAtlas;
+                batch.Layout = desc.Layout;
+                batch.InstanceDataOffset = static_cast<uint32_t>(m_InstanceData.size());
+                m_ImpostorBatches.push_back(batch);
+            }
+            GPUSceneInstanceData instanceData;
+            const Math::Vector3 center(item.CenterX, item.CenterY, item.CenterZ);
+            FillLayerImpostorInstanceData(*item.Proxy, desc, center, item.HalfSize, item.CrossfadeValue, instanceData);
+            m_InstanceData.push_back(instanceData);
+            ++m_ImpostorBatches.back().InstanceCount;
+        }
+    }
+
     void SceneView::GenerateCommands()
     {
         m_DrawCommands.clear();
@@ -2304,6 +2901,8 @@ namespace NorvesLib::Core::Rendering
         m_TransparentCommands.clear();
         m_InstanceData.clear();
         m_ImpostorBatches.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
 
         // バッチャーからDrawCommandを生成
         m_Batcher.GenerateDrawCommands(m_DrawCommands,
@@ -2341,6 +2940,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         AppendWorldBoardDrawCommands();
+        AppendLayerImpostorBatches();
 
         // 不透明と透明を分離してソート
         DrawCommandSorter::SortAndSeparate(m_DrawCommands, m_OpaqueCommands, m_TransparentCommands);
@@ -2370,6 +2970,9 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::PrepareDrawCommands()
     {
+        m_LayerImpostorInstances.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
         if (!m_bInitialized)
         {
             return;
@@ -2399,6 +3002,9 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::PrepareDrawCommandsForViewport(const ViewportSnapshot &viewport)
     {
+        m_LayerImpostorInstances.clear();
+        m_ImpostorShadowCasters.clear();
+        m_ImpostorShadowAtlases.clear();
         if (!m_bInitialized)
         {
             return;
