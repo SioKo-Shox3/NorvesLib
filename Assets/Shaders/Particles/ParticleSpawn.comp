@@ -162,6 +162,9 @@ bool ResolveSkinSpawn(GpuEmitterParams emitter, uint serial,
     return true;
 }
 
+// 0〜8 は既存の生成・衝突・骨選択、16〜31 はスキンの試行に使うため、寿命は 32 に分離する。
+const uint kGpuParticleRandomDrawLifetime = 32u;
+
 layout(local_size_x = 64) in;
 
 // 生成位置を含む最後のジョブを求める。
@@ -256,6 +259,11 @@ void main()
         return;
     }
     GpuParticle particle = InitParticle(emitter, emitterExtras[emitterIndex], serial, basePosition, normal, addVelocity);
+    if (emitter.lifetimeMaxSpinSpeedMinMaxMaxSize.x > emitter.positionLifetime.w)
+    {
+        particle.velLife.w = mix(emitter.positionLifetime.w, emitter.lifetimeMaxSpinSpeedMinMaxMaxSize.x,
+            VfxCounterUnitFloat(emitter.poolCapacitySeedFlags.z, serial, kGpuParticleRandomDrawLifetime));
+    }
     ClassifyParticleAtPlacement(emitter, particle);
     particles[slot] = particle;
 }
