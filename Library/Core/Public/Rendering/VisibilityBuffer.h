@@ -146,6 +146,8 @@ namespace NorvesLib::Core::Rendering
              *        VirtualShadowMapFoliageCasters.h）
              */
             FoliageChunk = 4,
+            /** @brief インポスターの板（VSM の影専用。頂点バッファは持たず、塊の World に置き方を持つ。VirtualShadowMapImpostorCasters.h） */
+            ImpostorCard = 5,
         };
 
         /** @brief 描画の記録のフラグ（GLSL の VIS_RECORD_FLAG_* と一致） */
