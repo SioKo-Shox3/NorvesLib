@@ -12654,3 +12654,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証(危険地帯: GBuffer の契約・照明)。撮影での確かめは G6-GR35-WET-CHECK。人が見るときの見どころ: 今はどのシーンにも Fur の材質が無いので、Rendering3DTest(天球・地面・球・岩)とランチャーの各シーンの見た目は変わらない。Fur の毛の殻が入ったシーンでは、濡れ度 W を上げると毛が暗く・彩度が下がり・短く太く束になって垂れ、材質の WetGloss > 0 のときだけハイライトが鋭く強くなる(WetGloss = 0 の材質ではつやは変わらない)。
 - Notes: 上の Notes の「kGloss は照明の全体の値(1.0、仮)」の判断と「要起票: 材質ごとの濡れのつや `FurParams::WetGloss` を照明へ届ける作業」は、この直しで材質から画素ごとに届くようになったので置き換わった(起票しない)。
 - Notes: 判断: lighting.frag の先頭に BOM が付いた(実行時のシェーダーのコンパイラは BOM を外して読む。`VulkanShaderCompiler.cpp:160`)。
+
+- U1 UTF-8 の読み書き(Utf8.h/.cpp)を足し、厳密な走査と TextComponent を同じ規則へ寄せる: 着地(直し 0 回)
+- U2 FontFaceCache と、コードポイントの表・フォールバックの face・BuildCpu/Upload を持つ FontAtlas: 着地(直し 1 回)
+
+## 2026-11-18 G15-GR69-UTF8-FONTATLAS（run 20261118-184115 の反復 1、完了）
+- Done: `Text/Utf8.h`（実装 `Private/Text/Utf8.cpp`）に `DecodeUtf8`（不正な先頭バイト・継続バイトの欠落・過長表現・サロゲート・0x10FFFF 超・途中切れは U+FFFD で 1 バイト前進）・`AppendUtf8`（4 バイトまで。符号化は `EncodeJsonUnicodeScalar<char>` を使う）・`IsValidUtf8`・`ForEachUtf8Codepoint` を足した。厳密な 1 文字の読み `Utf8Detail::TryDecodeUtf8Strict` を `TextDetail::ForEachUnicodeScalar` の 1 バイトの枝も使い、表は 1 つだけ。`TextComponent::BuildGlyphBoardProxies` はコードポイントごとに走査する（ASCII の基準線・字間・改行・空白・`\x7F` の '?' は今のまま）。
+- Done: `FontFaceCache`（論理パスごとにブロブを 1 回だけ読む。失敗は覚えない。Mutex で守る）を新設。`FontAtlasDesc` に `Codepoints`（空なら 0x20〜0x7E）・`Faces`（フォールバックの順。空なら `FontLogicalPath`）・`Padding`・`MaxAtlasSize` を足し、字形を整列したコードポイントの表（二分探索）にした。欠落は '?' → U+25A1 → U+FFFD の順。`Build` を `BuildCpu`（GPU に触らない）と `Upload` に分け、`Build` は両方を同期で呼ぶ包み（`FontFaceCache&` を受ける多重定義もある）。幅 0 は 64 から 2 倍ずつ試す自動、上限に収まらなければ false。既定の `FontAtlasDesc{}` は並び・詰め方・幅 512・画素の規則が前と同じ。
+- 証拠: `.harness/runs/20261118-184115/verify-G15-GR69-UTF8-FONTATLAS-U2.txt`（`cmake --build build --config Debug --target Game -- /m:1`。Game.exe を生成して終了コード 0・error の行 0、既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致、新規ファイルは UTF-8 + BOM + CRLF）。
+- 試験: done-when (4) の Utf8Test・FontAtlasTest・TextComponentBoardProxyTest の拡張と verify の ctest の行は、人の決まり（試験を作らない・回さない。対象の試験は TEST-REMOVE-1114 で消してある）により作らず回していない。`Docs/Testing.md` も触っていない。
+- 人が見るときの見どころ: 今のところ日本語を出す画面は無い。既定のフォント（ランチャーと各シーンの ASCII の文字）が前と同じ見た目で出ること。
+- Next: ランナーの評価者の反証（Public API の FontAtlas・TextComponent）。G15-GR69-STRINGTABLE-LAYOUT・G15-GR69-ASYNC-ATLAS が `BuildCpu`/`FontFaceCache` を使う。
+- Notes: 既知の限界: `FontFaceCache` を GEngine に持たせる配線はしていない（`ApplicationProcessor.cpp` の既定のフォントは今の `Build(FontAtlasDesc{}, ...)` のまま、一時のキャッシュで読む）。`Faces` の 1 本でも読めないと焼き全体が失敗する。`Codepoints` を指定したときは代わりの字 '?'・U+25A1・U+FFFD を自動で足す（どの face にも無い字は焼かない）。
