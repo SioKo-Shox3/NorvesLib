@@ -401,6 +401,7 @@ namespace NorvesLib::Core::Rendering
                 uint32_t Capacity = 0;    // 1パスのコマンドの最大数
                 uint32_t CommandBase = 0; // 1パスの範囲での先頭（コマンドの位置）
                 MegaGeometry::MegaMeshMaterial Material; // 区間の材質（値。ビジビリティバッファの材質の表が引く）
+                bool bLodCrossfade = false; // このフレームに段の遷移中の個体を含む
             };
 
             bool bValid = false;
@@ -745,7 +746,8 @@ namespace NorvesLib::Core::Rendering
             MegaGeometry::MegaMeshHandle Handle;
             float WorldMatrix[16];
             float PreviousWorldMatrix[16];
-            uint32_t Tint = 0xFFFFFFFFu; // プロキシの色味（RGBA8。R が下位 8 bit。白は色を変えない）
+            uint32_t Tint = 0xFFFFFFFFu; // 色味の RGB と段の遷移値の A（RGBA8）
+            bool bLodCrossfade = false; // 段の遷移中か
             uint32_t VariationSeed = 0; // プロキシの個体差の種
             // 影: 影を落とすか（プロキシの bCastShadow）と、ワールドの境界（プロキシの WorldBounds。半径が 0 以下なら分からない）
             bool bCastShadow = true;
@@ -772,6 +774,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief proxy から描くインスタンスを作る */
         static MegaMeshInstance MakeMegaMeshInstance(const MegaGeometryProxy &proxy);
+
+        /** @brief 書き換えた個体の位置を、段の遷移中の一覧へ反映する */
+        void UpdateLodCrossfadePosition(size_t position);
 
         /**
          * @brief RenderThread の写しの、変わった席のインスタンスだけを直す
@@ -1303,12 +1308,16 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_DrawTwoSidedPipeline;
         RHI::PipelinePtr m_DrawClearancePipeline;
         RHI::PipelinePtr m_DrawClearanceTwoSidedPipeline;
+        RHI::PipelinePtr m_DrawCrossfadePipeline;
+        RHI::PipelinePtr m_DrawCrossfadeTwoSidedPipeline;
         RHI::PipelinePtr m_DrawWireframePipeline;
         bool m_bTwoSidedPipelineWarningLogged = false;
         bool m_bClearancePipelineWarningLogged = false;
+        bool m_bCrossfadePipelineWarningLogged = false;
         RHI::ShaderPtr m_DrawVertexShader;
         RHI::ShaderPtr m_DrawFragmentShader;
         RHI::ShaderPtr m_DrawClearanceFragmentShader;
+        RHI::ShaderPtr m_DrawCrossfadeFragmentShader;
 
         // GBuffer描画用レンダーパス・フレームバッファ（GBufferPassから共有）
         RHI::RenderPassPtr m_GBufferRenderPass;
@@ -1448,6 +1457,11 @@ namespace NorvesLib::Core::Rendering
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;
+        // 段の遷移中の位置だけを持ち、通常のフレームで全個体を走査しない
+        Container::UnorderedSet<size_t> m_LodCrossfadePositions;
+        // 区間の印は記録ごとの番号で区別し、全区間の初期化と毎回の確保を避ける
+        Container::VariableArray<uint64_t> m_SectionLodCrossfadeStamps;
+        uint64_t m_LodCrossfadeStamp = 0;
         // 解放の前の位置と表の行、移動の前後の位置、追加の位置。表を作るまで順に積む
         Container::VariableArray<SceneInstanceDelta> m_SceneInstanceDeltas;
 #if NORVES_BUILD_DEVELOPMENT

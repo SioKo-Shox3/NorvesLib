@@ -86,6 +86,12 @@ namespace NorvesLib::Core::Rendering
         {
             return command.Draw.PayloadKind == DrawPayloadKind::Skinned ? command.Skinned.Opacity : 1.0f;
         }
+        // 重ね描きに回す描画: ファーの殻・段の遷移・重ね描きの材質。
+        bool IsGBufferOverlayDraw(const DrawCommand& command, const MaterialResourceData* material)
+        {
+            return IsFurShellDraw(command) || command.Draw.bLodCrossfade ||
+                   RequiresGBufferOverlayDraw(material, ResolveGBufferDrawOpacity(command));
+        }
     } // namespace
 
     GBufferPass::GBufferPass(const GBufferPassSettings& settings)
@@ -148,6 +154,13 @@ namespace NorvesLib::Core::Rendering
         if (!m_GBufferAlphaClipFragmentShader)
         {
             NORVES_LOG_WARNING("GBufferPass", "切り抜きのシェーダーを読み込めないため、切り抜きなしで描画します");
+        }
+
+        m_GBufferCrossfadeFragmentShader =
+            context.ShaderMgr->LoadShader("gbuffer_crossfade.frag", RHI::ShaderStage::Pixel);
+        if (!m_GBufferCrossfadeFragmentShader)
+        {
+            NORVES_LOG_WARNING("GBufferPass", "段の遷移のシェーダーを読み込めないため、遷移のディザなしで描画します");
         }
 
         m_bInitialized = true;
@@ -402,6 +415,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferVertexShader.reset();
         m_GBufferFragmentShader.reset();
         m_GBufferAlphaClipFragmentShader.reset();
+        m_GBufferCrossfadeFragmentShader.reset();
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
@@ -490,7 +504,7 @@ namespace NorvesLib::Core::Rendering
             const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
                                                        ? materials->GetData(command.Draw.MaterialHandle)
                                                        : nullptr;
-            if (IsFurShellDraw(command) || RequiresGBufferOverlayDraw(material, ResolveGBufferDrawOpacity(command)))
+            if (IsGBufferOverlayDraw(command, material))
             {
                 return true;
             }
@@ -742,7 +756,8 @@ namespace NorvesLib::Core::Rendering
                         ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                         : nullptr;
                 GetGBufferPipeline(context, materialData, command.Draw.PayloadKind == DrawPayloadKind::Skinned,
-                                   ResolveGBufferDrawOpacity(command), ResolveGBufferProgramOverride(command));
+                                   ResolveGBufferDrawOpacity(command), command.Draw.bLodCrossfade,
+                                   ResolveGBufferProgramOverride(command));
             }
             PrepareConstantMaterialTextures(context);
             m_bConstantTexturesPrepared = true;
@@ -768,8 +783,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             const auto* matData = materials->GetData(materialHandle);
-            if (!matData || (bOverlayOnly && !IsFurShellDraw(command) &&
-                             !RequiresGBufferOverlayDraw(matData, ResolveGBufferDrawOpacity(command))))
+            if (!matData || (bOverlayOnly && !IsGBufferOverlayDraw(command, matData)))
             {
                 continue;
             }
@@ -895,10 +909,11 @@ namespace NorvesLib::Core::Rendering
             const MaterialResourceData* material = command.Draw.MaterialHandle.IsValid()
                                                        ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
                                                        : nullptr;
-            if (IsFurShellDraw(command) || RequiresGBufferOverlayDraw(material, ResolveGBufferDrawOpacity(command)))
+            if (IsGBufferOverlayDraw(command, material))
             {
                 GetGBufferPipeline(context, material, command.Draw.PayloadKind == DrawPayloadKind::Skinned,
-                                   ResolveGBufferDrawOpacity(command), ResolveGBufferProgramOverride(command));
+                                   ResolveGBufferDrawOpacity(command), command.Draw.bLodCrossfade,
+                                   ResolveGBufferProgramOverride(command));
             }
         }
         PrepareConstantMaterialTextures(context, true);
@@ -1428,7 +1443,7 @@ namespace NorvesLib::Core::Rendering
             return allocation.DescriptorSet;
         };
 
-        // 同じ種類の並びを保ち、標準の後に重ね描きの対象となる材質（プログラム・Masked・両面・頂点アニメ）を積む。
+        // 同じ種類の並びを保ち、標準の後に重ね描きの材質と段の遷移の描画を積む。
         bool bAllocationFailed = false;
         for (uint32_t overlayPass = 0; overlayPass < 2 && !bAllocationFailed; ++overlayPass)
         {
@@ -1444,8 +1459,8 @@ namespace NorvesLib::Core::Rendering
                 const float opacity = ResolveGBufferDrawOpacity(cmd);
                 const bool bOverlayMaterial =
                     IsFurShellDraw(cmd) ||
-                    ((m_SceneView || selection == DrawSelection::OverlayOnly || IsSkinnedGhostOpacity(opacity)) &&
-                     RequiresGBufferOverlayDraw(materialData, opacity));
+                    ((m_SceneView || selection == DrawSelection::OverlayOnly || IsSkinnedGhostOpacity(opacity) ||
+                      cmd.Draw.bLodCrossfade) && IsGBufferOverlayDraw(cmd, materialData));
                 if (bOverlayMaterial != (overlayPass == 1))
                 {
                     continue;
@@ -1495,7 +1510,7 @@ namespace NorvesLib::Core::Rendering
                     {
                         continue;
                     }
-                    drawCommand.Pipeline = GetGBufferPipeline(context, materialData, false);
+                    drawCommand.Pipeline = GetGBufferPipeline(context, materialData, false, 1.0f, cmd.Draw.bLodCrossfade);
                 }
                 if (!drawCommand.Pipeline)
                 {
@@ -2127,7 +2142,7 @@ namespace NorvesLib::Core::Rendering
 
     RHI::PipelinePtr GBufferPass::GetGBufferPipeline(const ViewRenderContext& context,
                                                      const MaterialResourceData* material,
-                                                     bool bSkinned, float opacity,
+                                                     bool bSkinned, float opacity, bool bLodCrossfade,
                                                      GBufferProgramId programOverride, bool* outUsingProgramOverride)
     {
         if (outUsingProgramOverride)
@@ -2150,6 +2165,10 @@ namespace NorvesLib::Core::Rendering
         {
             key.Program = programOverride;
         }
+        if (bLodCrossfade && key.Program == kStandardGBufferProgramId && !key.bAlphaClip)
+        {
+            key.bLodCrossfade = true;
+        }
         if (m_bPipelinesPrepared || m_bProgramOverlayPrepared)
         {
             RHI::PipelinePtr pipeline = m_Pipelines.Find(key);
@@ -2161,6 +2180,11 @@ namespace NorvesLib::Core::Rendering
             if (!pipeline && key.bAlphaClip)
             {
                 key.bAlphaClip = false;
+                pipeline = m_Pipelines.Find(key);
+            }
+            if (!pipeline && key.bLodCrossfade)
+            {
+                key.bLodCrossfade = false;
                 pipeline = m_Pipelines.Find(key);
             }
             if (outUsingProgramOverride)
@@ -2206,6 +2230,11 @@ namespace NorvesLib::Core::Rendering
             key.bAlphaClip = false;
             pipeline = getOrCreate(key);
         }
+        if (!pipeline && key.bLodCrossfade)
+        {
+            key.bLodCrossfade = false;
+            pipeline = getOrCreate(key);
+        }
         if (outUsingProgramOverride)
         {
             *outUsingProgramOverride = pipeline && key.Program == programOverride;
@@ -2237,9 +2266,11 @@ namespace NorvesLib::Core::Rendering
         RHI::GraphicsPipelineDesc pipelineDesc;
         pipelineDesc.vertexShader = shaders ? (key.bSkinned ? shaders->SkinnedVertex : shaders->Vertex)
                                            : (key.bSkinned ? m_SkinnedGBufferVertexShader : m_GBufferVertexShader);
-        // プログラム材質の切り抜きはプログラムの責任。標準材質だけ切り抜き用のシェーダーへ切り替える。
+        // プログラム材質の切り抜きはプログラムの責任。標準材質は切り抜き、段の遷移の順で変種を選ぶ。
         pipelineDesc.pixelShader = shaders ? shaders->Fragment
-                                          : (key.bAlphaClip ? m_GBufferAlphaClipFragmentShader : m_GBufferFragmentShader);
+                                          : (key.bAlphaClip ? m_GBufferAlphaClipFragmentShader
+                                                            : (key.bLodCrossfade ? m_GBufferCrossfadeFragmentShader
+                                                                                 : m_GBufferFragmentShader));
         if (!pipelineDesc.pixelShader)
         {
             return nullptr;
@@ -2410,7 +2441,7 @@ namespace NorvesLib::Core::Rendering
                 ? context.Resources.Materials->GetData(source.Draw.MaterialHandle)
                 : nullptr;
         bool bUsingFurProgram = false;
-        outCommand.Pipeline = GetGBufferPipeline(context, material, true, source.Skinned.Opacity,
+        outCommand.Pipeline = GetGBufferPipeline(context, material, true, source.Skinned.Opacity, false,
                                                  ResolveGBufferProgramOverride(source), &bUsingFurProgram);
         // 殻数は GBuffer の写しだけに設定する。標準へ落ちたときは体の面の UBO と束縛へ戻す。
         outCommand.Skinned.ShellCount = 1u;

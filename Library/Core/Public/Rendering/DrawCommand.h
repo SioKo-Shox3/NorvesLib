@@ -125,6 +125,9 @@ namespace NorvesLib::Core::Rendering
         bool bCastShadow = true; // シャドウを落とすか
         bool bSkyMapProxy = false; // 空の遮蔽のマップが受け持つ樹冠か
         bool bInstanced = false; // インスタンシング描画か
+        // インスタンスのデータの NormalMatrix[3] に段の遷移のフェードの値を持つ描画か。
+        // GBuffer はディザの版で、解決の後の重ね描きとして描く。
+        bool bLodCrossfade = false;
 
         // カスタムデータ
         float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // シェーダーに渡すカスタムデータ

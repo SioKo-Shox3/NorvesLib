@@ -45,6 +45,7 @@ layout(location = 5) out vec3 fragViewDir;
 layout(location = 6) out vec4 fragCurrentClip;
 layout(location = 7) out vec4 fragPreviousClip;
 layout(location = 8) flat out vec4 fragInstanceShadingParams;
+layout(location = 11) flat out float fragLodCrossfade;
 #ifdef GBUFFER_DISSOLVE
 #include "Common/Dissolve.glsl"
 layout(location = 9) out vec3 fragRestPosition;
@@ -55,6 +56,7 @@ layout(location = 10) out float fragDissolveProtect;
 
 void main()
 {
+    fragLodCrossfade = 0.0;
 #ifdef GBUFFER_DISSOLVE
     // 保護の重みはスキンの変形前の骨の番号と重みから求める。
     uint wordOffset = uint(gl_VertexIndex) * 16u;

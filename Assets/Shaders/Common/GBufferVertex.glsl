@@ -53,6 +53,7 @@ layout(location = 5) out vec3 fragViewDir;  // ワールド空間でのカメラ
 layout(location = 6) out vec4 fragCurrentClip;
 layout(location = 7) out vec4 fragPreviousClip;
 layout(location = 8) flat out vec4 fragInstanceShadingParams;
+layout(location = 11) flat out float fragLodCrossfade;
 #ifdef GBUFFER_DISSOLVE
 #include "Common/Dissolve.glsl"
 layout(location = 9) out vec3 fragRestPosition;
@@ -61,6 +62,7 @@ layout(location = 10) out float fragDissolveProtect;
 
 void main()
 {
+    fragLodCrossfade = instances[gl_InstanceIndex].normalRows[0].w;
 #ifdef GBUFFER_DISSOLVE
     fragRestPosition = inPosition;
     fragDissolveProtect = 0.0;

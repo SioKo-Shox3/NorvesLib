@@ -31,6 +31,7 @@ layout(location = 7) flat out vec2 fragSizeWorld;
 layout(location = 8) flat out vec4 fragAtlasInfo;
 layout(location = 9) flat out float fragCellResolution;
 layout(location = 10) flat out vec3 fragTint;
+layout(location = 11) flat out float fragLodCrossfade;
 
 vec3 NormalizeAxisOrDefault(vec3 axis, vec3 defaultAxis)
 {
@@ -88,4 +89,5 @@ void main()
     fragAtlasInfo = vec4(instanceData.normalRows[2].zw, instanceData.customData.yz);
     fragCellResolution = instanceData.customData.x;
     fragTint = instanceData.objectColor.rgb;
+    fragLodCrossfade = instanceData.customData.w;
 }
