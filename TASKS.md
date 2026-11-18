@@ -8117,7 +8117,7 @@
 - notes: 提案『濡れた毛』（未定）は採る（作者の決定。ロードマップ 1463 行の「採用なら本設計の全部」）。雨量の正本は GR49（G7。まだ一覧に無い）で、G6 は G7 より前なので needs-gr に書かず、`SetRainRate` の口を開けておき、G7 が環境の状態からこの口へ書く（G7 の計画役へ渡す約束として `Docs/Architecture/FurRendering.md` に書く）。樹冠の下の遮蔽（GR59。G11）も同じで、それまでは物理のトリガーの雨宿りの体積で 0 にする（ロードマップ 1461 行）。物理は Library/Modules にあり Core から使えないので、体積は Game/Gameplay に置く（`FollowCameraComponent` と同じ層）。厳密解にするのは、提案『寝床』で時間が大きく飛んでも同じ式で安定するため（ロードマップ 1461・1463 行）。濡れ度を revision に入れないのは、毎フレーム変わる値で全画面の履歴が捨てられないため（ロードマップ 1445 行。MeshProxy は CustomData を混ぜていて、RenderingCoordinator.cpp:188 の `HashRevisionFloatArray(hash, proxy.CustomData, 4u)`、スキンでそれをやると毎フレーム履歴が飛ぶ）。インスタンスの値の口の名前は G5-GR26-MATERIAL-PARAMS に合わせる（`MeshComponent::SetShadingParams(index, value)` と同じ形の見込み。UNCERTAIN: スキンの側の名前は G5 の実装を読んで合わせる）。濡れ度の見た目（暗化・つや・束感）は G6-GR35-WET-LOOK。試験を足す理由: 刻みの分け方で濡れ方が変わる・revision に混ざって履歴が毎フレーム捨てられる・雨宿りから出ても乾いたまま、はどれも撮影 1 枚やログでは分からず、黙って起きる。危険地帯（RenderThread との受け渡し）なので評価者を通す。ロードマップ 1441〜1445・1461〜1464・1489・1491 行、要件 `#### GR35`。
 
 ## G6-GR35-WET-LOOK: 濡れ度に応じて毛を暗く・彩度を下げ・粗さを下げ、殻を短く太く束にして垂らし、Kajiya-Kay のハイライトを鋭く強くする
-- status: doing
+- status: done
 - after: G6-GR34-FUR-LIGHTING, G5-GR26-GBUFFER-CONTRACT, G5-GR26-MATERIAL-PARAMS, G5-GR26-LIGHTING-MODELS, G5-GR26-GBUFFER-PROGRAMS
 - gr: GR35
 - needs-gr: GR26
