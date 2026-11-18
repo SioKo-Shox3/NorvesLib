@@ -3,6 +3,7 @@
 #define NORVES_PARTICLE_SIMULATION_GLSL
 
 #include "Particles/ParticleCommon.glsl"
+#include "Common/OverheadHeightMap.glsl"
 
 const uint kGpuEmitterExtraFlagReset = 1u;
 const uint kVfxShapePoint = 0u;
@@ -62,8 +63,8 @@ layout(std140, set = 0, binding = 0) uniform GpuParticleSimulationConstants
     vec2 invScreenSize;
     vec4 windA;
     vec4 windB;
-    vec2 heightFieldWorldMin;
-    vec2 heightFieldWorldSize;
+    vec4 heightFieldWindow;
+    vec4 heightFieldDepth;
 } simulation;
 
 layout(std430, set = 0, binding = 1) buffer GpuParticlePool
@@ -127,6 +128,48 @@ uint ParticleShape(GpuEmitterParams emitter)
         (flags >> kGpuEmitterShapeShift) & kGpuEmitterShapeMask : kVfxShapePoint;
 }
 
+// カメラの箱で折り返す粒は寿命まで使い回す。
+bool ParticleIsRecycled(GpuEmitterParams emitter)
+{
+    return ParticleShape(emitter) == kVfxShapeCameraBox &&
+        (emitter.poolCapacitySeedFlags.w & kGpuEmitterFlagWrapInCameraBox) != 0u;
+}
+
+// 無効なマップや窓の外は屋根が無いものとして扱う。
+bool ParticleSampleRoofY(vec3 position, out float roofY)
+{
+    roofY = 0.0;
+    return simulation.heightFieldBound != 0u &&
+        OverheadHeightMapSampleRoofY(heightField,
+            OverheadHeightMapView(simulation.heightFieldWindow, simulation.heightFieldDepth), position.xz, roofY);
+}
+
+// 生成・折り返しなど、経路を持たない配置先で遮蔽状態を決める。
+void ClassifyParticleAtPlacement(GpuEmitterParams emitter, inout GpuParticle particle)
+{
+    if ((emitter.poolCapacitySeedFlags.w & kGpuEmitterFlagCollisionHeightField) == 0u)
+    {
+        return;
+    }
+    float roofY;
+    if (ParticleSampleRoofY(particle.posAge.xyz, roofY) &&
+        particle.posAge.y < roofY - OVERHEAD_RAIN_SURFACE_BIAS_METERS)
+    {
+        if (ParticleIsRecycled(emitter))
+        {
+            particle.meta.z |= kGpuParticleFlagSheltered;
+        }
+        else
+        {
+            particle.meta.z &= ~kGpuParticleFlagAlive;
+        }
+    }
+    else
+    {
+        particle.meta.z &= ~kGpuParticleFlagSheltered;
+    }
+}
+
 // エミッタの現在の有効割合から描画対象の旗を更新する。
 void UpdateParticleActivation(GpuEmitterParams emitter, inout GpuParticle particle)
 {
@@ -169,7 +212,7 @@ GpuParticle InitParticle(GpuEmitterParams emitter, GpuEmitterFrameExtra extra, u
 
     uint shape = ParticleShape(emitter);
     vec3 position = basePosition;
-    if (shape != kVfxShapePoint)
+    if (shape != kVfxShapePoint && shape != kGpuEmitterShapeSkinSurface && shape != kGpuEmitterShapeBone)
     {
         float a = VfxCounterUnitFloat(seed, serial, kVfxRandomDrawShapeA);
         float b = VfxCounterUnitFloat(seed, serial, kVfxRandomDrawShapeB);

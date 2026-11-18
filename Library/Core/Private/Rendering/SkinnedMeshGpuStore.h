@@ -43,6 +43,8 @@ namespace NorvesLib::Core::Rendering
         // 登録時に分けた128三角形以下の塊。全三角形をちょうど1回ずつ覆う。
         // 未登録のメッシュと、塊に分けられなかったメッシュ（GBuffer・影では描ける）は false で、出力は空。
         bool TryGetChunks(SkinnedMeshHandle handle, Container::VariableArray<MeshIndexChunk>& out) const;
+        // 未登録なら false で、out は空。表が無い登録済みメッシュも取得できる。
+        bool TryGetSurfaceSource(SkinnedMeshHandle handle, SkinnedSurfaceGpuSource& out) const;
         // 塊の作り方を差し替える（テスト用。nullptr で既定へ戻す）。登録済みのメッシュには効かない。
         void SetChunkBuilderForTesting(MeshIndexChunkBuilder builder);
         void CollectReleasedResources();
@@ -71,7 +73,10 @@ namespace NorvesLib::Core::Rendering
             SkinnedMeshHandle Handle;
             RHI::BufferPtr VertexBuffer;
             RHI::BufferPtr IndexBuffer;
+            RHI::BufferPtr SurfaceSampleBuffer;
             uint32_t IndexCount = 0;
+            uint32_t SurfaceSampleCount = 0;
+            uint32_t VertexCount = 0;
             Container::VariableArray<MeshIndexChunk> Chunks;
             // 塊に分けられたか。false でもメッシュは登録され、GBuffer・影の経路は頂点とインデックスだけで描く
             bool bChunksValid = false;
@@ -104,6 +109,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bFrameOpen = false;
         MeshIndexChunkBuilder m_ChunkBuilder = nullptr;
         bool m_bLoggedChunkFailure = false;
+        bool m_bLoggedSurfaceFailure = false;
         bool m_bLoggedMeshMemory = false;
     };
 } // namespace NorvesLib::Core::Rendering

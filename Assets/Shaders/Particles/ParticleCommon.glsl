@@ -14,6 +14,8 @@ const uint kGpuParticleFlagAlive = 1u << 0u;
 const uint kGpuParticleFlagStuck = 1u << 1u;
 // 粒が有効化されている旗。
 const uint kGpuParticleFlagActive = 1u << 2u;
+// 屋根の下に居る粒。描かず、深度の命中で通常の子を生まない。
+const uint kGpuParticleFlagSheltered = 1u << 3u;
 // 子エミッタが無いことを示す配列添字。
 const uint kGpuParticleInvalidEmitter = 0xFFFFFFFFu;
 // 初期位置の形を使う旗。
@@ -48,6 +50,26 @@ const uint kGpuEmitterFlagUnscaledTime = 1u << 13u;
 const uint kGpuEmitterShapeShift = 16u;
 // シフト前の VfxSpawnShape のマスク。
 const uint kGpuEmitterShapeMask = 0x7u;
+// スキンの表面から放出する形。
+const uint kGpuEmitterShapeSkinSurface = 5u;
+// 骨のバインド位置から放出する形。
+const uint kGpuEmitterShapeBone = 6u;
+// 表面の標本を一様に受け入れる方式。
+const uint kGpuSkinAcceptUniform = 0u;
+// ディゾルブの境目で標本を受け入れる方式。
+const uint kGpuSkinAcceptDissolveEdge = 1u;
+// 指定した骨の組で標本を受け入れる方式。
+const uint kGpuSkinAcceptBoneMask = 2u;
+// 生成スレッドごとの標本の試行上限。
+const uint kGpuSkinMaxAttempts = 8u;
+// このフレームにスキンの源が無い印。
+const uint kGpuSkinSourceNone = 0xFFFFFFFFu;
+// 単独の骨の指定が無い印。
+const uint kGpuSkinNoBone = 0xFFFFFFFFu;
+// 骨の組から一様に選ぶ乱数の番号。
+const uint kGpuSkinRandomDrawBonePick = 8u;
+// 試行 k の標本は 16+2k、受け入れは 17+2k（k < 8、最大 31）。
+const uint kGpuSkinRandomDrawAttemptBase = 16u;
 // RenderFlags 内の VfxGpuSpriteOrientation の開始ビット。
 const uint kGpuEmitterRenderOrientationShift = 0u;
 // シフト前の VfxGpuSpriteOrientation のマスク。
@@ -72,6 +94,10 @@ const uint kGpuEmitterRenderSubPixelCompensationMask = 0x1u;
 const uint kGpuEmitterRenderSlotOrderShift = 6u;
 // シフト前のスロットの順に描く設定のマスク。
 const uint kGpuEmitterRenderSlotOrderMask = 0x1u;
+// RenderFlags 内の手続きのフリップブックのコマ数の開始ビット。
+const uint kGpuEmitterRenderFlipbookFramesShift = 8u;
+// シフト前のコマ数のマスク。0 はなし、1 以上は寿命をコマ数で区切って描く。
+const uint kGpuEmitterRenderFlipbookFramesMask = 0xFFu;
 // CurveKeyCounts 内の Size のキー数の開始ビット。
 const uint kGpuCurveKeyCountSizeShift = 0u;
 // CurveKeyCounts 内の Color のキー数の開始ビット。
@@ -101,7 +127,18 @@ struct GpuCollisionParams
     float childProbability;
 };
 
-// std430 で 256 バイト。CPU と同じ順に 16 バイト行を並べる。
+// SpawnChild は childEmitter を命中の法線の y が childMinNormalY 以上のときだけ生む。
+// secondChildEmitter は面の向きを問わず生み、両方とも childProbability による同じ確率の引きを使う。
+// secondChildEmitter はエミッタの配列添字で、無しは kGpuParticleInvalidEmitter。
+struct GpuCollisionChildParams
+{
+    uint secondChildEmitter;
+    float childMinNormalY;
+    uint reserved0;
+    uint reserved1;
+};
+
+// std430 で 368 バイト。CPU と同じ順に 16 バイト行を並べる。
 struct GpuEmitterParams
 {
     uvec4 poolCapacitySeedFlags;                  // 0: プール開始・容量・乱数種・モジュールの旗。
@@ -118,14 +155,52 @@ struct GpuEmitterParams
     GpuCollisionParams planeCollision;          // 176: 平面の衝突応答。
     GpuCollisionParams heightFieldCollision;    // 192: 高さ場の衝突応答。
     GpuCollisionParams depthCollision;          // 208: 深度の衝突応答。
-    uint renderFlags;                          // 224: bit 0〜1 向き・2 合成・3 描画段階・4 照明・5 幅 1px 未満の補償・6 スロットの順に描く設定。
+    uint renderFlags;                          // 224: bit 0〜1 向き・2 合成・3 描画段階・4 照明・5 幅 1px 未満の補償・6 スロットの順に描く設定・8〜15 手続きのフリップブックのコマ数（0 はなし）。
     float softDistance;                        // 228: ソフトパーティクルの距離。
     float fogInfluence;                        // 232: 霧の影響。
     float streakShutterSeconds;                // 236: 伸びのシャッター時間。
     vec4 curveColor;                            // 240: 色の寿命曲線が値 1 で到達する RGBA 色。
+    GpuCollisionChildParams planeChild;         // 256: 平面の衝突の 2 つ目の子と法線の下限。
+    GpuCollisionChildParams heightFieldChild;   // 272: 高さ場の衝突の 2 つ目の子と法線の下限。
+    GpuCollisionChildParams depthChild;         // 288: 深度の衝突の 2 つ目の子と法線の下限。
+    // 雨の遮蔽マップの下の粒が深度の面に命中し、屋根と命中点の高さの差が
+    // shelterMinClearance（m）を超えたとき、shelterChildProbability で樹冠の下の滴りを生む。
+    uint shelterChildEmitter;                  // 304: 屋根の下の子。無しは kGpuParticleInvalidEmitter。
+    float shelterChildProbability;             // 308: 屋根の下の子を生む確率。
+    float shelterMinClearance;                 // 312: 屋根と命中点の高さの差の下限（m）。
+    uint shelterReserved;                      // 316: 予約。
+    vec3 skinBindPosition;                      // 320: Bone のバインド姿勢の位置（メッシュ空間）。
+    uint skinBoneIndex;                         // 332: 骨の番号。kGpuSkinNoBone なら組から一様に選ぶ。
+    float skinNormalSpeed;                      // 336: 法線の向きの初速。
+    float skinVelocityInheritance;              // 340: 体の速度を継承する係数。
+    uint skinAcceptMode;                        // 344: 標本を受け入れる方式。
+    uint skinSourceIndex;                       // 348: このフレームの源の行。無しは kGpuSkinSourceNone。
+    uvec4 skinBoneMask;                         // 352: 受け入れと骨の選択に使う 128 bit の組。
 };
 // キー数は Size・Color・Opacity・Stretch を下位から各 8 ビット（0 は曲線なし）。
 // 別バッファのキーは開始添字から同じ Target 順に連続して置く。
+
+// スキンの源の行。std430 で 96 バイト。RenderThread のパスが毎フレーム作る。
+struct GpuSkinSource
+{
+    uvec2 vertexAddress; // 0: SkinnedMeshVertex（64 B）の列の BDA（下位・上位 32 bit）。
+    uvec2 sampleAddress; // 8: 表面の標本（16 B）の列の BDA（下位・上位 32 bit）。
+    uint sampleCount; // 16: 表面の標本の数。
+    uint vertexCount; // 20: 頂点の数。
+    uint boneCount; // 24: パレットに含まれる骨の数。
+    uint paletteOffset; // 28: mat4 の列で今の world・worldNormal・（位置・法線）×boneCount が始まる番号。
+    uint previousPaletteOffset; // 32: mat4 の列で前の world・位置×boneCount が始まる番号。
+    float frameDeltaSeconds; // 36: 前のパレットからの時間差（秒）。
+    uint dissolveEnabled; // 40: ディゾルブの材質かどうか。
+    float dissolveThreshold; // 44: インスタンスの P0。
+    vec3 dissolveDirection; // 48: ディゾルブの方向。
+    float dissolveDirectionBias; // 60: ディゾルブの方向のバイアス。
+    float dissolveNoiseScale; // 64: ディゾルブのノイズの倍率。
+    float dissolveEdgeWidth; // 68: ディゾルブの境目の幅。
+    uint reserved0; // 72: 予約欄。
+    uint reserved1; // 76: 予約欄。
+    uvec4 dissolveProtectBones; // 80: ディゾルブから保護する骨の組（128 bit）。
+};
 
 // 正規化した年齢と値の寿命曲線のキー。
 struct GpuCurveKey

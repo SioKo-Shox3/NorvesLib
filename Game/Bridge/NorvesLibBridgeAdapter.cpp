@@ -4,12 +4,12 @@
 
 #include "Bridge/BridgeBase64.h"
 #include "Bridge/BridgeRuntimeState.h"
+#include "Bridge/BridgeSceneDocumentService.h"
 #include "Bridge/BridgeServerHost.h"
 #include "GameApplicationHandler.h"
 
 #include "Core/Public/Application/IWindow.h"
 #include "Core/Public/Component/Component.h"
-#include "Core/Public/Component/ScriptComponent.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
@@ -475,13 +475,36 @@ namespace Game::Bridge
             return true;
         }
 
+        // 先頭の負号を省略できる、1 桁以上の十進整数表記だけを受ける。
+        bool IsDecimalIntegerText(std::string_view text)
+        {
+            if (text.empty())
+            {
+                return false;
+            }
+            const std::size_t start = (text.front() == '-') ? 1 : 0;
+            if (start == text.size())
+            {
+                return false;
+            }
+            for (std::size_t i = start; i < text.size(); ++i)
+            {
+                if (text[i] < '0' || text[i] > '9')
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         /**
          * @brief プロパティの SerializedValue（NorvesLib 独自表記）を純 JSON 値へ変換して追記する
          *
          * 型の Kind / Name で分岐する。bool は "1"/"0" を true/false へ、算術型（Integer/Float）は
          * 十進テキストをそのまま JSON number へ（妥当性検証付き、不正なら文字列フォールバック）、
          * Vector2/3/4・Quaternion は VectorN(...) を JSON 数値配列へ、String やその他（Transform/
-         * Enum/未知）は JSON 文字列（AppendJsonString でエスケープ）として書き出す。
+         * 未知）は JSON 文字列（AppendJsonString でエスケープ）として書き出す。
+         * Enum は省略可能な負号と数字だけの整数表記なら JSON 数値へ、それ以外は文字列へ変換する。
          *
          * @param out 追記先
          * @param type プロパティの StableTypeId
@@ -535,18 +558,26 @@ namespace Game::Bridge
                     }
                     break;
                 }
+                case TypeKind::Enum:
+                {
+                    if (IsDecimalIntegerText(serialized))
+                    {
+                        out.append(serialized.data(), serialized.size());
+                        return;
+                    }
+                    break;
+                }
                 case TypeKind::String:
                 case TypeKind::Void:
                 case TypeKind::Object:
                 case TypeKind::Resource:
                 case TypeKind::Array:
-                case TypeKind::Enum:
                 case TypeKind::Custom:
                 default:
                     break;
             }
 
-            // String / Transform / Enum / 未知型などは JSON 文字列として綴る（schema は string 許容）。
+            // String / Transform / 整数表記でない Enum / 未知型などは JSON 文字列として綴る。
             out += '"';
             AppendJsonString(out, serialized);
             out += '"';
@@ -721,40 +752,11 @@ namespace Game::Bridge
             return target;
         }
 
-        NorvesLib::Core::Component::ScriptComponent* AsScriptComponent(
-            NorvesLib::Core::Component::Component* component) noexcept
-        {
-            using ScriptComponent = NorvesLib::Core::Component::ScriptComponent;
-            if (component == nullptr || component->GetClass() != ScriptComponent::StaticClass())
-            {
-                return nullptr;
-            }
-            return static_cast<ScriptComponent*>(component);
-        }
-
         std::string BuildEmptyObjectSnapshot(std::string_view objectId)
         {
             std::string out = R"({"objectId":")";
             AppendJsonString(out, objectId.empty() ? std::string_view{"0"} : objectId);
             out += R"(","properties":[]})";
-            return out;
-        }
-
-        std::string BuildScriptComponentSnapshot(
-            std::string_view objectId,
-            const NorvesLib::Core::Component::ScriptComponent& component)
-        {
-            std::string out = R"({"objectId":")";
-            AppendJsonString(out, objectId);
-            out += R"(","kind":"ScriptComponent","properties":[{"name":"ScriptPath","value":")";
-
-            const auto pathRef = component.getScriptPath();
-            AppendJsonString(out, ViewOf(*pathRef));
-            out += R"(","valueType":"string"},{"name":"ScriptClassName","value":")";
-
-            const auto classRef = component.getScriptClassName();
-            AppendJsonString(out, ViewOf(*classRef));
-            out += R"(","valueType":"string"}]})";
             return out;
         }
 
@@ -1475,40 +1477,6 @@ namespace Game::Bridge
             return true;
         }
 
-        bool ApplyScriptComponentStringProperty(
-            NorvesLib::Core::Component::ScriptComponent& component,
-            std::string_view propertyName,
-            std::string_view rawJsonValue,
-            std::string& outAppliedValueJson)
-        {
-            std::string decoded;
-            if (!DecodeJsonString(rawJsonValue, decoded))
-            {
-                return false;
-            }
-
-            NorvesLib::Core::Container::String value;
-            value.append(decoded.data(), decoded.size());
-            if (propertyName == "ScriptPath")
-            {
-                component.getScriptPath() = value;
-            }
-            else if (propertyName == "ScriptClassName")
-            {
-                component.getScriptClassName() = value;
-            }
-            else
-            {
-                return false;
-            }
-
-            outAppliedValueJson.clear();
-            outAppliedValueJson += '"';
-            AppendJsonString(outAppliedValueJson, decoded);
-            outAppliedValueJson += '"';
-            return true;
-        }
-
         /**
          * @brief wire JSON 値（純 JSON 値テキスト）を NorvesLib 内部シリアライズ表記へ逆変換する
          *
@@ -1521,7 +1489,9 @@ namespace Game::Bridge
          *   - String: wire JSON 文字列 `"..."` → 引用符を剥がし JSON アンエスケープして out。
          *   - Vector2/3/4・Quaternion（TypeInfo.Name 判定）: wire JSON 配列 `[a,b,c]` → 要素数を確認し
          *     `Vector3(a,b,c)` 形式（接頭辞 Math:: なし、SerializeValue と同形）へ。要素数不一致は false。
-         *   - 上記以外（Transform/enum/object/null/未知）: false。
+         *   - Enum: 省略可能な先頭の負号と 1 桁以上の数字のみを受け、そのまま out へ追記する。
+         *     小数点・指数・引用符・空白は受けず、値域の確認は DeserializeStable に任せる。
+         *   - 上記以外（Transform/object/null/未知）: false。
          *
          * @param type エンジン側プロパティ型の TypeInfo（借用）
          * @param wireJson extract_json_field が返した生の wire JSON 値テキスト（借用）
@@ -1650,14 +1620,22 @@ namespace Game::Bridge
                     out += assembled;
                     return true;
                 }
+                case TypeKind::Enum:
+                {
+                    if (!IsDecimalIntegerText(wireJson))
+                    {
+                        return false;
+                    }
+                    out.append(trimmed.data(), trimmed.size());
+                    return true;
+                }
                 case TypeKind::Void:
                 case TypeKind::Object:
                 case TypeKind::Resource:
                 case TypeKind::Array:
-                case TypeKind::Enum:
                 case TypeKind::Custom:
                 default:
-                    return false;  // Transform / enum / object / null / 未知は未対応。
+                    return false;  // Transform / object / null / 未知は未対応。
             }
         }
         /**
@@ -2249,12 +2227,40 @@ namespace Game::Bridge
         const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
         if (target.Kind == EBridgeObjectTargetKind::Component)
         {
-            auto* scriptComponent = AsScriptComponent(target.ComponentValue);
-            if (scriptComponent == nullptr)
+            NorvesLib::Core::Container::VariableArray<BridgeSceneProperty> props;
+            if (target.ComponentValue == nullptr ||
+                !BridgeSceneDocumentService::ListProperties(*target.ComponentValue, props).Success)
             {
                 return OkLiteral(BuildEmptyObjectSnapshot(objectId));
             }
-            return OkLiteral(BuildScriptComponentSnapshot(objectId, *scriptComponent));
+
+            std::string text = R"({"objectId":")";
+            AppendJsonString(text, objectId);
+            text += R"(","kind":")";
+            const NorvesLib::Core::IClass* cls = target.ComponentValue->GetClass();
+            const std::string_view className =
+                (cls != nullptr) ? ViewOf(cls->GetClassName().GetView()) : std::string_view{};
+            AppendJsonString(text, className.empty() ? std::string_view{"Component"} : className);
+            text += R"(","properties":[)";
+
+            bool bFirstProp = true;
+            for (const BridgeSceneProperty& prop : props)
+            {
+                if (!bFirstProp)
+                {
+                    text += ',';
+                }
+                bFirstProp = false;
+                text += R"({"name":")";
+                AppendJsonString(text, ViewOf(prop.Name));
+                text += R"(","value":)";
+                AppendWireValue(text, prop.Type, ViewOf(prop.SerializedValue));
+                text += R"(,"valueType":")";
+                AppendJsonString(text, ResolveTypeName(prop.Type));
+                text += R"("})";
+            }
+            text += R"(]})";
+            return OkLiteral(text);
         }
 
         if (target.Kind != EBridgeObjectTargetKind::Entity || target.EntityValue == nullptr)
@@ -2372,24 +2378,37 @@ namespace Game::Bridge
         const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
         if (target.Kind == EBridgeObjectTargetKind::Component)
         {
-            auto* scriptComponent = AsScriptComponent(target.ComponentValue);
-            if (scriptComponent == nullptr)
+            NorvesLib::Core::Container::String name;
+            name.append(propertyName.data(), propertyName.size());
+            BridgeSceneProperty prop;
+            if (target.ComponentValue == nullptr ||
+                !BridgeSceneDocumentService::FindProperty(*target.ComponentValue, name, prop).Success)
             {
                 return OkLiteral(kRejected);
             }
 
-            std::string appliedValueJson;
-            if (!ApplyScriptComponentStringProperty(
-                    *scriptComponent,
-                    propertyName,
-                    wireValue,
-                    appliedValueJson))
+            const NorvesLib::Core::TypeInfo* typeInfo =
+                NorvesLib::Core::TypeRegistry::Get().FindStable(prop.Type);
+            if (typeInfo == nullptr)
+            {
+                return OkLiteral(kRejected);
+            }
+            std::string internalText;
+            if (!WireJsonToSerialized(*typeInfo, wireValue, internalText))
+            {
+                return OkLiteral(kRejected);
+            }
+            NorvesLib::Core::Container::String serializedValue;
+            serializedValue.append(internalText.data(), internalText.size());
+            BridgeSceneProperty applied;
+            if (!BridgeSceneDocumentService::SetProperty(
+                    *target.ComponentValue, name, serializedValue, &applied).Success)
             {
                 return OkLiteral(kRejected);
             }
 
             std::string out = R"({"accepted":true,"appliedValue":)";
-            out += appliedValueJson;
+            AppendWireValue(out, applied.Type, ViewOf(applied.SerializedValue));
             out += '}';
             return OkLiteral(out);
         }
@@ -2517,11 +2536,11 @@ namespace Game::Bridge
         // （エラー Result ではなく成功 Result に accepted:false を載せる＝result schema の必須形）。
         static constexpr std::string_view kRejected = R"({"accepted":false})";
 
-        // params を dump して parentId を読む（SDK の JsonValue に構造的読み取り API が無いため
-        // 最小スキャナ。objectSetProperty と同手法）。parentId は任意（無ければルート生成）。
+        // params を dump して parentId と kind を読む。parentId は任意で、省略時はルートに生成する。
         const std::string paramsText = params.dump();
         const std::optional<std::string> parentIdField =
             extract_string_field(paramsText, "parentId");
+        const std::optional<std::string> kindField = extract_string_field(paramsText, "kind");
 
         // GEngine 未生成なら reject（World を得られない）。
         auto* engine = NorvesLib::Core::Engine::GEngine;
@@ -2551,9 +2570,22 @@ namespace Game::Bridge
             parent = resolvedParent.EntityValue;
         }
 
-        // kind is ignored: no public dynamic-type+parent spawn API (AttachChildEntity is private);
-        // MVP always spawns a base Entity.
-        NorvesLib::Core::Entity* created = world.SpawnEntity<NorvesLib::Core::Entity>(parent);
+        // kind があれば指定クラスの Entity を生成し、省略時は基底 Entity を生成する。
+        NorvesLib::Core::Entity* created = nullptr;
+        if (kindField.has_value())
+        {
+            const std::string& kind = kindField.value();
+            NorvesLib::Core::Container::String className;
+            className.append(kind.data(), kind.size());
+            if (!BridgeSceneDocumentService::CreateEntity(world, className, parent, created).Success)
+            {
+                return OkLiteral(kRejected);
+            }
+        }
+        else
+        {
+            created = world.SpawnEntity<NorvesLib::Core::Entity>(parent);
+        }
         if (created == nullptr)
         {
             return OkLiteral(kRejected);  // World 未初期化含む生成失敗。

@@ -136,17 +136,20 @@ namespace NorvesLib::Core::Particle
             }
             case VfxModuleType::CollisionPlane:
             {
-                constexpr const char* names[] = {"GroundY", "KillBelowY", "Response", "Restitution", "ChildEmitter", "ChildProbability"};
+                constexpr const char* names[] = {"GroundY", "KillBelowY", "Response", "Restitution", "ChildEmitter", "ChildProbability",
+                    "SecondChildEmitter", "ChildMinNormalY"};
                 return ArgumentAt(names, index);
             }
             case VfxModuleType::CollisionHeightField:
             {
-                constexpr const char* names[] = {"Response", "Restitution", "ChildEmitter", "ChildProbability"};
+                constexpr const char* names[] = {"Response", "Restitution", "ChildEmitter", "ChildProbability",
+                    "SecondChildEmitter", "ChildMinNormalY", "ShelterChildEmitter", "ShelterChildProbability", "ShelterMinClearance"};
                 return ArgumentAt(names, index);
             }
             case VfxModuleType::CollisionDepth:
             {
-                constexpr const char* names[] = {"Thickness", "Response", "Restitution", "ChildEmitter", "ChildProbability"};
+                constexpr const char* names[] = {"Thickness", "Response", "Restitution", "ChildEmitter", "ChildProbability",
+                    "SecondChildEmitter", "ChildMinNormalY"};
                 return ArgumentAt(names, index);
             }
             case VfxModuleType::SpriteRenderer:
@@ -162,7 +165,7 @@ namespace NorvesLib::Core::Particle
             case VfxModuleType::GpuSpriteRenderer:
             {
                 constexpr const char* names[] = {"Orientation", "Blend", "Pass", "SoftDistance", "Lighting", "FogInfluence",
-                    "StreakShutterSeconds", "SubPixelCompensation", "NearFadeDistance", "Texture", "DrawInSlotOrder"};
+                    "StreakShutterSeconds", "SubPixelCompensation", "NearFadeDistance", "Texture", "DrawInSlotOrder", "FlipbookFrames"};
                 return ArgumentAt(names, index);
             }
             default:
@@ -774,6 +777,29 @@ namespace NorvesLib::Core::Particle
         params.PlaneCollision.ChildEmitter = Rendering::kGpuParticleInvalidEmitter;
         params.HeightFieldCollision.ChildEmitter = Rendering::kGpuParticleInvalidEmitter;
         params.DepthCollision.ChildEmitter = Rendering::kGpuParticleInvalidEmitter;
+        params.PlaneChild.SecondChildEmitter = Rendering::kGpuParticleInvalidEmitter;
+        params.HeightFieldChild.SecondChildEmitter = Rendering::kGpuParticleInvalidEmitter;
+        params.DepthChild.SecondChildEmitter = Rendering::kGpuParticleInvalidEmitter;
+        params.PlaneChild.ChildMinNormalY = -1.0f;
+        params.HeightFieldChild.ChildMinNormalY = -1.0f;
+        params.DepthChild.ChildMinNormalY = -1.0f;
+        params.ShelterChildEmitter = Rendering::kGpuParticleInvalidEmitter;
+        params.ShelterChildProbability = 0.0f;
+        params.ShelterMinClearance = 3.0f;
+        const auto resolveChildEmitter = [&slot, &frameIndices](const Container::String& name)
+        {
+            if (!name.empty())
+            {
+                for (uint32_t index = 0u; index < slot.Asset.Emitters.size(); ++index)
+                {
+                    if (slot.Asset.Emitters[index].Name == name)
+                    {
+                        return frameIndices[index];
+                    }
+                }
+            }
+            return Rendering::kGpuParticleInvalidEmitter;
+        };
         params.Seed = emitter.StreamSeed;
         params.Lifetime = emitter.Lifetime;
         const Math::Vector3 position = emitter.Shape == VfxSpawnShape::CameraBox ? emitter.Offset : slot.Desc.Position + emitter.Offset;
@@ -929,14 +955,17 @@ namespace NorvesLib::Core::Particle
                 collision.Response = value(responseIndex).UInt;
                 collision.Restitution = value(responseIndex + 1u).Vector.x;
                 collision.ChildProbability = value(responseIndex + 3u).Vector.x;
-                const Container::String& childName = value(responseIndex + 2u).Name;
-                for (uint32_t childIndex = 0u; childIndex < slot.Asset.Emitters.size(); ++childIndex)
+                collision.ChildEmitter = resolveChildEmitter(value(responseIndex + 2u).Name);
+                // 追加の衝突引数は GPU 専用。既存の 4 引数の後ろから読む。
+                Rendering::GpuCollisionChildParams& child = bPlane ? params.PlaneChild :
+                    bDepth ? params.DepthChild : params.HeightFieldChild;
+                child.SecondChildEmitter = resolveChildEmitter(value(responseIndex + 4u).Name);
+                child.ChildMinNormalY = value(responseIndex + 5u).Vector.x;
+                if (!bPlane && !bDepth)
                 {
-                    if (slot.Asset.Emitters[childIndex].Name == childName)
-                    {
-                        collision.ChildEmitter = frameIndices[childIndex];
-                        break;
-                    }
+                    params.ShelterChildEmitter = resolveChildEmitter(value(responseIndex + 6u).Name);
+                    params.ShelterChildProbability = value(responseIndex + 7u).Vector.x;
+                    params.ShelterMinClearance = value(responseIndex + 8u).Vector.x;
                 }
                 break;
             }
@@ -949,7 +978,8 @@ namespace NorvesLib::Core::Particle
                         ((value(2u).UInt & Rendering::kGpuEmitterRenderPassMask) << Rendering::kGpuEmitterRenderPassShift) |
                         ((value(4u).UInt & Rendering::kGpuEmitterRenderLightingMask) << Rendering::kGpuEmitterRenderLightingShift) |
                         ((value(7u).UInt & Rendering::kGpuEmitterRenderSubPixelCompensationMask) << Rendering::kGpuEmitterRenderSubPixelCompensationShift) |
-                        ((value(10u).UInt & Rendering::kGpuEmitterRenderSlotOrderMask) << Rendering::kGpuEmitterRenderSlotOrderShift);
+                        ((value(10u).UInt & Rendering::kGpuEmitterRenderSlotOrderMask) << Rendering::kGpuEmitterRenderSlotOrderShift) |
+                        ((value(11u).UInt & Rendering::kGpuEmitterRenderFlipbookFramesMask) << Rendering::kGpuEmitterRenderFlipbookFramesShift);
                     params.SoftDistance = value(3u).Vector.x;
                     params.FogInfluence = value(5u).Vector.x;
                     params.StreakShutterSeconds = value(6u).Vector.x;

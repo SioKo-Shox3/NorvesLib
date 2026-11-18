@@ -22,6 +22,47 @@ namespace NorvesLib::Core::Rendering
     /// このフレームで範囲を空にして書き込みの先頭を 0 に戻す印。
     inline constexpr uint32_t kGpuEmitterExtraFlagReset = 1u << 0u;
 
+    /// スキンの源の行。RenderThread のパスが毎フレーム作る。std430 で 96 バイト。
+    struct alignas(16) GpuSkinSource
+    {
+        uint32_t VertexAddress[2]; // SkinnedMeshVertex（64 B）の列の BDA（下位・上位 32 bit）。
+        uint32_t SampleAddress[2]; // 表面の標本（16 B）の列の BDA（下位・上位 32 bit）。
+        uint32_t SampleCount; // 表面の標本の数。
+        uint32_t VertexCount; // 頂点の数。
+        uint32_t BoneCount; // パレットに含まれる骨の数。
+        uint32_t PaletteOffset; // mat4 の列で今の world・worldNormal・（位置・法線）×BoneCount が始まる番号。
+        uint32_t PreviousPaletteOffset; // mat4 の列で前の world・位置×BoneCount が始まる番号。
+        float FrameDeltaSeconds; // 前のパレットからの時間差（秒）。
+        uint32_t DissolveEnabled; // ディゾルブの材質かどうか。
+        float DissolveThreshold; // インスタンスの P0。
+        float DissolveDirection[3]; // ディゾルブの方向。
+        float DissolveDirectionBias; // ディゾルブの方向のバイアス。
+        float DissolveNoiseScale; // ディゾルブのノイズの倍率。
+        float DissolveEdgeWidth; // ディゾルブの境目の幅。
+        uint32_t Reserved0, Reserved1; // 予約欄。
+        uint32_t DissolveProtectBones[4]; // ディゾルブから保護する骨の組（128 bit）。
+    };
+
+    static_assert(sizeof(GpuSkinSource) == 96u);
+    static_assert(alignof(GpuSkinSource) == 16u);
+    static_assert(offsetof(GpuSkinSource, VertexAddress) == 0u);
+    static_assert(offsetof(GpuSkinSource, SampleAddress) == 8u);
+    static_assert(offsetof(GpuSkinSource, SampleCount) == 16u);
+    static_assert(offsetof(GpuSkinSource, VertexCount) == 20u);
+    static_assert(offsetof(GpuSkinSource, BoneCount) == 24u);
+    static_assert(offsetof(GpuSkinSource, PaletteOffset) == 28u);
+    static_assert(offsetof(GpuSkinSource, PreviousPaletteOffset) == 32u);
+    static_assert(offsetof(GpuSkinSource, FrameDeltaSeconds) == 36u);
+    static_assert(offsetof(GpuSkinSource, DissolveEnabled) == 40u);
+    static_assert(offsetof(GpuSkinSource, DissolveThreshold) == 44u);
+    static_assert(offsetof(GpuSkinSource, DissolveDirection) == 48u);
+    static_assert(offsetof(GpuSkinSource, DissolveDirectionBias) == 60u);
+    static_assert(offsetof(GpuSkinSource, DissolveNoiseScale) == 64u);
+    static_assert(offsetof(GpuSkinSource, DissolveEdgeWidth) == 68u);
+    static_assert(offsetof(GpuSkinSource, Reserved0) == 72u);
+    static_assert(offsetof(GpuSkinSource, Reserved1) == 76u);
+    static_assert(offsetof(GpuSkinSource, DissolveProtectBones) == 80u);
+
     /// 単発の放出（RaiseEvent の GPU 版）。std430 で 64 バイト。
     struct alignas(16) GpuParticleBurst
     {
@@ -41,7 +82,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved;
     };
 
-    /// 更新・生成・詰めの定数。std140 の一様バッファとして読む。256 バイト。
+    /// 更新・生成・詰めの定数。std140 の一様バッファとして読む。272 バイト。
     struct alignas(16) GpuParticleSimulationConstants
     {
         float ViewProjection[16];         // 今のフレームの GBuffer と同じジッタつきの ViewProjection（GBuffer のシェーダーが受け取る並び）。
@@ -53,7 +94,8 @@ namespace NorvesLib::Core::Rendering
         float ScreenSize[2]; float InvScreenSize[2]; // GBuffer の解像度とその逆数。
         float WindA[4]; // 風の向き xz（WindDirectionXZ）・BaseSpeed・GustStrength（風が無効なら全部 0）。
         float WindB[4]; // GustFrequencyHz・GustScaleMeters・Turbulence・風の時刻（WindClockSeconds）。
-        float HeightFieldWorldMin[2]; float HeightFieldWorldSize[2]; // 高さのテクスチャが覆う XZ の範囲。
+        float HeightFieldWindow[4]; // 遮蔽マップの原点 XZ・範囲・テクセル幅。
+        float HeightFieldDepth[4]; // 遮蔽マップの上端 Y・深度の範囲・解像度・有効フラグ。
     };
 
     static_assert(sizeof(GpuParticleBurst) == 64u);
@@ -76,7 +118,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuEmitterFrameExtra, Flags) == 8u);
     static_assert(offsetof(GpuEmitterFrameExtra, Reserved) == 12u);
 
-    static_assert(sizeof(GpuParticleSimulationConstants) == 256u);
+    static_assert(sizeof(GpuParticleSimulationConstants) == 272u);
     static_assert(alignof(GpuParticleSimulationConstants) == 16u);
     static_assert(offsetof(GpuParticleSimulationConstants, ViewProjection) == 0u);
     static_assert(offsetof(GpuParticleSimulationConstants, InverseViewProjection) == 64u);
@@ -98,8 +140,8 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuParticleSimulationConstants, InvScreenSize) == 200u);
     static_assert(offsetof(GpuParticleSimulationConstants, WindA) == 208u);
     static_assert(offsetof(GpuParticleSimulationConstants, WindB) == 224u);
-    static_assert(offsetof(GpuParticleSimulationConstants, HeightFieldWorldMin) == 240u);
-    static_assert(offsetof(GpuParticleSimulationConstants, HeightFieldWorldSize) == 248u);
+    static_assert(offsetof(GpuParticleSimulationConstants, HeightFieldWindow) == 240u);
+    static_assert(offsetof(GpuParticleSimulationConstants, HeightFieldDepth) == 256u);
 
     /// エミッタ 1 つの 1 フレームの写し。
     struct GpuParticleEmitterFrame
@@ -112,6 +154,7 @@ namespace NorvesLib::Core::Rendering
         Math::Matrix4x4 PreviousWorld;     // 前の写しのワールドの変換（初回は World と同じ）。
         GpuEmitterParams Params{};        // 詰めた定数（PoolOffset・Capacity・SerialBase・SpawnCount を含む）。
         bool bEnabled = true;             // 有効の印（無効でも生きている粒の更新は続ける）。
+        uint64_t SkinComponentId = 0;     // SkinSurface・Bone の源の部品。Draw.SourceMeshComponentId と同じ値で、0 は無し。
     };
 
     /// 単発の放出の列。上限 kGpuParticleMaxBursts、溢れは数える。
