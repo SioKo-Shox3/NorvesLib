@@ -18,6 +18,7 @@
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VirtualShadowMapCasters.h"
 #include "Rendering/VirtualShadowMapFoliageCasters.h"
+#include "Rendering/VirtualShadowMapImpostorCasters.h"
 #include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapRaster.h"
 #include "Rendering/VirtualShadowMapSample.h"
@@ -166,13 +167,17 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<ChunkVertexAnimation> ChunkVertexAnim;
         Container::VariableArray<GPUVsmDissolveEntry> Dissolve;
         Container::VariableArray<VirtualShadowMapMaskedDraw> MaskedDraws;
-        /** @brief 表を渡せなかった後は、復帰したときにキャッシュを描き直す */
+        /** @brief 切り抜きの描画に必要な資源を渡せなかった後は、復帰時にキャッシュを描き直す */
         bool bDissolveFallback = false;
 #if NORVES_ENABLE_LOGGING
         uint32_t MaskedChunkCount = 0;
         uint32_t MaskedDroppedDrawCount = 0;
         uint32_t LoggedMaskedCounts[5] = {};
         uint32_t LoggedExtensionCounts[6] = {};
+        /** @brief インポスターの選択数・塊数・予算外・距離外・描画上限で落とした数 */
+        uint32_t ImpostorCounts[5] = {};
+        uint32_t LoggedImpostorCounts[5] = {};
+        bool bImpostorLogged = false;
         bool bExtensionLogged = false;
 #endif
         VirtualShadowMap::CasterStats Stats;
@@ -219,6 +224,7 @@ namespace NorvesLib::Core::Rendering
          */
         Container::VariableArray<int32_t> FoliageBatchMesh;
         Container::VariableArray<VirtualShadowMap::FoliageShadowCandidate> FoliageCandidates;
+        Container::VariableArray<VirtualShadowMap::ImpostorShadowCandidate> ImpostorCandidates;
         uint64_t FoliageCollectCount = 0;
         /** @brief 株を置く風。FoliageWind は向き・時計・共通の風の突風周波数、FoliageWindParams は速さ・大きさ・突風・乱流の強さ */
         float FoliageWind[4] = {1.0f, 0.0f, 0.0f, 0.0f};
@@ -389,6 +395,115 @@ namespace NorvesLib::Core::Rendering
             state.MaskedChunkCount += endChunk - firstChunk;
 #endif
             return true;
+        }
+
+        // 太陽の段に届く個体を近い順に選び、被覆のアトラスごとにまとめる。
+        void CollectImpostorCasters(ViewRenderContext& context, VirtualShadowMapCasterState& state,
+                                    const CameraProxy& camera, const VirtualShadowMapClipmap& clipmap)
+        {
+            const auto& casters = *context.SnapshotImpostorShadowCasters;
+            const auto& atlases = *context.SnapshotImpostorShadowAtlases;
+            const float cameraPosition[3] = {camera.PositionX, camera.PositionY, camera.PositionZ};
+            // 太陽の最も外の段の幅の半分を、カメラから届く距離とする。
+            const uint32_t levelCount = std::min(clipmap.LevelCount, std::min(VirtualShadowMap::LEVEL_COUNT, VirtualShadowMapMaxLevels));
+            const float maxDistance = clipmap.Levels[levelCount - 1u].WidthMeters * 0.5f;
+#if NORVES_ENABLE_LOGGING
+            uint32_t outOfRange = 0u;
+            VirtualShadowMap::CollectImpostorShadowCandidates(casters, atlases, cameraPosition, maxDistance,
+                                                             state.ImpostorCandidates, &outOfRange);
+            state.ImpostorCounts[3] = outOfRange;
+#else
+            VirtualShadowMap::CollectImpostorShadowCandidates(casters, atlases, cameraPosition, maxDistance, state.ImpostorCandidates);
+#endif
+            const size_t remaining = VirtualShadowMap::MAX_CASTER_CHUNKS -
+                                     std::min<size_t>(state.Chunks.size(), VirtualShadowMap::MAX_CASTER_CHUNKS);
+            const size_t selected = std::min(state.ImpostorCandidates.size(),
+                                             std::min<size_t>(remaining, VirtualShadowMap::IMPOSTOR_SHADOW_CHUNK_BUDGET));
+#if NORVES_ENABLE_LOGGING
+            state.ImpostorCounts[0] = static_cast<uint32_t>(selected);
+            state.ImpostorCounts[2] = static_cast<uint32_t>(state.ImpostorCandidates.size() - selected);
+#endif
+            state.ImpostorCandidates.resize(selected);
+            std::sort(state.ImpostorCandidates.begin(), state.ImpostorCandidates.end(),
+                      [](const VirtualShadowMap::ImpostorShadowCandidate& a, const VirtualShadowMap::ImpostorShadowCandidate& b)
+            {
+                return a.Atlas != b.Atlas ? a.Atlas < b.Atlas : a.Caster < b.Caster;
+            });
+
+            size_t first = 0u;
+            while (first < state.ImpostorCandidates.size())
+            {
+                const uint32_t atlasIndex = state.ImpostorCandidates[first].Atlas;
+                size_t end = first + 1u;
+                while (end < state.ImpostorCandidates.size() && state.ImpostorCandidates[end].Atlas == atlasIndex)
+                {
+                    ++end;
+                }
+                const ImpostorShadowAtlas& atlas = atlases[atlasIndex];
+                MaskedCasterMaterial material;
+                material.Albedo = context.Resources.Textures ? context.Resources.Textures->GetRHITexturePtr(atlas.AlbedoAtlas) : nullptr;
+                if (!material.Albedo)
+                {
+                    first = end;
+                    continue;
+                }
+                material.AlbedoId = atlas.AlbedoAtlas.Id;
+                material.Cutoff = 0.5f;
+                material.Coverage = 1.0f;
+                material.bSparse = AnySparseTexture(material.Albedo);
+                const size_t firstChunk = state.Chunks.size();
+                const size_t firstMotion = state.Motion.size();
+                for (size_t index = first; index < end; ++index)
+                {
+                    const ImpostorShadowCaster& caster = casters[state.ImpostorCandidates[index].Caster];
+                    VirtualShadowMap::CasterBounds bounds;
+                    bool bHasBounds = false;
+                    const uint32_t added = VirtualShadowMap::AppendImpostorShadowInstance(
+                        caster, atlas, clipmap, state.Chunks, state.Stats, bounds, bHasBounds);
+                    if (added == 0u)
+                    {
+                        continue;
+                    }
+                    VirtualShadowMap::CasterMotionEntry motion;
+                    motion.Key = VirtualShadowMap::CasterHashCombine(0x494D5053ull, caster.Key);
+                    uint64_t signature = VirtualShadowMap::CasterHashFloats(1469598103934665603ull, caster.Center, 3u);
+                    signature = VirtualShadowMap::CasterHashFloats(signature, &caster.HalfSize, 1u);
+                    signature = VirtualShadowMap::CasterHashFloats(signature, caster.AxisX, 3u);
+                    signature = VirtualShadowMap::CasterHashFloats(signature, caster.AxisY, 3u);
+                    signature = VirtualShadowMap::CasterHashFloats(signature, caster.AxisZ, 3u);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, material.AlbedoId);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, reinterpret_cast<uintptr_t>(material.Albedo.get()));
+                    signature = VirtualShadowMap::CasterHashCombine(signature, material.bSparse ? 1u : 0u);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, atlas.AxisCellCountX);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, atlas.AxisCellCountY);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, atlas.AtlasWidth);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, atlas.AtlasHeight);
+                    motion.Signature = VirtualShadowMap::CasterHashCombine(signature, static_cast<uint32_t>(atlas.Layout));
+                    motion.bHasBounds = bHasBounds;
+                    motion.Bounds = bounds;
+                    motion.bAlwaysChanged = false;
+                    state.Motion.push_back(motion);
+                }
+                if (firstChunk != state.Chunks.size())
+                {
+                    if (AppendMaskedCasterDraw(state, material, static_cast<uint32_t>(firstChunk)))
+                    {
+                        AppendChunkVertexAnimation(state, firstChunk);
+#if NORVES_ENABLE_LOGGING
+                        state.ImpostorCounts[1] += static_cast<uint32_t>(state.Chunks.size() - firstChunk);
+#endif
+                    }
+                    else
+                    {
+#if NORVES_ENABLE_LOGGING
+                        state.ImpostorCounts[4] += static_cast<uint32_t>(state.Motion.size() - firstMotion);
+#endif
+                        state.Chunks.resize(firstChunk);
+                        state.Motion.resize(firstMotion);
+                    }
+                }
+                first = end;
+            }
         }
 
         // 株のメッシュの VSM 用のバッファとブロックの境界を返す（無ければ作る）。作れなければ -1
@@ -1171,6 +1286,7 @@ namespace NorvesLib::Core::Rendering
 #if NORVES_ENABLE_LOGGING
         state.MaskedChunkCount = 0;
         state.MaskedDroppedDrawCount = 0;
+        std::fill(std::begin(state.ImpostorCounts), std::end(state.ImpostorCounts), 0u);
 #endif
         state.Motion.clear();
         state.Stats = {};
@@ -1497,6 +1613,14 @@ namespace NorvesLib::Core::Rendering
                                    context.PhysicalLighting.WorldField.Current, fieldConstants, bFieldRecentlyActive);
         }
 
+        // ----- インポスター: 太陽のクリップマップの範囲内を近い順に選び、アトラスごとに描く -----
+        if (clipmap.bEnabled && clipmap.LevelCount != 0u && camera &&
+            context.SnapshotImpostorShadowCasters && !context.SnapshotImpostorShadowCasters->empty() &&
+            context.SnapshotImpostorShadowAtlases && !context.SnapshotImpostorShadowAtlases->empty())
+        {
+            CollectImpostorCasters(context, state, *camera, clipmap);
+        }
+
         // MegaGeometry の動きは前フレームと全部を比べず、MegaGeometryPass が変わった席・メッシュの変化から積んだ箱を
         // PlanInvalidation が取り出す（本数ではなく変わった席の数に比例する）
     }
@@ -1554,6 +1678,20 @@ namespace NorvesLib::Core::Rendering
     void VirtualShadowMapPass::ReportCasters()
     {
         VirtualShadowMapCasterState& state = *m_Casters;
+#if NORVES_ENABLE_LOGGING
+        const bool bAnyImpostor = std::any_of(std::begin(state.ImpostorCounts), std::end(state.ImpostorCounts),
+                                              [](uint32_t count) { return count != 0u; });
+        if ((bAnyImpostor || state.bImpostorLogged) &&
+            (!state.bImpostorLogged || !std::equal(std::begin(state.ImpostorCounts), std::end(state.ImpostorCounts),
+                                                   std::begin(state.LoggedImpostorCounts))))
+        {
+            std::copy(std::begin(state.ImpostorCounts), std::end(state.ImpostorCounts), std::begin(state.LoggedImpostorCounts));
+            state.bImpostorLogged = true;
+            NORVES_LOG_INFO("VirtualShadowMapPass", "VSM_IMPOSTOR_CASTERS casters=%u chunks=%u over_budget=%u out_of_range=%u dropped=%u",
+                            state.ImpostorCounts[0], state.ImpostorCounts[1], state.ImpostorCounts[2],
+                            state.ImpostorCounts[3], state.ImpostorCounts[4]);
+        }
+#endif
         const VirtualShadowMap::CasterStats& stats = state.Stats;
         // 何も集めていない間は出さない（投影物の無い構成を毎回ログで埋めない）。一度出したら、0 に戻ったときも出す
         const bool bAnything = stats.ProceduralChunks != 0u || stats.SkinnedChunks != 0u || stats.CulledChunks != 0u ||
@@ -1728,6 +1866,16 @@ namespace NorvesLib::Core::Rendering
             rasterDispatch.MegaCapacity = VirtualShadowMap::MEGA_CULL_LIST_CAPACITY;
         }
         const bool bRecorded = m_Raster->Record(commandList, rasterDispatch);
+        // 板は切り抜きが使えないと描かれないため、描画資源の復帰後にキャッシュを描き直す。
+        if (bRecorded && m_Raster->GetLastMaskedFallbackCount() != 0u &&
+            context.SnapshotImpostorShadowCasters && !context.SnapshotImpostorShadowCasters->empty())
+        {
+            const bool bHasImpostor = std::any_of(state.Chunks.begin(), state.Chunks.end(), [](const VsmShadowChunk& chunk)
+            {
+                return chunk.Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::ImpostorCard);
+            });
+            state.bDissolveFallback = state.bDissolveFallback || bHasImpostor;
+        }
 #if NORVES_ENABLE_LOGGING
         const uint32_t maskedCounts[5] = {state.MaskedChunkCount, static_cast<uint32_t>(state.MaskedDraws.size()),
                                            state.MaskedDroppedDrawCount, m_Raster->GetLastMaskedDrawCount(),
