@@ -1298,6 +1298,71 @@ namespace NorvesLib::Core
         return UnknownImpl::RemoveInner(inner);
     }
 
+    Entity* World::SpawnEntityOfClass(const IClass& cls, Entity* parent)
+    {
+        if (!HasFlag(OF_Initialized) || !cls.IsChildOf(Entity::StaticClass()))
+        {
+            return nullptr;
+        }
+
+        IUnknown* instance = cls.NewInstance(nullptr);
+        if (!instance)
+        {
+            return nullptr;
+        }
+
+        Entity* object = CastTo<Entity>(instance);
+        if (!object)
+        {
+            delete instance;
+            return nullptr;
+        }
+
+        const bool bAttached = parent
+            ? AttachChildEntity(parent, object)
+            : AttachRootEntity(object);
+        if (!bAttached)
+        {
+            if (object->HasFlag(OF_Initialized))
+            {
+                object->Finalize();
+            }
+            delete object;
+            return nullptr;
+        }
+
+        return object;
+    }
+
+    Component::Component* World::CreateComponentOfClass(Entity* owner, const IClass& cls)
+    {
+        if (!owner || owner->GetWorld() != this || !cls.IsChildOf(Component::Component::StaticClass()))
+        {
+            return nullptr;
+        }
+
+        IUnknown* instance = cls.NewInstance(nullptr);
+        if (!instance)
+        {
+            return nullptr;
+        }
+
+        Component::Component* component = CastTo<Component::Component>(instance);
+        if (!component)
+        {
+            delete instance;
+            return nullptr;
+        }
+
+        if (!owner->AddComponent(component))
+        {
+            delete component;
+            return nullptr;
+        }
+
+        return component;
+    }
+
     bool World::AddObject(Entity* object)
     {
         if (!AttachRootEntity(object))
