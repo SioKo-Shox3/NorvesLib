@@ -12617,3 +12617,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
 - Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
 - 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。
+
+## G13-GR115-SURFACE-REGISTRY 表面の語彙と登録簿、SceneQuery の表面の照会、問い合わせの結果の表面の欄（2026-11-18、run 20261118-161937）
+- Done: 表面の語彙の型 `Library/Core/Public/Scene/SurfaceTypes.h`。強い型 `SurfaceId`（uint16 を包む。0 = Default。整数・`GroundSample::SurfaceId`（u8）・物理の結果の `uint8_t SurfaceId` から暗黙に変換しないことを static_assert で止める）・`SurfaceFlags`（Soft・Hard・Liquid・Vegetated・Wettable）・`SurfaceDesc`（安定名・parent・flags・audio・visual・physical）・`SurfaceQueryFlags`・`SurfaceQuery`・`SurfaceSample`。循環 include を避けるため `ColliderHandle`・`BodyHandle` を `Scene/PhysicsHandles.h` へそのまま移した。
+- Done: `PhysicsRaycastHit`・`PhysicsOverlapHit`・`PhysicsQueryHit` に `Scene::SurfaceId Surface`（既定 Default）。中身を入れるのは G13-GR115-PHYSICS-SURFACE。
+- Done: 登録簿 `SurfaceRegistry`（`Scene/SurfaceRegistry.h`・`Private/Scene/SurfaceRegistry.cpp`）。`LoadFromJson`・`LoadFromAssetFile` は全部を検査してから入れ替え、拒否（`ESurfaceRegistryError` の種別: 未知のキー・重複のキー・型・非有限・範囲・名前・重複名・未知の parent・循環・Default の parent・未知のフラグ・数の上限など）したら表・Revision・名前の添字を変えない。成功で `GetRevision()` が増える。`FindByName`（未知は Default と名前ごとに 1 回の警告）・`TryFindByName`・`GetDesc`・`GetName`・parent をたどる `ResolveFallback(id, predicate)`。
+- Done: `Engine::Engine` のメンバ `m_SurfaceRegistry` と `GetSurfaceRegistry()`（シングルトンにしない）。Game の `OnInitialize` でコリジョンレイヤーの読み込みの直後に `Data/Surfaces.json` を読み、読めなければ Default だけで続けて「表面の語彙を読めません。Default だけで続行します: …」の警告を出す。仮の語彙 8 個の `Assets/Data/Surfaces.json`（Default・Grass_Tall・Dirt_Mud・Rock・Concrete（parent Rock）・Metal・Water_Shallow・Wood。値は仮）。
+- Done: `SceneQuery` に `ISurfaceProvider`（`SampleSurface` が `SurfaceContribution` を返す）と優先度つきの `BindSurfaceProvider` / `UnbindSurfaceProvider`（`BindPhysicsProvider` と同じ持ち主のスレッドと重複の規則。目安は地形 200・草 100）、`QuerySurface`。解決の順はコライダーの明示タグ（`IPhysicsSceneQueryProvider::GetColliderSurface`。既定実装は Unavailable）> provider を優先度の高い順（同じ優先度は登録順）> Default。2 層の重みは和 1 に正規化し、Primary を重い方にする。濡れ・水たまり・草の密度は全 provider の最大。provider も物理も無ければ Default と NoHit で落ちない。
+- Done: 契約の文書 `Docs/Architecture/SurfaceContract.md`（型と番号の取り違えの注意、保存は名前、登録簿の形と拒否の種別、照会の順と重み、物理の結果の欄、後の段階）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた先頭 1154a647 と同じ中身で、`SurfaceRegistry.cpp`・`SceneQuery.cpp` のコンパイルと `Game.exe` のリンクまで。既存の物理の provider は既定実装のままビルドできた）。`Assets/Data/Surfaces.json` は `json.load` で version 1・8 個。変えた既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致、新規ファイルは UTF-8 + BOM + CRLF。
+- Next: ランナーの評価者の反証（危険地帯: Public API の SceneQuery・Engine）。コライダーの PROPERTY と物理の結果への受け渡しは G13-GR115-PHYSICS-SURFACE、地形・草・濡れの provider と消費者は G13-GR115-GROUND-CONTACT。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (4) `SurfaceRegistryTest`・`SceneQuerySurfaceTest` は作っていない（`Docs/Testing.md` の 3 点も書かない）。ctest は回さない決まり。
+- Notes: 人が見るときの見どころ: Game を起動したときのログに「表面の語彙を読めません」の警告が出ないこと（出れば Surfaces.json が拒否されている。理由が同じ行に出る）。見た目の変化は無い。
+- Notes: 判断: 選定課題 G13-S7 はタスクの notes どおり (A)（保存は名前、`SurfaceId` は読み込み順の添字で保存しない、地形の層の番号は地形の側に残す）。読み直しでは前にあった名前に前と同じ添字を使い、新しい名前は末尾に足す。ファイルから消えた名前は「引退」（添字と名前は残し、`FindByName` では未知、`GetDesc` は Default の記述）にして、消費者が持つ `SurfaceId` が別の表面を指さないようにした。
+- Notes: 判断: `1e999` のような桁あふれの数は JSON の解析が拒否するので `ParseError`（パーサーの説明を Detail に付ける）で拒否する。double では有限でも float に収まらない数は `NonFiniteNumber`。
+- Notes: 既知の限界: 警告済みの名前は `IdentityHash` の値で覚えるので、ハッシュが衝突した別の名前の警告は出ない。読み込みは GameThread で、引きと同時に走らせない前提（クラスのコメントに書いた）。
+- U1 表面の型（SurfaceTypes.h）と物理の結果の Surface 欄: 着地(直し 0 回)
+- U3 SceneQuery の表面の照会: 着地(直し 0 回)
+- U2 表面の登録簿 SurfaceRegistry: 着地(直し 1 回)
+- U4 Engine の持ち物・Game の起動での読み込み・語彙のデータ・契約の文書: 着地(直し 0 回)
