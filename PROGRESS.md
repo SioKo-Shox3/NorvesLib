@@ -12380,3 +12380,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 粒のシェーダーで寿命の幅・板の自転と多角形の切り抜き・大きさと画面の被覆の上限を描き、スキンの形の単発の放出を表面から出す: 着地(直し 0 回)
 - U6 灰と光の 2 セットのデータ（VFX 定義と消滅の割り付け）を置く: 着地(直し 0 回)
 - U5 消滅の効果の本体 VanishEffect（時間の割り付けを World の dt で進め、3 つの口を呼ぶ）: 着地(直し 0 回)
+- U7 シ者の確かめの場面 dissolve と --shisha-vanish-set=ash|light: 着地(直し 0 回)

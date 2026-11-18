@@ -24,6 +24,8 @@ namespace Game::GameModes
         float m_SunElevationDegrees = 40.0f;
         /// 雲を出し、太陽光を弱めるか。
         bool m_bOvercast = false;
+        /// 消滅の効果に使うセットの名前。
+        NorvesLib::Core::Container::String m_VanishSet = TEXT("ash");
         /// 場面固有の所有状態。共通の土台とは別に保持できる。
         NorvesLib::Core::Container::TSharedPtr<void> m_SceneState;
         NorvesLib::Core::Container::TSharedPtr<ShishaShowcaseStageState> m_StageState;
