@@ -215,6 +215,11 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_SkinnedAlphaClipVertexShader;
         RHI::ShaderPtr m_AlphaClipFragmentShader;
         RHI::SamplerPtr m_AlphaClipSampler;
+        // 太陽の CSM に被覆で切り抜いたインポスターの板を描く。
+        RHI::ShaderPtr m_ImpostorShadowVertexShader;
+        RHI::ShaderPtr m_ImpostorShadowFragmentShader;
+        RHI::PipelinePtr m_ImpostorShadowPipeline;
+        DynamicUniformAllocator m_ImpostorShadowUniformAllocator;
         RHI::TexturePtr m_DefaultWhiteTexture;
 
         // デバイス参照

@@ -12474,3 +12474,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 層のインポスターの契約（型・セルの帯の判定・影の板の GLSL）と FramePacket・ViewRenderContext の運び口: 着地(直し 0 回)
 - U2 SceneView に層のインポスターの登録と、セルの帯・個体ごとの段の選択・Mega の抑制と遷移の値を足す: 着地(直し 0 回)
 - U4 太陽の VSM へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U5 CSM（カスケード）へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
