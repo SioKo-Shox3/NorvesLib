@@ -32,6 +32,7 @@
 
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Debug/EngineStatsImGuiView.h"
+#include "Gameplay/Level/LevelEditView.h"
 #include "Pause/PauseMenuView.h"
 #endif
 
@@ -310,6 +311,10 @@ namespace Game
         float m_ShishaSunElevationDegrees = 40.0f;
         /// --shisha-overcast で曇天を指定したか。
         bool m_bShishaOvercast = false;
+        /// --shisha-vanish-set で指定された消滅のセット。
+        NorvesLib::Core::Container::String m_ShishaVanishSet = TEXT("ash");
+        /// 消滅のセットが指定済みか。
+        bool m_bShishaVanishSetSet = false;
         /// 数値引数が指定済みか。
         bool m_bShishaCameraOrbitSet = false;
         bool m_bShishaScaleSet = false;
@@ -416,6 +421,8 @@ namespace Game
         bool m_bImGuiRequested = false;
         bool m_bEngineStatsImGuiViewRegistered = false;
         Game::Debug::EngineStatsImGuiView m_EngineStatsImGuiView;
+        bool m_bLevelEditViewRegistered = false;
+        Game::LevelEdit::LevelEditView m_LevelEditView;
 #endif
     };
 

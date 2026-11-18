@@ -20,6 +20,7 @@ namespace Game::Bridge
         Container::String Path;
         Container::String TypeName;
         Container::String Unit;
+        Container::String Description;
         double Min = 0.0;
         double Max = 0.0;
         Container::String ValueJson;

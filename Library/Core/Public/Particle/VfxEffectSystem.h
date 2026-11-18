@@ -3,6 +3,7 @@
 #include "Math/Curves.h"
 #include "Math/Matrix4x4.h"
 #include "Particle/VfxEffectTypes.h"
+#include "Rendering/GpuParticle/GpuSkinEmitter.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/Wind.h"
 
@@ -65,6 +66,9 @@ namespace NorvesLib::Core::Particle
         bool bEnabled = true;
         Rendering::MeshDataHandle Mesh = Rendering::MeshDataHandle::Invalid();
         Rendering::MaterialHandle Material = Rendering::MaterialHandle::Invalid();
+        uint64_t SkinComponentId = 0u;
+        Rendering::GpuSkinHumanoidJointTable SkinJoints;
+        uint32_t SkinJointCount = 0u;
     };
 
     struct VfxMeshInstance
@@ -123,6 +127,12 @@ namespace NorvesLib::Core::Particle
         bool IsLiveInstance(VfxEffectHandle handle) const;
         bool SetInstancePosition(VfxEffectHandle handle, const Math::Vector3& position);
         bool SetInstanceEnabled(VfxEffectHandle handle, bool bEnabled);
+        /// エミッタの自動生成を切り替える。明示的な放出と既存の粒の更新は続く。
+        bool SetEmitterEnabled(VfxEffectHandle handle, uint32_t emitterIndex, bool bEnabled);
+        /// 毎秒の生成数を上書きする。負の有限値で定義の生成率に戻す。
+        bool SetEmitterSpawnRate(VfxEffectHandle handle, uint32_t emitterIndex, float ratePerSecond);
+        /// スキンの部品と骨の対応表を設定する。joints が null なら表を空にする。
+        bool SetInstanceSkinSource(VfxEffectHandle handle, uint64_t componentId, const Rendering::GpuSkinHumanoidJointTable* joints, uint32_t jointCount);
         bool SetModuleParameter(VfxEffectHandle handle, uint32_t emitterIndex, uint32_t moduleIndex, const char* parameterName, const VfxValue& value, Container::String* outError = nullptr);
         bool SetEmitterProperty(VfxEffectHandle handle, uint32_t emitterIndex, const char* propertyName, const VfxValue& value, Container::String* outError = nullptr);
         bool RaiseEvent(VfxEffectHandle handle, const char* eventName, const Math::Vector3& position, double timeSeconds);
@@ -153,7 +163,7 @@ namespace NorvesLib::Core::Particle
 
         struct ModuleBinding
         {
-            uint32_t Arguments[16] = {};
+            uint32_t Arguments[18] = {};
         };
 
         struct WindInfluenceState
@@ -201,6 +211,8 @@ namespace NorvesLib::Core::Particle
             VariableArray<CollisionState> Collisions;
             LifeCurveState Curves[static_cast<uint32_t>(VfxCurveTarget::Stretch) + 1u];
             float SpawnAccumulator = 0.0f;
+            float SpawnRateOverride = -1.0f;
+            bool bEnabled = true;
             uint32_t RandomState = 0u;
             uint32_t StreamSeed = 0u;
             uint32_t NextSerial = 0u;
@@ -213,6 +225,7 @@ namespace NorvesLib::Core::Particle
             uint32_t GpuDuplicateWarnings = 0u;
             float GpuPendingDeltaTime = 0.0f;
             bool bGpuAllocationWarned = false;
+            bool bGpuSkinSourceWarned = false;
             VfxExecutor Executor = VfxExecutor::Cpu;
             VfxRandomStream RandomStream = VfxRandomStream::Sequential;
             VfxTimeChannel TimeChannel = VfxTimeChannel::Particle;
@@ -239,6 +252,11 @@ namespace NorvesLib::Core::Particle
             Math::Vector3 BoxHalfExtents;
             float CameraBoxHalfWidth = 0.0f;
             float CameraBoxHeight = 0.0f;
+            Rendering::GpuSkinAcceptMode SkinAccept = Rendering::GpuSkinAcceptMode::Uniform;
+            float SkinNormalSpeed = 0.0f;
+            float SkinVelocityInheritance = 0.0f;
+            uint32_t BoneRole = 0u;
+            Math::Vector3 BoneBindPosition;
             Math::Vector3 Offset;
             Math::Vector3 VelocityMin;
             Math::Vector3 VelocityMax;
@@ -246,6 +264,13 @@ namespace NorvesLib::Core::Particle
             Math::Vector4 Color;
             Math::Vector2 Size;
             float Lifetime = 1.0f;
+            float LifetimeMax = 0.0f;
+            float SpinSpeedMin = 0.0f;
+            float SpinSpeedMax = 0.0f;
+            float MaxSize = 0.0f;
+            float MaxScreenFraction = 0.0f;
+            uint32_t PlateSides = 0u;
+            float PlateJitter = 0.0f;
             float DissolveStart = 0.5f;
             float DissolveDuration = 0.5f;
             float EdgeWidth = 0.05f;
@@ -282,7 +307,7 @@ namespace NorvesLib::Core::Particle
         void RefreshEmitter(InstanceSlot& slot, uint32_t emitterIndex);
         GpuExecutionState& EnsureGpuState();
         static Rendering::GpuEmitterParams PackGpuEmitterParams(const InstanceSlot& slot, uint32_t emitterIndex,
-            EmitterState& emitter, const VariableArray<uint32_t>& frameIndices, Rendering::GpuParticleScene& out);
+            EmitterState& emitter, const VariableArray<uint32_t>& frameIndices, Rendering::GpuParticleScene& out, bool& outSkinResolved);
         static void UpdateFlipbook(const InstanceSlot& slot, const EmitterState& emitter, VfxParticleState& particle);
         static void UpdateOverLife(const EmitterState& emitter, VfxParticleState& particle);
         static bool ResolveCollisions(const EmitterState& emitter, VfxParticleState& particle,

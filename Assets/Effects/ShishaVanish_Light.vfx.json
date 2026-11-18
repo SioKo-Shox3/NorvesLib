@@ -1,0 +1,51 @@
+﻿{
+  "format": "norves.vfx",
+  "version": 1,
+  "name": "ShishaVanish_Light",
+  "flipbooks": [],
+  "emitters": [
+    {
+      "name": "Glow",
+      "properties": {
+        "MaxParticles": 4096,
+        "Space": "World",
+        "Executor": "Gpu",
+        "RandomStream": "Counter",
+        "Capacity": 4096
+      },
+      "modules": [
+        {"type": "SpawnRate", "Rate": 0.0},
+        {"type": "InitShape", "Shape": "SkinSurface", "SkinAccept": "DissolveEdge", "SkinNormalSpeed": 0.0, "SkinVelocityInheritance": 0.0},
+        {"type": "InitVelocityBox", "Min": [0.0, 0.45, 0.0], "Max": [0.0, 0.95, 0.0]},
+        {"type": "InitLifetime", "Lifetime": 0.6, "LifetimeMax": 1.2},
+        {"type": "InitColor", "Color": [4.0, 3.2, 2.2, 1.0]},
+        {"type": "InitSize", "Size": [0.035, 0.035]},
+        {"type": "Acceleration", "Acceleration": [0.0, 0.25, 0.0]},
+        {"type": "Drag", "Coefficient": 0.15},
+        {"type": "CurveOverLife", "Target": "Opacity", "KeyCount": 3, "Key0": [0.0, 1.0], "Key1": [0.6, 1.0], "Key2": [1.0, 0.0]},
+        {"type": "GpuSpriteRenderer", "Orientation": "Billboard", "Blend": "Additive", "Pass": "PostTAA", "SoftDistance": 0.1, "Lighting": "Unlit", "Texture": ""}
+      ]
+    },
+    {
+      "name": "GlowBurst",
+      "properties": {
+        "MaxParticles": 1024,
+        "Space": "World",
+        "Executor": "Gpu",
+        "RandomStream": "Counter",
+        "Capacity": 1024
+      },
+      "modules": [
+        {"type": "InitShape", "Shape": "SkinSurface", "SkinAccept": "Uniform", "SkinNormalSpeed": 0.0, "SkinVelocityInheritance": 0.0},
+        {"type": "InitVelocityBox", "Min": [0.0, 0.6, 0.0], "Max": [0.0, 1.6, 0.0]},
+        {"type": "InitLifetime", "Lifetime": 0.5, "LifetimeMax": 1.0},
+        {"type": "InitColor", "Color": [4.0, 3.2, 2.2, 1.0]},
+        {"type": "InitSize", "Size": [0.05, 0.05]},
+        {"type": "Acceleration", "Acceleration": [0.0, 0.35, 0.0]},
+        {"type": "Drag", "Coefficient": 0.1},
+        {"type": "CurveOverLife", "Target": "Opacity", "KeyCount": 3, "Key0": [0.0, 1.0], "Key1": [0.55, 1.0], "Key2": [1.0, 0.0]},
+        {"type": "GpuSpriteRenderer", "Orientation": "Billboard", "Blend": "Additive", "Pass": "PostTAA", "SoftDistance": 0.1, "Lighting": "Unlit", "Texture": ""}
+      ]
+    }
+  ]
+}
