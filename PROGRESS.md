@@ -12471,3 +12471,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: 荒野で MegaGeometry の木へ向かってカメラを前後させ、メッシュ↔インポスターの 0.25 秒のディザの帯に、格子状の抜け（1 フレームの穴）が出ないこと。
 - Next: ランナーの評価者の反証（GBuffer・ビジビリティバッファの経路・RenderThread へ渡す値 = 危険地帯）。遷移のスイープの確かめは G12-GR48-CHECK。
 - Notes: 既知の限界（前の節に加えて）: 遷移中に `UpdateMeshProxy` で段の数が減ると、出ていく側の写しが無効な段を指したまま最大 0.25 秒残ることがある。`Docs/Architecture/GpuLayoutRegistry.md` の `customData.w` の説明は遷移の値を入れる前のまま。Viewport の無い互換の経路（`PrepareDrawCommands()`）は時計を受け取らないので即座に切り替わる。
+- U1 DefeatGate に受け付け直し(Rearm)と進行に数えるかの引数を足し、GameplayModule は数える撃破だけを進行へ流す: 着地(直し 0 回)
