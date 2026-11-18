@@ -12363,3 +12363,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 存在しないディレクトリは done-when に従って受け付けで拒否する（`ENGINE_INVALID_PARAMS`・理由 `capture_dir_not_found`）。NorvesEditor の仕様文書（`bridge/spec/docs/message-payloads.md`・`docs/memory-buffer-policy.md`）は「受け付けた後に `OUTPUT_WRITE_FAILED` で完了」と書いており食い違う。受け付けの後に書けなかったときは `OUTPUT_WRITE_FAILED` で完了する。
 - Notes: 完了イベントの欄は schema に合わせた。done-when の PixelHash・PngHash のうち、schema にあるのは `pixelDigest`（PNG を RGBA8 に戻した画素の FNV-1a 64。エディタが PNG を復号して数える値と同じ）と `fileBytes` で、PngHash の欄は無い（additionalProperties: false）。`frame` は schema のとおり要求の settleFrames。
 - Notes: 既存の `ValidateBridgeDeterministicCaptureRequest` は settleFrames 0 を拒否する（schema は 0〜600）。done-when の「寸法の上限は既存の検査を使う」に従い、そのまま使った。
+- U2 NorvesLibBridgeAdapter と GameThread の毎フレームへ撮影をつなぎ、能力 viewport.capture を広告する: 着地(直し 0 回)
