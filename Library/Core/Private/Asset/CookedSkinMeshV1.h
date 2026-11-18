@@ -3,6 +3,7 @@
 #include "Asset/CookedSkeletonV1.h"
 #include "Asset/CookedMaterialFormat.h"
 #include "Asset/SkinnedMeshLodTables.h"
+#include "Asset/SurfaceSampleTable.h"
 namespace NorvesLib::Core
 {
     class SkinnedMeshResource;
@@ -31,6 +32,8 @@ namespace NorvesLib::Core::Skeletal
         Container::VariableArray<uint32_t> LodIndices;
         // LOD と部位の表。部位と LOD の範囲は INDX 全体の中の位置を指す。
         SkinLodTablesV1 LodTables;
+        // 表面の標本の表。空なら SURF を書かない。
+        Container::VariableArray<SurfaceSampleRecord> SurfaceSamples;
         Container::VariableArray<Container::FixedArray<float, 16>> InverseBindMatrices;
         Container::FixedArray<float, 16> MeshTransform{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         Container::VariableArray<SkeletalSubMesh> SubMeshes;
@@ -67,6 +70,10 @@ namespace NorvesLib::Core::Skeletal
                                            Container::VariableArray<SkeletalSubMesh> subMeshes, SkinLodTablesV1 tables,
                                            SkinMeshV1& out, RigV1Report&, const RigV1Limits& = {},
                                            RigImportProfile = RigImportProfile::DirectTrs128);
+    // 表面の標本を足し、符号化して読み直した検査が通ったときだけ out を置き換える。
+    [[nodiscard]] bool AttachSkinMeshSurfaceSamplesV1(
+        const SkinMeshV1& source, Container::VariableArray<SurfaceSampleRecord> samples, SkinMeshV1& out, RigV1Report&,
+        const RigV1Limits& = {}, RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool WriteSkinMeshV1(const SkinMeshV1&, Container::VariableArray<uint8_t>& out, RigV1Report&,
                                        const RigV1Limits& = {}, RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool ParseSkinMeshV1(Container::Span<const uint8_t>, SkinMeshV1& out, RigV1Report&,

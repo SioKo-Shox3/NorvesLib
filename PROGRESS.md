@@ -12330,22 +12330,47 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `Test/Tools/Blender/FurMapsCoreTest.py` は作っていない。verify の 2 行目はその試験を指すので TASKS.md から外した（G6-GR103-RIG-SPEC-VALIDATE と同じ扱い）。Blender・アプリは起動していない。
 - Notes: 判断: 補正マスクは 0.5 が 8bit で表せないので 127 と 128 の両方を恒等にした。流れは膨張の後に単位化して書き、膨張の後も空の texel は (128,128,0)。重なる UV は後の三角形が勝つ。補正は膨張の後・量子化の前に画像全体へ重ね、Region には補正が無い。
 - Notes: 既知の限界: UniRig の 14 関節ほどの骨格では四肢の先と顔の流れが足りないので、領域の表・頂点の塗り・補正マスクで補う前提。頭の先・耳・尾の付け根では骨の向きが法線に近く、近傍の平均でも埋まらない頂点が残りうる。`fur_flow.py` はポーズや modifier を適用する前の元のメッシュを読む。頂点カラーの CORNER は頂点ごとの平均になる。
-- U1 SDK に依らない資産の編集の変換と状態(BridgeAssetEditProtocol)を作る: 着地(直し 1 回)
-- U2 NorvesLibBridgeAdapter に asset.getProperties・setProperty・save をつなぎ、asset.edit を広告する: 着地(直し 0 回)
 
-## GAME-GR137-ASSET-EDIT-WIRE NorvesLibBridgeAdapter に資産のプロパティの一覧・設定・保存をつなぎ、能力 asset.edit を広告する（2026-11-18、run 20261118-080412 の反復 1〜2、完了）
+- U2 Blender の段が共有する bpy の道具 bpy_stage.py: 着地(直し 0 回)
+- U1 bpy に依らない計算と設定の検査 rig_core.py: 着地(直し 1 回)
+- U3 張り直しとベイクの段 rebuild_on_base.py: 着地(直し 0 回)
+- U4 ウェイトの保持と転送の段 transfer_weights.py: 着地(直し 1 回)
+- U5 書き出しの段 export_gltf.py: 着地(直し 1 回)
+- U6 pipeline.py を 3 段の実装に合わせる: 着地(直し 0 回)
+- U7 文書と全体の確かめ: 着地(直し 0 回)
+- U8 前回の段の記録を全体の記録に取り込まない: 着地(直し 0 回)
 
-- Done: `Game/Bridge/BridgeAssetEditProtocol.{h,cpp}` に SDK の型を使わない `BridgeAssetEditService` を足した。params の JSON 文字列を受け、asset.getProperties・asset.setProperty・asset.save の結果の JSON か拒否（method・reason・path・英語の固定文の message）を返す。logicalPath ごとに文書を開いて保持し（開く処理は線に出さない）、未保存の編集は次の一覧に出る。setProperty は設定前の値を `previousValue` に必ず入れ、拒否のときは値を変えない。`BridgeAssetProperty` に `Description` を足し、VfxSchema の説明を一覧の `description` に出す。
-- Done: `NorvesLibBridgeAdapter` に `assetGetProperties`・`assetSetProperty`・`assetSave` を override し、`params.dump()` をサービスへ渡して、成功は result、拒否は `ENGINE_ASSET_EDIT_REJECTED` と `data {method, reason, path?}` で返す。サービスは最初の asset.* の呼び出しで `NORVES_SOURCE_ASSET_DIR`（`<repo>/Assets`）を根に作る。`bridge.getCapabilities` の末尾に `asset.edit` を足した（既存の能力の並びは変えていない）。
-- 確かめ: このマシンの SDK（`C:/Users/oreor/Documents/NorvesEditor`、7537f47 を含む）の `adapter.hpp` に `assetGetProperties` があること（終了コード 0）。`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp` で構成した Debug で `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`NorvesLibBridgeAdapter.cpp` のコンパイルと `Game.exe` のリンクあり、error の行 0）。証拠は `.harness/runs/20261118-080412/GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`。
-- Next: ランナーの評価者の反証（Bridge のプロトコルの境界）。人が見るときは、SDK 入りの Game に NorvesEditor をつなぎ、`Vfx/FootSplash.vfx.json` で一覧 → 設定 → 保存 → 一覧で値が一致すること、`previousValue` が設定前の値であること、型違い・範囲外・未知の場所・未知の資産をそれぞれの reason で拒否して前の値を保つことを見る。
-- Notes: verify の 1 行目は別マシンのパス（`C:/Users/KINGkawamura/...`。このマシンには無い）を見ているので、同じ中身をこのマシンのパスで確かめた（上の確かめ）。
-- Notes: 試験は作らない決まり（絶対規則 11）なので `BridgeAssetPropertyEditTest` は作っていない。verify のビルドの行は試験のターゲットを外した `--target Game` で回した。アプリは起動していない。
-- Notes: 判断: logicalPath は Game の資産の根（`NORVES_SOURCE_ASSET_DIR`）からの相対の道（例 `Vfx/FootSplash.vfx.json`）。必須の欄の欠落・型違いも `ENGINE_ASSET_EDIT_REJECTED` で返す（logicalPath → unknown_asset、path → unknown_property、value → type_mismatch）。この枠の `build` は SDK なしの構成のまま置いている。
+### G6-GR103-BLENDER-STAGES Blender のバッチの 3 段（張り直しとベイク・ウェイトの保持と転送・複数クリップの書き出し）と pipeline.py の通し（2026-11-18、run 20261118-063226 の反復 2、完了）
 
-### GAME-GR137-ASSET-EDIT-WIRE を閉じる（2026-11-18、run 20261118-080412 の反復 4）
+- Done: `Scripts/Blender/rig_core.py`（bpy に依らない: Procrustes（Horn の四元数法。2 点以下・退化・鏡映を拒否）と箱の合わせ、距離の統計（最大・p95・体長比）、関節名の対応表、段ごとの設定の検査（未知の鍵の拒否・既定値・パスの絶対化）、glTF 書き出しのオプション名の版の表（5.2 系だけ））と `Scripts/Blender/bpy_stage.py`（段の入口・終了コード 0/1/2・記録 JSON、シーン操作の道具）を足した。
+- Done: `rebuild_on_base.py`（箱か 3 点以上のランドマークで土台の座標へ合わせ、Shrinkwrap（NEAREST_SURFACEPOINT・PROJECT）と Smooth を回数だけ掛け、displacement と residual の最大・p95・体長比を `MESH_STATS` に出し、Cycles の CPU・サンプル数とシード固定・cage・max_ray_distance で色と接空間の法線を土台の UV へ焼く。法線の前に高ポリ側の複製を平滑化できる。しきい値（既定は体長の 1%）を超えたら出力と記録を書いて終了コード 1）を足した。
+- Done: `transfer_weights.py`（keep: 正規化と `vertex_group_limit_total` で 4 本へ。transfer: ドナーを `norves_source_to_base` で土台の座標へ写し、関節名の対応表で付け替え、DataTransfer の VGROUP_WEIGHTS・POLYINTERP_NEAREST で写す。どちらも重み 0 の頂点を数える）と `export_gltf.py`（`bpy.app.version` を版の表と演算子の RNA で照合し 5.2 系以外は止める。骨格に結び付いたメッシュを 1 つに結合して材質のスロットで分け、変形の骨だけ・morph 無し・サンプリング強制・ACTIONS でアクションごとのクリップを GLB か .gltf+.bin へ。アクションが無ければ 2 フレームの静止のクリップ）を足した。
+- Done: `pipeline.py` を 3 段に合わせた（Blender の起動は `--background --factory-startup --python-exit-code 1 --python`、段の間は .blend、書き出しは設定の形式（既定 .glb）、`--config` で入力・論理名・仕様・段・設定を 1 つの JSON から読む、Blender の段の設定を起動前に検査・正規化、段の記録の outputs を拾い、起動前に古い段の記録を消す）。`Docs/Architecture/BlenderRigPipeline.md` を実装に合わせて書き直した。
+- 確かめ: 着地後の版（04bc1b1a）で `Scripts/Blender/*.py` の py_compile 終了コード 0、全ファイル BOM 付き UTF-8・CRLF、`skeleton_spec.py --check` ok、rig_core の数値の確かめ（既知の回転・拡大 2.5・平行移動を 6 点と 3 点から 1e-6 で復元、2 点・0 点・一直線・鏡映・未知の鍵・版 5.3 と 4.2 の拒否、対応表に無い関節名の報告、5.2.2 の表の引き当て）`CORE_CHECK ok`、3 段が参照する rig_core・bpy_stage の名前の照合 ok、`pipeline.py --dry-run` 3 通り（設定なしの全段は `rebuild.base は必須` で 2、`--stages export,validate,cook` は 0 で .glb、`--config` は 0 で .blend・.blend・.gltf）（`.harness/runs/20261118-063226/G6-GR103-BLENDER-STAGES-final-verify.txt`）。Python と文書だけの変更で、C++ のターゲットは触っていない。
+- Next: ランナーの評価者の反証。3 段を Blender の上で回すのは G6-GR103-BLENDER-CHECK（bake・`datalayout_transfer`・`vertex_group_*` の文脈、書き出し器の補間とアクションのスロットなど、Blender の上でしか分からない誤りはそこで見つけて直す）。
+- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の `Test/Tools/Blender/BlenderStagesCoreTest.py` と `test_pipeline.py` は作っていない。verify の 2 行（`BlenderStagesCoreTest.py`・`RigValidateTest.py`）は試験ファイルが無いので回していない（同じ数値の確かめは上の使い捨ての確かめで回した）。Blender は起動していない。
+- Notes: 判断: 書き出し器は `export_force_sampling=True` でもキーの無いチャンネルや値の変わらない 2 キーを STEP で書くので、書き出しの後の補間の検査は骨格の仕様の `interpolations`（LINEAR・STEP。エンジンも両方を受ける）に無いものだけを落とす。ウェイトの掃除は `keep_single=True`（掃除で重み 0 の頂点を作らない）。段の間は .blend で渡す（GLB では骨格の無い頂点グループや焼いた画像の材質が落ちる）。`rebuild` を選ぶなら `rebuild.base` が必須で、設定なしで全段を選ぶと引数の誤り（2）。
+- Notes: 既知の限界: G6-GR103-BLENDER-CHECK の done-when (1) は `test_pipeline.py` を回す前提だが、試験を作らない決まりで作っていない（CHECK は今 backlog）。土台メッシュは作者が手で作る資産でリポジトリに無い。
+- Notes: 反復 4（判断役の判断に従う）: 試験の verify 行（`BlenderStagesCoreTest.py`・`RigValidateTest.py`）は絶対規則 11 に従って外し、構文の確かめ `python -B -m py_compile Scripts/Blender/bpy_stage.py Scripts/Blender/common.py Scripts/Blender/export_gltf.py Scripts/Blender/pipeline.py Scripts/Blender/rebuild_on_base.py Scripts/Blender/rig_core.py Scripts/Blender/transfer_weights.py` に置き換えた。87cc8f15 で終了コード 0（`.harness/runs/20261118-063226/G6-GR103-BLENDER-STAGES-iter4-verify.txt`）。`Scripts/Blender/` と文書は変えていない。
+- Notes: Blender の上での 3 段の確かめ（ベイク・ウェイトの転送・書き出しの実際の動き）は G6-GR103-BLENDER-CHECK で行う。
 
-- Done: 判断役の判断（選択肢 1）どおり、verify の 1 行目を `C:/Users/KINGkawamura/...` を直に指す形から `Join-Path $env:USERPROFILE 'Documents/NorvesEditor/...'` で引く形に書き換え、項目を done にした。確かめる中身（SDK の `adapter.hpp` に `assetGetProperties` があること）は変えていない。実装は反復 1〜2 で着地したまま（54f4651f 以降 `Game`・`Library` の変更なし）。
-- 確かめ: 書き換えた行を cmd から回して終了コード 0、同じ形で無い文字列を探すと終了コード 1（判定が効いている）。証拠は `.harness/runs/20261118-080412/verify-GAME-GR137-ASSET-EDIT-WIRE-iter4-line1.txt`。このマシンの `adapter.hpp` の 230・243・255 行目に 3 つの仮想関数がある。ビルドの行の証拠は反復 2 の `GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`（SDK 入りの Debug で `--target Game` 終了コード 0、error の行 0）。
-- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
-- Notes: 要起票: `GAME-GR137-CAPTURE-WIRE` の verify の 1 行目（TASKS.md 8246 行付近）も `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を直に指しており、このマシンでは PathNotFound で終了コード 1 になる（この項目の反復 2 の再検証と同じ落ち方）。着手前に同じ形（`Join-Path $env:USERPROFILE ...`）に直す。
+## G10-GR60-SKIN-SURFACE-EMITTER スキンの表面の標本と骨から GPU の粒を出す（2026-11-18、run 20261118-063214）
+- Done: NVSKEL role2 の SkinnedMesh の任意節 `SURF`（1 点 16 B: 3 頂点の番号 21 bit×3・重心座標 unorm16×2・アルベド RGBA8）の型 `SurfaceSampleRecord`（`Library/Core/Public/Asset/SurfaceSampleTable.h`）と読み書き・検査。表が空なら出力は今とバイト一致。書式は `Docs/Architecture/RigSplitV1Wire.md`。
+- Done: 取り込み設定の `surfaceSamples` の節（`count` 既定 16384、1〜1048576。節が無ければ source hash も出力も不変。`Docs/Architecture/ImportSettings.md`）と、`--rig-split` の cook が LOD0 の三角形の面積に比例して層別に決定的に選び、基本色のテクスチャ（bake と同じ係数）からアルベドを読む `Tools/AssetCook/SurfaceSampleTableBuilder`。
+- Done: 読み込みで `SkinnedMeshAssetLease` が表を持ち、`SkinnedMeshGpuStore` が頂点と同じ時に BDA つきの storage buffer へ 1 回だけ上げる（`SkinnedMeshResources::TryGetSurfaceSource`）。表のある split メッシュは描画の lease を持つ（`RigSplitPublicationIdentity.cpp` の照合を合わせた）。
+- Done: `GpuEmitterParams`（統合の取り込み後は 368 B）に SkinSurface（形 5）・Bone（形 6）の欄、`GpuSkinSource`（96 B）、`GpuParticleEmitterFrame::SkinComponentId`、`humanoid_v1` のロールか骨の組から骨・マスクを決める `GpuSkinEmitter.h` の道具。
+- Done: `Assets/Shaders/Common/SkinnedSurface.glsl`（CPU の `Animation::SkinPosition` と同じ無効な影響の除外・重みの割り方で 3 頂点をスキニングして補間）。`ParticleSpawn.comp` は SkinSurface を表から最大 8 回抽選し（一様・ディゾルブの縁の帯 m ∈ [0, EdgeWidth]・骨の組の重みの割合）、全部外れたら死んだ粒を書く。Bone は world × palette[bone] × bindPos。初速 = 法線 × s + 体の速度（前のパレットとの差 / 描画間のゲーム時間）× 継承の係数。`GpuParticleSimulationPass` が同じビューの不透明の描画の列から部品の今・前のパレット・材質のディゾルブの値・インスタンスの P0 を集め、binding 12（mat4 の列）・13（源の行）に束ねる。
+- 確かめ: `cmake --build build --config Debug --target AssetCook Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた版。`AssetCook.exe`・`Game.exe` まで）。粒のシェーダー 5 本（ParticleSpawn・ParticleUpdate・ParticleCompact・ParticleDraw.vert・ParticleDraw.frag）の `glslc --target-env=vulkan1.2` 終了コード 0。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: ランナーの評価者の反証（危険地帯: アセットの形式・RenderThread）。効果の定義と灰雲・破片は G10-GR60-VANISH-EFFECT。
+- Notes: 試験は作らない決まり（絶対規則 11）なので done-when の (4) `SurfaceSampleTableTest`・(5) `SkinSurfaceEmitterVulkanTest` は作っていない。ctest・撮影・GPU の計測は回さない決まり。
+- Notes: 人が見るときの見どころ: SkinSurface・Bone のエミッタを使う効果は G10-GR60-VANISH-EFFECT で載るので、今は起動画面とランチャーの各シーンの粒・スキンメッシュの見た目が変わらないこと（スキンの形でないエミッタの初期化は今と同じ式・同じ乱数の番号）を見る。
+- Notes: 既知の限界: 源は同じビューの不透明の描画の列から引くので、視野の外で GBuffer に描かれない部品・残像（透明）だけの部品からは粒を出さない。BDA を使えない機器・表の無いメッシュ（SURF なし）では SkinSurface は出さない（Bone はパレットだけで出る）。2 回の cook のバイト一致は、手元のスキン付きの glTF の参照 `.bin` が欠けていて実物では測っていない。
+- Notes: 判断: 選定課題 G9-S3（人型のシ者の骨格の出所）はタスクの notes どおり Kimodo の SOMA 版の骨格に合わせる。エンジンは骨格に依らず、`humanoid_v1` のロールの表と骨の組をデータで持つ。SOMA の関節を写す profile（`Assets/Retarget/`）は実物の出力を取り込むときに置く。
+- Notes: 統合ブランチの取り込み（反復 3）: 衝突の 2 つ目の子・屋根の下の子の欄（256〜319）の後にスキンの放出の欄（320〜367）を置き、`GpuEmitterParams` を 368 B にした。`ParticleSpawn.comp` は表面・骨の解決の後に `ClassifyParticleAtPlacement` を通す。確かめ: `cmake --build build --config Debug --target AssetCook Game -- /m:1` 終了コード 0・error の行 0、粒のシェーダー 5 本の `glslc --target-env=vulkan1.3` 終了コード 0。
+- U1 表面の標本の記録の型と NVSKEL role2 の任意節 SURF の読み書き: 着地(直し 0 回)
+- U4 GPU の放出の記述に SkinSurface・Bone の欄と、スキンの源の行と、骨の選び方の道具を足す: 着地(直し 0 回)
+- U5 スキンの表面の点を CPU の SkinPosition と同じ式でスキニングする GLSL の部品: 着地(直し 0 回)
+- U2 取り込み設定の surfaceSamples と、面積に比例して決定的に選ぶ cook: 着地(直し 0 回)
+- U3 読み込みで表を SkinnedMeshAssetLease に持たせ、GPU のバッファへ 1 回だけ上げる: 着地(直し 1 回)
+- U6 放出のシェーダーとシミュレーションのパスで SkinSurface・Bone を出す: 着地(直し 0 回)
+- Done: `GpuEmitterParams`（304 B）に SkinSurface（形 5）・Bone（形 6）の欄、`GpuSkinSource`（96 B）、`GpuParticleEmitterFrame::SkinComponentId`、`humanoid_v1` のロールか骨の組から骨・マスクを決める `GpuSkinEmitter.h` の道具。

@@ -36,6 +36,7 @@ rootはobject、version: 1が必須。省略時にv1と推測しない。
 - 骨格の一様 scale: 独立した節はなく、`units` の scale/fit が骨格にも効く。詳細は「骨格の一様scale/fit」を参照する。
 - `clip`: クリップの取り込み時の補正。詳細は「clip 節（GR78・GR82）」を参照する。
 - `skinnedLod`: スキンメッシュの LOD の取り込み設定。詳細は「skinnedLod 節（GR63）」を参照する。
+- `surfaceSamples`: スキンメッシュの表面の標本の取り込み設定。詳細は「surfaceSamples 節（GR60）」を参照する。
 - `audio`: 音の取り込み設定（G16 の GR95）のための予約。現状は省略または空 object だけを受理し、非空または他の型は `UnsupportedFeature` で拒否する。
 - `repair`・`lod`・`collision`: 予約。省略または空 object だけを受理し、非空または他の型は `UnsupportedFeature` で拒否する。実装する GR で許すキーと既定値を決め、黙って無視しない。
 
@@ -91,6 +92,25 @@ LOD を焼くと stderr に `skinned_lod_report=` に続く JSON を 1 行出す
 
 節が無い cook の出力と `source_hash` は従来と同じである。節を変えると sidecar の bytes が `source_hash` に入っているため再 cook になる。節があるときは算法の印 `norves.skinned-lod.v1` に続けて `MinParts`・`MaxParts`・`Targets` の数・各 `Targets`・`ThetaRef` をこの順で `source_hash` に連結する。印は長さ付き文字列、数と各値の bit 列は 64 bit little endian で、`Targets` と `ThetaRef` は IEEE 754 binary64 を使う。
 `skinnedLod` は geometry の正規化 bytes（下記の 52 byte）には入れず、hash は sidecar の bytes と cook が足す算法の印で決まる。
+
+## surfaceSamples 節（GR60）
+
+`surfaceSamples` はスキンメッシュの表面の標本を指定する。読むのは `--rig-split` と asset-set の skeletal（`kind: model`、`RigSplitCook`）だけである。
+
+| キー | 型・値 | 省略時の既定 |
+|---|---|---|
+| `count` | 整数。1〜1048576 | `16384`（仮） |
+
+節が object なら取り込みを要求する（`bRequested = true`）。空 object（`"surfaceSamples": {}`）も既定値で要求する。節を省略した場合は要求しない。
+object 以外と `count` の型違いは `InvalidType`、未知のキーは `UnknownField`、重複は `DuplicateField`、範囲外や整数でない `count` は `InvalidValue`。解析は成功時だけ出力を置き換える。旧 `ParseSettings` の経路では空 object だけを受理し、非空または他の型は `UnsupportedFeature` で拒否する。
+
+LOD0 の三角形をバインド姿勢の面積に比例して層別に選ぶ。面積の累積和は double で計算し、固定文字列 `NorvesLib.SurfaceSamples.v1` の FNV-1a 64 を種にした SplitMix64 の上位 53 bit を一様乱数へ変換する。点 i は `(i + r) / count` で三角形を選び、面内は平方根を使った一様な重心座標で選ぶ。同じ入力・設定では決定的な表になる。面積 0 の三角形は選ばず、三角形が無い場合や総面積 0 は失敗する。
+
+重心座標は unorm16 に丸め、合計が 65535 を超えた場合は第 2 成分を補正する。UV はこの量子化後の座標で補間し、各軸を `uv - floor(uv)` で繰り返して、幅・高さを掛けた値の `floor` を texel の座標にする。三角形のサブメッシュの材質 slot から、元の基本色の画像と bake 前の RGB 係数を選ぶ。画像が無ければ白（RGBA 各 255）を使い、係数が 1 でない成分は基本色の cook と同じ sRGB→線形→係数→sRGB の順で焼く。アルファは元 texel の値を保持する。
+
+標本は頂点番号・量子化した重心座標・R が最下位バイトの RGBA8 を持つ 16 byte の record として、NVSKEL role2 の任意節 `SURF` に書く。LOD の表と併用でき、選択に使う索引は LOD0 だけである。
+
+`surfaceSamples` は geometry の正規化 bytes には入れない。hash は sidecar の bytes と算法の印 `norves.surface-samples.v1`、続く `count` で決まる。印は長さ付き文字列、`count` は 64 bit little endian で、`skinnedLod` の hash の後に連結する。節が無い cook の 3 つの payload の出力と `source_hash` は従来とバイト一致する。
 
 ## 正規化bytes
 

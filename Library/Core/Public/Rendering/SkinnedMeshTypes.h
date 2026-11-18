@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Asset/SurfaceSampleTable.h"
 #include "Container/PointerTypes.h"
 #include "Container/Containers.h"
 #include "Math/GeometryTypes.h"
@@ -71,6 +72,12 @@ namespace NorvesLib::Core::Rendering
                               Container::VariableArray<uint32_t>&& indices,
                               Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes,
                               Container::VariableArray<Container::String>&& slotNames);
+        SkinnedMeshAssetLease(SkinnedMeshHandle handle,
+                              Container::VariableArray<SkinnedMeshVertex>&& vertices,
+                              Container::VariableArray<uint32_t>&& indices,
+                              Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes,
+                              Container::VariableArray<Container::String>&& slotNames,
+                              Container::VariableArray<Skeletal::SurfaceSampleRecord>&& surfaceSamples);
         [[nodiscard]] bool HasValidRenderData() const
         {
             return m_bValidRenderData;
@@ -101,6 +108,11 @@ namespace NorvesLib::Core::Rendering
             return m_Indices;
         }
 
+        [[nodiscard]] const Container::VariableArray<Skeletal::SurfaceSampleRecord>& GetSurfaceSamples() const
+        {
+            return m_SurfaceSamples;
+        }
+
         [[nodiscard]] bool IsAssetLeaseActive() const
         {
             return m_bAssetLeaseActive.Load(std::memory_order_acquire);
@@ -117,8 +129,19 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<uint32_t> m_Indices;
         Container::VariableArray<Skeletal::SkeletalSubMesh> m_SubMeshes;
         Container::VariableArray<Container::String> m_MaterialSlotNames;
+        Container::VariableArray<Skeletal::SurfaceSampleRecord> m_SurfaceSamples;
         bool m_bValidRenderData = false;
         Thread::Atomic<bool> m_bAssetLeaseActive{true};
+    };
+
+    // 粒のパスが表面の点を読むための頂点と表面の標本のバッファ。
+    // 表が無ければ SurfaceSampleBuffer は空で点の数は 0。
+    struct SkinnedSurfaceGpuSource
+    {
+        RHI::BufferPtr VertexBuffer;
+        RHI::BufferPtr SurfaceSampleBuffer;
+        uint32_t VertexCount = 0;
+        uint32_t SurfaceSampleCount = 0;
     };
 
     struct SkinnedMeshFrameLease
