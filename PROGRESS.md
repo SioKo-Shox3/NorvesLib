@@ -12391,3 +12391,23 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: scene.save・scene.load・object.addComponent の線の上の口と getCapabilities への掲載は足していない（SDK に口が無く、SDK は NorvesEditor のリポジトリにある。項目の notes の決定どおり）。`SaveScene`・`LoadScene`・`AddComponent` は今は Game の中から呼ばれず、SDK に口ができたらこの部品へつなぐ。
 - Notes: 判断: `kind` に未知の名前（SDK の見本の `"object"` のような汎用の分類を含む）や Entity でないクラスが来たら、基底の Entity に落とさず accepted:false にした。保存先の親ディレクトリは作らない（無ければ save_failed）。
 - Notes: 既知の限界: スナップショットの enum が文字列から JSON の数に変わったので、受け取り側が文字列を前提にしていれば合わせる必要がある。`LoadScene` は途中で失敗しても生成できたルートが World に残る（`SceneSerializer::LoadIntoWorld` と同じ）。
+
+- U1 SDK に依らない資産の編集の変換と状態(BridgeAssetEditProtocol)を作る: 着地(直し 1 回)
+- U2 NorvesLibBridgeAdapter に asset.getProperties・setProperty・save をつなぎ、asset.edit を広告する: 着地(直し 0 回)
+
+## GAME-GR137-ASSET-EDIT-WIRE NorvesLibBridgeAdapter に資産のプロパティの一覧・設定・保存をつなぎ、能力 asset.edit を広告する（2026-11-18、run 20261118-080412 の反復 1〜2、完了）
+
+- Done: `Game/Bridge/BridgeAssetEditProtocol.{h,cpp}` に SDK の型を使わない `BridgeAssetEditService` を足した。params の JSON 文字列を受け、asset.getProperties・asset.setProperty・asset.save の結果の JSON か拒否（method・reason・path・英語の固定文の message）を返す。logicalPath ごとに文書を開いて保持し（開く処理は線に出さない）、未保存の編集は次の一覧に出る。setProperty は設定前の値を `previousValue` に必ず入れ、拒否のときは値を変えない。`BridgeAssetProperty` に `Description` を足し、VfxSchema の説明を一覧の `description` に出す。
+- Done: `NorvesLibBridgeAdapter` に `assetGetProperties`・`assetSetProperty`・`assetSave` を override し、`params.dump()` をサービスへ渡して、成功は result、拒否は `ENGINE_ASSET_EDIT_REJECTED` と `data {method, reason, path?}` で返す。サービスは最初の asset.* の呼び出しで `NORVES_SOURCE_ASSET_DIR`（`<repo>/Assets`）を根に作る。`bridge.getCapabilities` の末尾に `asset.edit` を足した（既存の能力の並びは変えていない）。
+- 確かめ: このマシンの SDK（`C:/Users/oreor/Documents/NorvesEditor`、7537f47 を含む）の `adapter.hpp` に `assetGetProperties` があること（終了コード 0）。`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp` で構成した Debug で `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`NorvesLibBridgeAdapter.cpp` のコンパイルと `Game.exe` のリンクあり、error の行 0）。証拠は `.harness/runs/20261118-080412/GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`。
+- Next: ランナーの評価者の反証（Bridge のプロトコルの境界）。人が見るときは、SDK 入りの Game に NorvesEditor をつなぎ、`Vfx/FootSplash.vfx.json` で一覧 → 設定 → 保存 → 一覧で値が一致すること、`previousValue` が設定前の値であること、型違い・範囲外・未知の場所・未知の資産をそれぞれの reason で拒否して前の値を保つことを見る。
+- Notes: verify の 1 行目は別マシンのパス（`C:/Users/KINGkawamura/...`。このマシンには無い）を見ているので、同じ中身をこのマシンのパスで確かめた（上の確かめ）。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `BridgeAssetPropertyEditTest` は作っていない。verify のビルドの行は試験のターゲットを外した `--target Game` で回した。アプリは起動していない。
+- Notes: 判断: logicalPath は Game の資産の根（`NORVES_SOURCE_ASSET_DIR`）からの相対の道（例 `Vfx/FootSplash.vfx.json`）。必須の欄の欠落・型違いも `ENGINE_ASSET_EDIT_REJECTED` で返す（logicalPath → unknown_asset、path → unknown_property、value → type_mismatch）。この枠の `build` は SDK なしの構成のまま置いている。
+
+### GAME-GR137-ASSET-EDIT-WIRE を閉じる（2026-11-18、run 20261118-080412 の反復 4）
+
+- Done: 判断役の判断（選択肢 1）どおり、verify の 1 行目を `C:/Users/KINGkawamura/...` を直に指す形から `Join-Path $env:USERPROFILE 'Documents/NorvesEditor/...'` で引く形に書き換え、項目を done にした。確かめる中身（SDK の `adapter.hpp` に `assetGetProperties` があること）は変えていない。実装は反復 1〜2 で着地したまま（54f4651f 以降 `Game`・`Library` の変更なし）。
+- 確かめ: 書き換えた行を cmd から回して終了コード 0、同じ形で無い文字列を探すと終了コード 1（判定が効いている）。証拠は `.harness/runs/20261118-080412/verify-GAME-GR137-ASSET-EDIT-WIRE-iter4-line1.txt`。このマシンの `adapter.hpp` の 230・243・255 行目に 3 つの仮想関数がある。ビルドの行の証拠は反復 2 の `GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`（SDK 入りの Debug で `--target Game` 終了コード 0、error の行 0）。
+- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
+- Notes: 要起票: `GAME-GR137-CAPTURE-WIRE` の verify の 1 行目（TASKS.md 8246 行付近）も `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を直に指しており、このマシンでは PathNotFound で終了コード 1 になる（この項目の反復 2 の再検証と同じ落ち方）。着手前に同じ形（`Join-Path $env:USERPROFILE ...`）に直す。
