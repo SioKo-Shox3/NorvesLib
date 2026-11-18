@@ -44,7 +44,7 @@ namespace NorvesLib::Core::Rendering
         // [0].x: Fur の wrap の量（0 で通常の Lambert）
         // [0].y: Fur の鏡面に使う粗さの下限
         // [0].z: Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × この値)）
-        // [0].w: 予約（0）
+        // [0].w: Fur の濡れのつや kGloss（毛の 2 つのローブの指数と強さに 1 + kGloss × P0 を掛ける。全体の値）
         // [1].x: Fur の一つ目のローブのずらし、[1].y: 二つ目のずらし、[1].z: 一つ目の強さ、[1].w: 二つ目の強さ
         // PaleFlat は末尾の paleFlatColorAndWrapMin・paleFlatShape・paleFlatAverageIrradiance を使う
         float shadingModelParams[2][4];

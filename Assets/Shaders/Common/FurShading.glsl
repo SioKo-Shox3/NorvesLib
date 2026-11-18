@@ -45,6 +45,7 @@ vec3 FurDecodeFlowTangent(vec3 n, float p1)
 struct FurShadingConstants
 {
     float wrap;                   // c0.x: ラップの量 w（0 で Lambert）。
+    float wetGloss;               // c0.w: 濡れのつや kGloss（2 つのローブの指数と強さに 1 + kGloss·w を掛ける）
     float primaryShift;           // c1.x: 一つ目（色なし）のローブで接線を法線の方向へずらす量。
     float secondaryShift;         // c1.y: 二つ目（毛色）のローブのずらし。
     float primaryStrength;        // c1.z: 一つ目のローブの強さ。
@@ -54,11 +55,12 @@ struct FurShadingConstants
     float transmissionStrength;   // c2.z: 逆光の透過の強さ。
 };
 
-// 照明の shadingModelParams[0]・[1] と furShadingParams から定数を組み立てる。
+// 照明の shadingModelParams[0]（wrap・濡れのつや）・[1] と furShadingParams から定数を組み立てる。
 FurShadingConstants MakeFurShadingConstants(vec4 c0, vec4 c1, vec4 c2)
 {
     FurShadingConstants k;
     k.wrap = c0.x;
+    k.wetGloss = c0.w;
     k.primaryShift = c1.x;
     k.secondaryShift = c1.y;
     k.primaryStrength = c1.z;
@@ -77,10 +79,15 @@ float FurStrandExponentFromRoughness(float roughness)
     return clamp(2.0 / alphaSquared - 2.0, 1.0, 2048.0);
 }
 
-// 濡れ度（GBuffer の P0）で指数 ×(1 + kGloss·w) と強さの増しを入れる口。今は恒等。
-void FurApplyWetLobes(float wetness, inout float primaryExponent, inout float secondaryExponent,
+// 濡れ度 w（GBuffer の P0）で、2 つのローブの指数と強さに 1 + kGloss·w を掛ける。w = 0 か kGloss = 0 なら恒等。
+void FurApplyWetLobes(float wetness, float wetGloss, inout float primaryExponent, inout float secondaryExponent,
                       inout float primaryStrength, inout float secondaryStrength)
 {
+    float gain = 1.0 + wetGloss * clamp(wetness, 0.0, 1.0);
+    primaryExponent *= gain;
+    secondaryExponent *= gain;
+    primaryStrength *= gain;
+    secondaryStrength *= gain;
 }
 
 // 毛の接線を法線の方向へずらす。
@@ -100,7 +107,7 @@ float FurKajiyaKayLobe(vec3 T, vec3 H, float exponent)
 
 // N・T・V・L・H は正規化済み。T は FurDecodeFlowTangent で復元した毛の向き。
 // strandRoughness は GBuffer に書かれた粗さ（照明が下限へ上げる前の値）。
-// ao は GBuffer の材質の AO（画面空間 AO を掛ける前）、wetness は P0。
+// ao は GBuffer の材質の AO（画面空間 AO を掛ける前）、wetness は濡れのつやに使う P0。
 // lightRadiance は減衰込みの光の放射輝度（N·L・影を含まない）。
 void EvaluateFurDirect(vec3 N, vec3 T, vec3 V, vec3 L, vec3 H,
                        vec3 albedo, vec3 diffuseBrdf, float strandRoughness, float ao, float wetness,
@@ -116,7 +123,7 @@ void EvaluateFurDirect(vec3 N, vec3 T, vec3 V, vec3 L, vec3 H,
     float e2 = max(e1 * k.secondaryExponentScale, 1.0);
     float s1 = k.primaryStrength;
     float s2 = k.secondaryStrength;
-    FurApplyWetLobes(wetness, e1, e2, s1, s2);
+    FurApplyWetLobes(wetness, k.wetGloss, e1, e2, s1, s2);
     vec3 T1 = FurShiftTangent(T, N, k.primaryShift);
     vec3 T2 = FurShiftTangent(T, N, k.secondaryShift);
     vec3 lobes = vec3(s1 * FurKajiyaKayLobe(T1, H, e1)) + albedo * (s2 * FurKajiyaKayLobe(T2, H, e2));
