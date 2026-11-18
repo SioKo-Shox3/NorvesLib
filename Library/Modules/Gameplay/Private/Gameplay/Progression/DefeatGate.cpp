@@ -5,25 +5,55 @@
 
 namespace NorvesLib::Modules::Gameplay
 {
-    void DefeatGate::BeginDefeat(const Core::Container::String& enemyId)
+    void DefeatGate::BeginDefeat(const Core::Container::String& enemyId, bool bCountsForProgression)
     {
         if (IsValidGameplayStableId(enemyId))
         {
-            for (const auto& defeat : m_Defeats)
+            for (auto& defeat : m_Defeats)
             {
-                if (defeat.EnemyId == enemyId)
+                if (defeat.bRetired || defeat.EnemyId != enemyId)
                 {
-                    ++m_IgnoredBeginCount;
-                    NORVES_LOG_WARNING("DefeatGate", "撃破開始の重複を無視しました: %s", enemyId.c_str());
+                    continue;
+                }
+                if (defeat.bCompleted && defeat.bRearmed)
+                {
+                    defeat.bRetired = true;
+                    m_Defeats.push_back({enemyId, false, bCountsForProgression});
                     return;
                 }
+                ++m_IgnoredBeginCount;
+                NORVES_LOG_WARNING("DefeatGate", "撃破開始の重複を無視しました: %s", enemyId.c_str());
+                return;
             }
-            m_Defeats.push_back({enemyId, false});
+            m_Defeats.push_back({enemyId, false, bCountsForProgression});
             return;
         }
 
         ++m_IgnoredBeginCount;
         NORVES_LOG_WARNING("DefeatGate", "不正な撃破 ID を無視しました: %s", enemyId.c_str());
+    }
+
+    void DefeatGate::Rearm(const Core::Container::String& enemyId)
+    {
+        if (!IsValidGameplayStableId(enemyId))
+        {
+            return;
+        }
+        for (auto& defeat : m_Defeats)
+        {
+            if (defeat.bRetired || defeat.EnemyId != enemyId)
+            {
+                continue;
+            }
+            if (!defeat.bCompleted)
+            {
+                ++m_IgnoredBeginCount;
+                NORVES_LOG_WARNING("DefeatGate", "保留中の撃破の受け付け直しを無視しました: %s", enemyId.c_str());
+                return;
+            }
+            defeat.bRearmed = true;
+            return;
+        }
     }
 
     DefeatHoldHandle DefeatGate::AddHold(const Core::Container::String& enemyId, Core::EntityHandle owner)
@@ -123,7 +153,12 @@ namespace NorvesLib::Modules::Gameplay
             {
                 // 通知による配列の拡張や再入に先立って受付を閉じる。
                 const Core::Container::String enemyId = m_Defeats[i].EnemyId;
+                const bool bCountsForProgression = m_Defeats[i].bCountsForProgression;
                 m_Defeats[i].bCompleted = true;
+                if (bCountsForProgression)
+                {
+                    OnProgressionDefeatCompleted.Broadcast(enemyId);
+                }
                 OnDefeatCompleted.Broadcast(enemyId);
             }
         }
