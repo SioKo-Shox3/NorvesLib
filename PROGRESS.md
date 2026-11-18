@@ -12617,3 +12617,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
 - Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
 - 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。
+
+- U1 プロファイルの値型・Sanitize・Lerp・重ね合わせ: 着地(直し 0 回)
+- U2 JSON の読み書き・ホットリロード・中立のプロファイル・CameraProxy への運搬: 着地(直し 0 回)
+### G14-GR61-PROFILE-DATA ポストプロセスのプロファイルの値型・補間・重ね合わせ・JSON とホットリロード・カメラの値での運搬（2026-11-18、run 20261118-181355）
+- Done: `Rendering/PostProcessProfile.h`・`PostProcessProfile.cpp` に値型 `PostProcessSettings`（`bValid` 既定 false。Grade・Lens・Look・`DitherStrength` 既定 1/255。保護色相は既定で無効）と `PostProcessProfile`（`Identity` の名前・設定・上書きマスク `PostProcessFields`）を足した。`Sanitize` は NaN・範囲外を欄ごとの既定へ戻して戻した欄のマスクを返し、`Lerp`・`LerpMasked` は Contrast・Saturation を対数、ExposureBias を EV で線形、色を線形 RGB、LUT を重みで補間する。
+- Done（同）: `PostProcessProfileMixer` は Base・Weather・Shot の順に重みつきで畳み込み、上書きマスクの欄だけを替える。`BlendTo`・`BlendOut` の遷移を `Advance(unscaledDt)` で進め（NaN・負の dt は 0）、出力は 1 つの `PostProcessSettings`。レイヤーが全部空なら `bValid=false`。ヒープ確保はしない。
+- Done（同）: `PostProcessProfileJson.cpp` に `postprocess.v1` の読み `ParsePostProcessProfileJson`（先頭の BOM を外す。壊れた JSON・根がオブジェクトでない・schema 違い・型違い・`overrideMask` の未知の名前は拒否して出力を変えない。未知のキーはドット区切りのパスで警告して捨てる。読んだ後に `Sanitize` し、戻した欄を警告）と書き `WritePostProcessProfileJson`（整形あり）を足した。LUT のパスは `IdentityPool` に入れてプロセスの寿命の文字列を借りる（GameThread が解放した文字列を RenderThread が読む形にしない）。
+- Done（同）: `PostProcessProfileSource` が `TextAssetReloadTracker` で変更を見て読み直す。読み直しが不正・読めないときは前の値を保って警告する（読めない間の警告は 1 回）。中立のプロファイル `Assets/PostProcess/neutral.ppprofile.json`（全欄が既定・上書きマスクは全部）を置いた。`CameraProxy` に `PostProcessSettings PostProcess`（値型、既定 `bValid=false`）を足し、コメントアウトの `PostProcessHandle` を消した。`CameraProxy` の大きさの検査・memcmp・位置で並べた初期化は Library・Game に無い。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が EXIT=0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致（単位の作業ツリーの `.harness/unit-verify.txt`）。
+- Next: ランナーの評価者の反証（危険地帯: Public API の `CameraProxy`。FramePacket で値のまま写る）。描画での読み取りは G14-GR61-GRADE-PASS、毎フレームの重ね合わせの結線は G14-GR61-LAYERS。今は描画がこの値を読まないので、見た目は変わらない。
+- Notes: done-when (5) の `PostProcessProfileMixerTest`・`PostProcessProfileJsonTest` は絶対規則 11 に従って作っていない。既存の試験は回していない。読む→書く→読むの往復とホットリロードの実際の動きはゲームで確かめていない（描画が読むのは後の項目）。
+- Notes: 判断: LUT が片方だけのプロファイルどうしの補間は両方の枠を同じパスにして Blend=0。EaseIn=t²・EaseOut=t(2−t)。`SetSource` は不正なパスでも保持値を消して false。値の範囲はすべて仮。
