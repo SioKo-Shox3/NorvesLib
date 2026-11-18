@@ -12528,3 +12528,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ: verify の 1 行目をこのマシンで回して終了コード 0（`.harness/runs/20261118-113224/GAME-GR137-ASSET-EDIT-WIRE-verify1.txt`）。ビルドの行は試験のターゲットを外した `cmake --build build --config Debug --target Game -- /m:1` で終了コード 0、error の行 0（`GAME-GR137-ASSET-EDIT-WIRE-build.txt`）。この枠の `build` は SDK なしの構成なので、アダプタの新しい経路のコンパイルの証拠は run 20261118-080412 の SDK 入りの Debug のビルド（`GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`、終了コード 0）のまま。ctest の行は試験を回さない決まりで回していない。
 - Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
 - U1 ループの平滑で近傍を格子の時刻で取り、周期で折り返す: 着地(直し 0 回)
+### G4-GR128-PROCESSING-CASES-P1 ループの平滑の継ぎ目（2026-11-18、run 20261118-152431 の反復 1、完了）
+- Done: `SkeletalClipProcessing.cpp` の `SmoothChannels` に周期（格子の間隔の単位、`outputDuration * OutputFps`）を渡し、ループのクリップでは近傍 k を添字の剰余ではなく時刻 `i + k` を周期で `fmod` して取り、間のキーを補間（回転は Slerp・並進は線形）するようにした。周期が整数のコマにならず末尾の間隔が短い格子（例: 12.5 コマ）でも、継ぎ目をまたぐ近傍を等間隔とみなさない。端数が 0 のときは元のキーをそのまま使うので、整数の周期のクリップと継ぎ目から離れたキーの結果は前とビット単位で同じ。ループでないクリップの平滑は変えていない。
+- 確かめ: `cmake --build build --config Debug -- /m:1` 終了コード 0・エラーの行なし（`SkeletalClipProcessing.obj` は編集の後に再コンパイル）、numstat の 2 通りが一致（37 追加・6 削除）。証拠は `.harness/runs/20261118-152431/G4-GR128-PROCESSING-CASES-P1-u1-unit-verify.txt`。
+- 試験は作らない・回さない決まりにより、done-when の `MotionProcessingTest` の `TestSmoothing`（12.5 コマの合成クリップと `CheckLoop`）は作っていない（試験の .cpp は既に消えている）。ctest も回していない。
+- Next: ランナーの再検証と評価者の反証。人が見るときの見どころ: 周期が整数のコマにならないループの歩き・走りのクリップ（`SmoothingRadius` が 1 以上の role-profile で焼いたもの）を再生し、ループの継ぎ目で動きが一瞬速くなったり詰まったりしないこと。
