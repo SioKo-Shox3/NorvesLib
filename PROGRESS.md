@@ -12393,3 +12393,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: スナップショットの enum が文字列から JSON の数に変わったので、受け取り側が文字列を前提にしていれば合わせる必要がある。`LoadScene` は途中で失敗しても生成できたルートが World に残る（`SceneSerializer::LoadIntoWorld` と同じ）。
 - U4 退避した配置の編集の操作を当て直し、読み込みの事前解析と Entity の持ち主への通知を足す: 着地(直し 0 回)
 - U5 退避したマーカーのデバッグ描画を当て直す: 着地(直し 0 回)
+- U3 ImGui の配置の画面と --imgui のときだけの登録: 着地(直し 0 回)
