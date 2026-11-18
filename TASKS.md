@@ -7805,7 +7805,7 @@
 - notes: ロードマップ 1948・1960 行、要件 `#### GR19` の実装順 4) と受け入れ確認の SurfaceAttachFrameLagTest・Game のスモーク。更新の群はロードマップの「PostAnimation 段」でなく PostPhysics（「段階をまたぐ注意」4401・4466 行。G3 の `SocketAttachmentComponent` と同じ群。`TickStages.md` の順は World Late（PostPhysics → Camera → PreRender）→ Module Late → Handler OnLateUpdate）。当たりは G8 の決定で `GameplayModule::LateTick`（Module Late）に配られるので、突き立てたフレームは配送の中で 1 回 frame × offset を当て、次のフレームから PostPhysics で追う。カメラ（Camera 群）は同じフレームの PostPhysics の後に読むので遅れない。Gameplay は Game に依存しないので、`FollowCameraComponent`（`Game/Gameplay/Camera`）へのしがみつきの状態の受け渡しは場面の側（Game）で行う。刺さった物をソケット（GR13）で置かない理由は要件の「GR13 との分担」（皮膚の滑りと合わない）。要件の Game のスモーク `--anchor-smoke` は、引数を増やさないため G10-SHISHA-SHOWCASE の場面にした。突き刺し・引き抜きのクリップそのものは作らない（ロードマップの非ゴール）。危険地帯（Object の寿命・Public API）なので評価者を通す。起動しての確かめは G10-GR20-CLING-CHECK。
 
 ## G10-GR60-SKIN-SURFACE-EMITTER: GPU パーティクルに、スキンの表面の標本から粒を出す形と骨から出す形を足し、ディゾルブの縁の帯の点だけから出せるようにする（GR57 の P6）
-- status: todo
+- status: done
 - after: G10-GR19-ANCHOR-CORE, G10-GR60-DISSOLVE, G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT, G9-GR85-RETARGET-PROPORTION, G9-GR85-FOOT-REPLANT, G9-GR85-HUMANOID-SMOKE
 - gr: GR60
 - needs-gr: GR57, GR82, GR85
@@ -7930,7 +7930,7 @@
 - notes: 設計はロードマップ 2316 行（GR92 の設計 5）と 2320 行（マップの規模が未決の扱い）。今のコードの事実: `PrefabAsset` は `Resource` の派生（`Library/Core/Public/Object/PrefabAsset.h:39`）で、入れ子の番号は `m_NextNestedInstanceId`（同 65 行、採番は `PrefabAsset.cpp:407-413`）、循環の検査は `WouldCreateNestedPrefabCycle`（`PrefabAsset.cpp:140`、使う所は 402 行）にあり、ファイルの形式は無い。入れ子の instanceId の採番規則はファイルの往復で変えない（ロードマップ 2753 行のリスク）。谷ひとつ（全域常駐）でもオープン規模でも同じ形式にし、領域の出し入れ（読み込み・解放）は GR40（G12 前半）に任せる。AssetKind は増やさない（Raw の JSON）。Object/Resource の寿命と資産の読み込みの危険地帯なので評価者を通す。共有のファイル（`GameApplicationHandler.cpp`・`SceneCatalog.h`）は `--load-scene` の引数の読み取りと分岐だけを足して差分を小さくする。やらないこと: 領域のストリーミング（GR40）、Bridge（G12-GR92-BRIDGE-SCENE）、エディタの画面。
 
 ## G12-GR92-BRIDGE-SCENE: Bridge の向こうのエンジンの側に、シーンの保存・読み込み、クラスを指定した Entity の生成、Component の追加と全 Component のプロパティの設定を置く
-- status: todo
+- status: done
 - after: G12-GR92-ASSET-BIND, G12-GR92-PREFAB-FILE
 - gr: GR92
 - done-when: (1) Bridge SDK に依存しない部品 `Game/Bridge/BridgeSceneDocumentService.{h,cpp}`（`BridgeAssetPropertyEditor` と同じ置き方）が、シーンの保存・読み込み（`SaveToFile` / `LoadIntoWorld` につなぐだけ。資産の根 `Assets` の下の論理パスだけを開き、絶対パスと `..` と根の外は拒否して理由のコードを返す）、クラス名を指定した Entity の生成（`ClassRegistry` の FindClass → NewInstance。World に `SpawnEntityOfClass` を足す）、Component の追加、ScriptComponent に限らず全 Component のプロパティの設定と取得（設定の後に `OnPropertyApplied` を呼ぶ）を持つ。(2) `NorvesLibBridgeAdapter` は、SDK に既にある口だけをこの部品へつなぐ: `sceneCreateObject` の kind（今は無視している）、`objectSetProperty` / `objectGetSnapshot` を全 Component へ、`WireJsonToSerialized` に enum（整数）を足す。(3) 試験: `BridgeAssetPropertyEditTest` の実行ファイルに `BridgeSceneDocumentService` と場面の文書のケースのソースを足し（実行ファイルを増やさない）、クラス名を指定して Component 付きの Entity を作る・Component を足す・AssetRef（文字列）と enum を設定して取得した値が往復で一致する・保存 → 読み込みで Entity・Component・プロパティの数が一致する・根の外の論理パスを拒否する、を確かめる。`Game` が NORVES_BRIDGE_SDK_DIR の構成でビルドでき、既存の `BridgeAssetPropertyEditTest` のケースが通る。

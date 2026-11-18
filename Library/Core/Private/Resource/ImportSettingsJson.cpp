@@ -431,6 +431,39 @@ namespace NorvesLib::Core::AssetImport
             out = std::move(candidate);
             return SettingsResult::Success;
         }
+        SettingsResult ReadSurfaceSamples(const JsonValue& surfaceSamples, SurfaceSampleImportSettings& out)
+        {
+            SurfaceSampleImportSettings candidate;
+            if (!surfaceSamples.IsValid())
+            {
+                out = candidate;
+                return SettingsResult::Success;
+            }
+            constexpr const char* fields[] = {"count"};
+            auto result = CheckFields(surfaceSamples, fields);
+            if (result != SettingsResult::Success)
+            {
+                return result;
+            }
+            candidate.bRequested = true;
+            const auto count = surfaceSamples.FindMember("count");
+            if (count.IsValid())
+            {
+                double value = 0;
+                result = ReadNumber(count, value);
+                if (result != SettingsResult::Success)
+                {
+                    return result;
+                }
+                if (value < 1 || value > Skeletal::MaximumSurfaceSampleCount || std::floor(value) != value)
+                {
+                    return SettingsResult::InvalidValue;
+                }
+                candidate.Count = static_cast<uint32_t>(value);
+            }
+            out = candidate;
+            return SettingsResult::Success;
+        }
         SettingsResult CheckMeta(const JsonValue& meta)
         {
             if (!meta.IsValid())
@@ -476,8 +509,8 @@ namespace NorvesLib::Core::AssetImport
             return SettingsResult::InvalidRoot;
         }
         constexpr const char* fields[] = {"version", "meta", "units", "axes", "origin", "mesh",
-            "repair", "lod", "material", "collision", "clip", "audio", "skinnedLod", "materials"};
-        auto result = CheckFields(root, fields, allowMaterial ? 14 : 13);
+            "repair", "lod", "material", "collision", "clip", "audio", "skinnedLod", "surfaceSamples", "materials"};
+        auto result = CheckFields(root, fields, allowMaterial ? 15 : 14);
         if (result != SettingsResult::Success)
         {
             return result;
@@ -513,10 +546,10 @@ namespace NorvesLib::Core::AssetImport
         {
             return result;
         }
-        for (const char* name : {"repair", "lod", "material", "collision", "clip", "audio", "skinnedLod"})
+        for (const char* name : {"repair", "lod", "material", "collision", "clip", "audio", "skinnedLod", "surfaceSamples"})
         {
             if (allowMaterial && (std::strcmp(name, "material") == 0 || std::strcmp(name, "clip") == 0 ||
-                std::strcmp(name, "skinnedLod") == 0))
+                std::strcmp(name, "skinnedLod") == 0 || std::strcmp(name, "surfaceSamples") == 0))
             {
                 continue;
             }
@@ -551,6 +584,11 @@ namespace NorvesLib::Core::AssetImport
             return status;
         }
         status = ReadSkinnedLod(root.FindMember("skinnedLod"), candidate.SkinnedLod);
+        if (status != SettingsResult::Success)
+        {
+            return status;
+        }
+        status = ReadSurfaceSamples(root.FindMember("surfaceSamples"), candidate.SurfaceSamples);
         if (status != SettingsResult::Success)
         {
             return status;

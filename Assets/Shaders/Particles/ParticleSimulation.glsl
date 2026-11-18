@@ -212,7 +212,7 @@ GpuParticle InitParticle(GpuEmitterParams emitter, GpuEmitterFrameExtra extra, u
 
     uint shape = ParticleShape(emitter);
     vec3 position = basePosition;
-    if (shape != kVfxShapePoint)
+    if (shape != kVfxShapePoint && shape != kGpuEmitterShapeSkinSurface && shape != kGpuEmitterShapeBone)
     {
         float a = VfxCounterUnitFloat(seed, serial, kVfxRandomDrawShapeA);
         float b = VfxCounterUnitFloat(seed, serial, kVfxRandomDrawShapeB);
