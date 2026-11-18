@@ -1246,7 +1246,15 @@ void main()
             outColor = vec4(vec3(ssao), 1.0);
             return;
         }
-        ao *= ssao;
+        if (bShadingModelActive && shadingSurface.id == GBUFFER_SHADING_MODEL_FUR)
+        {
+            // 殻の深度の段差で画面空間 AO が荒れるので、毛の画素は割合 furShadingParams.w でだけ掛ける。
+            ao *= mix(1.0, ssao, params.furShadingParams.w);
+        }
+        else
+        {
+            ao *= ssao;
+        }
         diffuseAO = GTAOMultiBounce(ao, albedo);
     }
     else if (params.debugViewMode == DEBUG_VIEW_MODE_AMBIENT_OCCLUSION)
@@ -1417,8 +1425,8 @@ void main()
             vec2 dfg = texture(brdfLUT, dfgCoordinate).rg;
             EvaluateShadingModelDirect(shadingSurface, N, V, L, H,
                                        lightColor * attenuation, dot(N, L), shadow, dfg,
-                                       params.shadingModelParams[0], pale,
-                                       Lo_diffuse, Lo_specular);
+                                       params.shadingModelParams[0], params.shadingModelParams[1],
+                                       params.furShadingParams, pale, Lo_diffuse, Lo_specular);
         }
         else if (bValidationLambert)
         {
@@ -1703,7 +1711,7 @@ void main()
         // 発光は露出を掛けた後で足す（下の outColor）。
     }
 
-    // 直接光には AO を掛けない。光の向きが決まっている直接光の遮蔽は影（CSM・RT影・接触影）が解き、
+    // Fur 以外の直接光には AO を掛けない。光の向きが決まっている直接光の遮蔽は影（CSM・RT影・接触影）が解き、
     // 材質の細かな凹凸の明暗は法線マップが出す。材質の AO は全方向から来る光の遮蔽の値なので、直接光に
     // 掛けると日なたの面まで暗くなる（材質AOを使わない Cycles の参照と比べて確かめた。SCN-WL-MATERIAL-AO-SHADING）
 

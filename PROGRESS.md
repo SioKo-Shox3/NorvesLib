@@ -12434,3 +12434,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 毛の照明の GLSL ライブラリ FurShading.glsl を作り、流れの角の符号化・復号をそこへ移す: 着地(直し 0 回)
 - U2 照明の定数に Fur の Kajiya-Kay・透過・SSAO の重みを足し、UBO を広げる: 着地(直し 0 回)
 - U4 SSR で Fur の画素を飛ばす: 着地(直し 0 回)
+- U3 照明の 3 つの口の Fur の分岐を FurShading.glsl へつなぎ、SSAO を Fur で弱める: 着地(直し 0 回)
