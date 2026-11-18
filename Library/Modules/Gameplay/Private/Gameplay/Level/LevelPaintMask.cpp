@@ -1,7 +1,12 @@
 ﻿// 地形格子に沿う配置編集用マスク、円形ブラシ、PNG 入出力を実装する。
 #include "Gameplay/Level/LevelPaintMask.h"
 
+#include "Gameplay/Level/TerritoryMarkerComponent.h"
+#include "Component/WitherSourceComponent.h"
+#include "Object/Entity.h"
+#include "Object/World.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
+#include "Vegetation/DrynessMap.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -68,6 +73,137 @@ namespace NorvesLib::Modules::Gameplay::Level
         double SampleWorldCoordinate(double first, double spacing, uint32_t index)
         {
             return first + static_cast<double>(index) * spacing;
+        }
+
+        bool IsDrynessSettingsValid(const LevelDrynessBaselineSettings& settings)
+        {
+            return std::isfinite(settings.BaseLevel) && settings.BaseLevel >= 0.0f && settings.BaseLevel <= 1.0f &&
+                std::isfinite(settings.TerritoryLevel) && settings.TerritoryLevel >= 0.0f && settings.TerritoryLevel <= 1.0f &&
+                std::isfinite(settings.TerritoryRadiusScale) && settings.TerritoryRadiusScale >= 0.0f &&
+                std::isfinite(settings.TerritoryFalloff) && settings.TerritoryFalloff >= 0.0f &&
+                std::isfinite(settings.EdgeNoise) && settings.EdgeNoise >= 0.0f &&
+                std::isfinite(settings.NoiseScale) && (settings.EdgeNoise == 0.0f || settings.NoiseScale > 0.0f);
+        }
+
+        bool IsDrynessCircleValid(const LevelDrynessCircle& circle)
+        {
+            return std::isfinite(circle.CenterX) && std::isfinite(circle.CenterZ) &&
+                std::isfinite(circle.Radius) && circle.Radius >= 0.0f &&
+                std::isfinite(circle.Falloff) && circle.Falloff >= 0.0f && std::isfinite(circle.Level);
+        }
+
+        // 格子座標は 2^32 周期で丸め、負の座標も未定義の整数変換を使わずに扱う。
+        bool GetNoiseCoordinate(double position, double scale, uint32_t& outCell, double& outWeight)
+        {
+            const double coordinate = position / scale;
+            if (!std::isfinite(coordinate))
+            {
+                return false;
+            }
+            const double cell = std::floor(coordinate);
+            double wrapped = std::fmod(cell, 4294967296.0);
+            if (wrapped < 0.0)
+            {
+                wrapped += 4294967296.0;
+            }
+            outCell = static_cast<uint32_t>(wrapped);
+            const double fraction = coordinate - cell;
+            outWeight = fraction * fraction * (3.0 - 2.0 * fraction);
+            return true;
+        }
+
+        uint32_t HashNoiseCell(uint32_t seed, uint32_t x, uint32_t z, uint32_t salt)
+        {
+            uint32_t hash = seed ^ salt ^ (x * 0x9e3779b1u);
+            hash = (hash ^ (hash >> 16)) * 0x7feb352du;
+            hash ^= z * 0x85ebca6bu;
+            hash = (hash ^ (hash >> 15)) * 0x846ca68bu;
+            return hash ^ (hash >> 16);
+        }
+
+        double SampleValueNoise(uint32_t seed, uint32_t x, uint32_t z, double weightX, double weightZ, uint32_t salt)
+        {
+            constexpr double kHashToUnit = 1.0 / 4294967295.0;
+            const double lowerLeft = HashNoiseCell(seed, x, z, salt) * kHashToUnit;
+            const double lowerRight = HashNoiseCell(seed, x + 1u, z, salt) * kHashToUnit;
+            const double upperLeft = HashNoiseCell(seed, x, z + 1u, salt) * kHashToUnit;
+            const double upperRight = HashNoiseCell(seed, x + 1u, z + 1u, salt) * kHashToUnit;
+            const double lower = lowerLeft + (lowerRight - lowerLeft) * weightX;
+            const double upper = upperLeft + (upperRight - upperLeft) * weightX;
+            return std::clamp(lower + (upper - lower) * weightZ, 0.0, 1.0);
+        }
+
+        double EvaluateDrynessCircle(const LevelDrynessCircle& circle, double x, double z)
+        {
+            const double distance = std::hypot(x - circle.CenterX, z - circle.CenterZ);
+            if (distance <= circle.Radius)
+            {
+                return circle.Level;
+            }
+            if (circle.Falloff == 0.0f || distance >= static_cast<double>(circle.Radius) + circle.Falloff)
+            {
+                return 0.0;
+            }
+            const double t = (distance - circle.Radius) / circle.Falloff;
+            return circle.Level * (1.0 - t * t * (3.0 - 2.0 * t));
+        }
+
+        bool CollectDrynessEntities(const Core::Entity* entity, const LevelDrynessBaselineSettings& settings,
+                                    VariableArray<LevelDrynessCircle>& territories,
+                                    Core::Vegetation::DrynessMap& witherSources)
+        {
+            if (entity == nullptr || entity->IsPendingDestroy())
+            {
+                return true;
+            }
+            const auto* marker = entity->GetComponent<TerritoryMarkerComponent>();
+            if (settings.TerritoryLevel > 0.0f && marker != nullptr && !marker->IsPendingDestroy())
+            {
+                const float engageRadius = marker->getEngageRadius();
+                if (!std::isfinite(engageRadius))
+                {
+                    return false;
+                }
+                const double scaledRadius = static_cast<double>(engageRadius) * settings.TerritoryRadiusScale;
+                if (scaledRadius > 0.0)
+                {
+                    if (scaledRadius > std::numeric_limits<float>::max())
+                    {
+                        return false;
+                    }
+                    const float radius = static_cast<float>(scaledRadius);
+                    if (radius > 0.0f)
+                    {
+                        const auto position = entity->GetPosition();
+                        territories.push_back({position.x, position.z, radius, settings.TerritoryFalloff, settings.TerritoryLevel});
+                    }
+                }
+            }
+            const auto* source = settings.bUseWitherSources ? entity->GetComponent<Core::Component::WitherSourceComponent>() : nullptr;
+            if (source != nullptr && !source->IsPendingDestroy())
+            {
+                // 再生時と同じ形状と位置を渡し、鍵や再生中の遷移状態は使わない。
+                const auto position = entity->GetPosition();
+                switch (source->GetShape())
+                {
+                case Core::Vegetation::DrynessShape::Circle:
+                    witherSources.AddCircle(position.x, position.z, source->GetRadiusA(), source->GetFalloff(),
+                                            source->GetDefaultLevel());
+                    break;
+                case Core::Vegetation::DrynessShape::Ellipse:
+                    witherSources.AddEllipse(position.x, position.z, source->GetRadiusA(), source->GetRadiusB(),
+                                             source->GetYaw(), source->GetFalloff(), source->GetDefaultLevel());
+                    break;
+                }
+            }
+            for (const Core::Entity* child : entity->GetChildEntities())
+            {
+                if (!CollectDrynessEntities(child, settings, territories, witherSources))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         // 円の外接矩形を求めるため、各軸の単調な標本位置を二分探索する。
@@ -320,6 +456,126 @@ namespace NorvesLib::Modules::Gameplay::Level
         return {grid.Columns, grid.Rows, grid.FirstX, grid.FirstZ, grid.Spacing, bFlipZ};
     }
 
+    bool BuildLevelDrynessBaseline(const LevelPaintMaskLayout& layout, Span<const LevelDrynessCircle> territories,
+                                   const Core::Vegetation::DrynessMap* witherSources,
+                                   const LevelDrynessBaselineSettings& settings, VariableArray<uint8_t>& outValues)
+    {
+        size_t count = 0;
+        if (!GetSampleCount(layout, count) || !IsDrynessSettingsValid(settings) ||
+            (!territories.empty() && territories.data() == nullptr) ||
+            !std::isfinite(SampleWorldCoordinate(layout.FirstX, layout.Spacing, layout.Columns - 1)) ||
+            !std::isfinite(SampleWorldCoordinate(layout.FirstZ, layout.Spacing, layout.Rows - 1)))
+        {
+            return false;
+        }
+        for (size_t index = 0; index < territories.size(); ++index)
+        {
+            if (!IsDrynessCircleValid(territories[index]))
+            {
+                return false;
+            }
+        }
+        try
+        {
+            VariableArray<uint8_t> values(count);
+            for (uint32_t row = 0; row < layout.Rows; ++row)
+            {
+                for (uint32_t column = 0; column < layout.Columns; ++column)
+                {
+                    double x = SampleWorldCoordinate(layout.FirstX, layout.Spacing, column);
+                    double z = SampleWorldCoordinate(layout.FirstZ, layout.Spacing, row);
+                    if (settings.EdgeNoise > 0.0f)
+                    {
+                        uint32_t cellX = 0;
+                        uint32_t cellZ = 0;
+                        double weightX = 0.0;
+                        double weightZ = 0.0;
+                        if (!GetNoiseCoordinate(x, settings.NoiseScale, cellX, weightX) ||
+                            !GetNoiseCoordinate(z, settings.NoiseScale, cellZ, weightZ))
+                        {
+                            return false;
+                        }
+                        const double noiseX = SampleValueNoise(settings.Seed, cellX, cellZ, weightX, weightZ, 0x68bc21ebu);
+                        const double noiseZ = SampleValueNoise(settings.Seed, cellX, cellZ, weightX, weightZ, 0x02e5be93u);
+                        x += settings.EdgeNoise * (2.0 * noiseX - 1.0);
+                        z += settings.EdgeNoise * (2.0 * noiseZ - 1.0);
+                        if (!std::isfinite(x) || !std::isfinite(z))
+                        {
+                            return false;
+                        }
+                    }
+                    double level = settings.BaseLevel;
+                    for (size_t index = 0; index < territories.size(); ++index)
+                    {
+                        level = std::max(level, EvaluateDrynessCircle(territories[index], x, z));
+                    }
+                    // float で表せない標本は Sample の非有限入力と同じく源の寄与を 0 にする。
+                    if (witherSources != nullptr && std::abs(x) <= std::numeric_limits<float>::max() &&
+                        std::abs(z) <= std::numeric_limits<float>::max())
+                    {
+                        level = std::max(level, static_cast<double>(witherSources->Sample(static_cast<float>(x), static_cast<float>(z))));
+                    }
+                    const size_t index = static_cast<size_t>(row) * layout.Columns + column;
+                    values[index] = static_cast<uint8_t>(std::lround(std::clamp(level, 0.0, 1.0) * 255.0));
+                }
+            }
+            outValues = std::move(values);
+            return true;
+        }
+        catch (const std::bad_alloc&)
+        {
+            return false;
+        }
+        catch (const std::length_error&)
+        {
+            return false;
+        }
+    }
+
+    bool BuildLevelDrynessBaseline(const Core::World& world, const LevelPaintMaskLayout& layout,
+                                   const LevelDrynessBaselineSettings& settings, VariableArray<uint8_t>& outValues,
+                                   size_t* pOutTerritoryCount, size_t* pOutWitherCount)
+    {
+        if (!IsDrynessSettingsValid(settings))
+        {
+            return false;
+        }
+        try
+        {
+            VariableArray<LevelDrynessCircle> territories;
+            Core::Vegetation::DrynessMap witherSources;
+            for (const Core::Entity* root : world.GetRootEntities())
+            {
+                if (!CollectDrynessEntities(root, settings, territories, witherSources))
+                {
+                    return false;
+                }
+            }
+            if (!BuildLevelDrynessBaseline(layout, Span<const LevelDrynessCircle>(territories),
+                                           settings.bUseWitherSources ? &witherSources : nullptr, settings, outValues))
+            {
+                return false;
+            }
+            if (pOutTerritoryCount != nullptr)
+            {
+                *pOutTerritoryCount = territories.size();
+            }
+            if (pOutWitherCount != nullptr)
+            {
+                *pOutWitherCount = witherSources.GetSourceCount();
+            }
+            return true;
+        }
+        catch (const std::bad_alloc&)
+        {
+            return false;
+        }
+        catch (const std::length_error&)
+        {
+            return false;
+        }
+    }
+
     float EvaluateLevelPaintBrushWeight(const LevelPaintBrush& brush, float distance)
     {
         return static_cast<float>(BrushWeight(brush, distance));
@@ -543,7 +799,7 @@ namespace NorvesLib::Modules::Gameplay::Level
             const WideString temporaryPath = path + L".tmp";
             TemporaryFile temporary{temporaryPath.c_str(), false};
             FileHandle file;
-            file.Value = CreateFileW(temporaryPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+            file.Value = CreateFileW(temporaryPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                                      FILE_ATTRIBUTE_NORMAL, nullptr);
             if (file.Value == INVALID_HANDLE_VALUE)
             {

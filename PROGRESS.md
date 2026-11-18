@@ -12542,3 +12542,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 退避したマーカーのデバッグ描画を当て直す: 着地(直し 0 回)
 - U3 ImGui の配置の画面と --imgui のときだけの登録: 着地(直し 0 回)
 - U1 マスクの層・円形ブラシ・R8 PNG の読み書き: 着地(直し 0 回)
+- U2 枯れの手続きの初期値（持ち場と枯れの源から smoothstep と雑音）: 着地(直し 0 回)

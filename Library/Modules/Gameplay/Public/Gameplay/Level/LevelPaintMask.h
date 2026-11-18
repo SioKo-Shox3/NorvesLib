@@ -4,7 +4,18 @@
 #include "Container/Span.h"
 #include "Container/String.h"
 #include "Container/VariableArray.h"
+#include <cstddef>
 #include <cstdint>
+
+namespace NorvesLib::Core
+{
+    class World;
+}
+
+namespace NorvesLib::Core::Vegetation
+{
+    class DrynessMap;
+}
 
 namespace NorvesLib::Core::Rendering::Terrain
 {
@@ -43,6 +54,48 @@ namespace NorvesLib::Modules::Gameplay::Level
 
     /// 地形の格子からマスクの並びを作る。
     LevelPaintMaskLayout MakeLevelPaintMaskLayout(const Core::Rendering::Terrain::TerrainGridLayout& grid, bool bFlipZ = false);
+
+    /// 枯れの基準値の作り方。既定値は配置に合わせて変更できる。
+    struct LevelDrynessBaselineSettings
+    {
+        float BaseLevel = 0.0f;           // 源の無い所の枯れ [0, 1]。
+        float TerritoryLevel = 0.8f;      // 持ち場の内側の枯れ [0, 1]。0 で無効。
+        float TerritoryRadiusScale = 1.0f; // 持ち場の EngageRadius に掛ける倍率。
+        float TerritoryFalloff = 6.0f;     // 半径の外側で 0 になるまでの幅 [m]。
+        bool bUseWitherSources = true;     // World から枯れの源を集める。
+        float EdgeNoise = 3.0f;           // 縁を乱す変位の振幅 [m]。0 で無効。
+        float NoiseScale = 8.0f;          // 雑音の格子の間隔 [m]。
+        uint32_t Seed = 93;
+    };
+
+    /// 持ち場 1 つ分の円。中心は世界の XZ、半径と幅の単位は m。
+    struct LevelDrynessCircle
+    {
+        float CenterX = 0.0f;
+        float CenterZ = 0.0f;
+        float Radius = 0.0f;
+        float Falloff = 0.0f;
+        float Level = 0.0f;
+    };
+
+    /// 標本位置 p を 2 種の値雑音で p + EdgeNoise × (2n1 − 1, 2n2 − 1) にずらす。
+    /// その位置で各円の Level × (1 − smoothstep(Radius, Radius + Falloff, 距離)) と源を評価し、
+    /// BaseLevel を含む最大値を [0, 1] に丸めて 8bit に変換する。値雑音は Seed と格子座標で決まる。
+    /// 円の減衰幅が 0 なら円内だけを採る。出力は row × Columns + column の行優先。
+    /// 設定と円は有限、半径・幅・倍率・雑音振幅は 0 以上、設定の枯れ値は [0, 1] とする。
+    /// 雑音振幅が正なら NoiseScale は正。無効な入力や確保の失敗時は出力を変えず false。
+    bool BuildLevelDrynessBaseline(const LevelPaintMaskLayout& layout,
+                                   Core::Container::Span<const LevelDrynessCircle> territories,
+                                   const Core::Vegetation::DrynessMap* witherSources,
+                                   const LevelDrynessBaselineSettings& settings,
+                                   Core::Container::VariableArray<uint8_t>& outValues);
+
+    /// 破棄予約された部分木を除き、World の持ち場と枯れの源から基準値を作る。
+    /// 個数は実際に加えた円と源の数。失敗時は値と個数の出力を変えない。
+    bool BuildLevelDrynessBaseline(const Core::World& world, const LevelPaintMaskLayout& layout,
+                                   const LevelDrynessBaselineSettings& settings,
+                                   Core::Container::VariableArray<uint8_t>& outValues,
+                                   size_t* pOutTerritoryCount = nullptr, size_t* pOutWitherCount = nullptr);
 
     /// 世界座標の XZ 平面で使う円形ブラシ。
     struct LevelPaintBrush
