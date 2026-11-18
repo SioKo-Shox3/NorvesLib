@@ -191,6 +191,8 @@ add_library(AssetCookLib STATIC
     RigSplitCook.h
     SkinnedLodBuilder.cpp
     SkinnedLodBuilder.h
+    SurfaceSampleTableBuilder.cpp
+    SurfaceSampleTableBuilder.h
     VfxEffectCookCli.cpp
     VfxEffectCookCli.h
 )

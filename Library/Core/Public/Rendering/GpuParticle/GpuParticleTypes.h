@@ -50,6 +50,26 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t kGpuEmitterShapeShift = 16u;
     /// シフト前の VfxSpawnShape のマスク。
     inline constexpr uint32_t kGpuEmitterShapeMask = 0x7u;
+    /// スキンの表面から放出する形。
+    inline constexpr uint32_t kGpuEmitterShapeSkinSurface = 5u;
+    /// 骨のバインド位置から放出する形。
+    inline constexpr uint32_t kGpuEmitterShapeBone = 6u;
+    /// 表面の標本を一様に受け入れる方式。
+    inline constexpr uint32_t kGpuSkinAcceptUniform = 0u;
+    /// ディゾルブの境目で標本を受け入れる方式。
+    inline constexpr uint32_t kGpuSkinAcceptDissolveEdge = 1u;
+    /// 指定した骨の組で標本を受け入れる方式。
+    inline constexpr uint32_t kGpuSkinAcceptBoneMask = 2u;
+    /// 生成スレッドごとの標本の試行上限。
+    inline constexpr uint32_t kGpuSkinMaxAttempts = 8u;
+    /// このフレームにスキンの源が無い印。
+    inline constexpr uint32_t kGpuSkinSourceNone = 0xFFFFFFFFu;
+    /// 単独の骨の指定が無い印。
+    inline constexpr uint32_t kGpuSkinNoBone = 0xFFFFFFFFu;
+    /// 骨の組から一様に選ぶ乱数の番号。
+    inline constexpr uint32_t kGpuSkinRandomDrawBonePick = 8u;
+    /// 試行 k の標本は 16+2k、受け入れは 17+2k（k < 8、最大 31）。
+    inline constexpr uint32_t kGpuSkinRandomDrawAttemptBase = 16u;
     /// RenderFlags 内の VfxGpuSpriteOrientation の開始ビット。
     inline constexpr uint32_t kGpuEmitterRenderOrientationShift = 0u;
     /// シフト前の VfxGpuSpriteOrientation のマスク。
@@ -121,7 +141,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved1;
     };
 
-    /// エミッタの GPU 定数。std430 の 16 バイト行を 20 行で構成する。
+    /// エミッタの GPU 定数。std430 の 16 バイト行を 23 行で構成する。
     /// CurveKeyCounts は Size・Color・Opacity・Stretch のキー数を下位から各 8 ビットに詰める（0 は曲線なし）。
     /// 別バッファのキーは CurveKeyOffset から同じ Target 順に連続して置く。
     /// RenderFlags は bit 0〜1 が向き、2 が合成、3 が描画段階、4 が照明、5 が幅 1px 未満の補償、6 がスロットの順に描く設定、8〜15 が手続きのフリップブックのコマ数（0 はなし）。
@@ -154,6 +174,13 @@ namespace NorvesLib::Core::Rendering
         float ShelterChildProbability;
         float ShelterMinClearance;
         uint32_t ShelterReserved;
+        float SkinBindPosition[3]; // 320: Bone のバインド姿勢での位置（メッシュ空間）。
+        uint32_t SkinBoneIndex; // 332: 骨の番号。kGpuSkinNoBone なら組から粒ごとに一様に選ぶ。
+        float SkinNormalSpeed; // 336: 法線の向きの初速。
+        float SkinVelocityInheritance; // 340: 体の速度を継承する係数。
+        uint32_t SkinAcceptMode; // 344: 表面の標本を受け入れる方式。
+        uint32_t SkinSourceIndex; // 348: パスが毎フレーム書く源の行の番号。無しは kGpuSkinSourceNone。
+        uint32_t SkinBoneMask[4]; // 352: 表面の受け入れと Bone の選択に使う骨の組（128 bit）。
     };
 
     /// 正規化した年齢と値を組にした寿命曲線のキー。
@@ -191,7 +218,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuCollisionChildParams, ChildMinNormalY) == 4u);
     static_assert(offsetof(GpuCollisionChildParams, Reserved0) == 8u);
     static_assert(offsetof(GpuCollisionChildParams, Reserved1) == 12u);
-    static_assert(sizeof(GpuEmitterParams) == 320u);
+    static_assert(sizeof(GpuEmitterParams) == 368u);
     static_assert(alignof(GpuEmitterParams) == 16u);
     static_assert(offsetof(GpuEmitterParams, PoolOffset) == 0u);
     static_assert(offsetof(GpuEmitterParams, Capacity) == 4u);
@@ -238,6 +265,13 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuEmitterParams, ShelterChildProbability) == 308u);
     static_assert(offsetof(GpuEmitterParams, ShelterMinClearance) == 312u);
     static_assert(offsetof(GpuEmitterParams, ShelterReserved) == 316u);
+    static_assert(offsetof(GpuEmitterParams, SkinBindPosition) == 320u);
+    static_assert(offsetof(GpuEmitterParams, SkinBoneIndex) == 332u);
+    static_assert(offsetof(GpuEmitterParams, SkinNormalSpeed) == 336u);
+    static_assert(offsetof(GpuEmitterParams, SkinVelocityInheritance) == 340u);
+    static_assert(offsetof(GpuEmitterParams, SkinAcceptMode) == 344u);
+    static_assert(offsetof(GpuEmitterParams, SkinSourceIndex) == 348u);
+    static_assert(offsetof(GpuEmitterParams, SkinBoneMask) == 352u);
     static_assert(sizeof(GpuCurveKey) == 8u);
     static_assert(offsetof(GpuCurveKey, Time) == 0u);
     static_assert(offsetof(GpuCurveKey, Value) == 4u);
@@ -275,6 +309,8 @@ namespace NorvesLib::Core::Rendering
     static_assert(static_cast<uint32_t>(Particle::VfxWrapPolicy::Die) == 0u);
     static_assert(static_cast<uint32_t>(Particle::VfxWrapPolicy::WrapInCameraBox) == 1u);
     static_assert(static_cast<uint32_t>(Particle::VfxSpawnShape::CameraBox) <= kGpuEmitterShapeMask);
+    static_assert(kGpuEmitterShapeSkinSurface <= kGpuEmitterShapeMask);
+    static_assert(kGpuEmitterShapeBone <= kGpuEmitterShapeMask);
     static_assert(static_cast<uint32_t>(Particle::VfxGpuSpriteOrientation::SurfaceAligned) <= kGpuEmitterRenderOrientationMask);
     static_assert(static_cast<uint32_t>(Particle::VfxGpuSpriteBlend::Additive) <= kGpuEmitterRenderBlendMask);
     static_assert(static_cast<uint32_t>(Particle::VfxGpuSpritePass::PostTAA) <= kGpuEmitterRenderPassMask);

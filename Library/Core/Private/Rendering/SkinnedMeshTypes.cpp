@@ -13,8 +13,18 @@ namespace NorvesLib::Core::Rendering
     SkinnedMeshAssetLease::SkinnedMeshAssetLease(SkinnedMeshHandle handle,
         Container::VariableArray<SkinnedMeshVertex>&& vertices, Container::VariableArray<uint32_t>&& indices,
         Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes, Container::VariableArray<Container::String>&& slotNames)
+        : SkinnedMeshAssetLease(handle, std::move(vertices), std::move(indices), std::move(submeshes),
+                                std::move(slotNames), {})
+    {
+    }
+
+    SkinnedMeshAssetLease::SkinnedMeshAssetLease(SkinnedMeshHandle handle,
+        Container::VariableArray<SkinnedMeshVertex>&& vertices, Container::VariableArray<uint32_t>&& indices,
+        Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes, Container::VariableArray<Container::String>&& slotNames,
+        Container::VariableArray<Skeletal::SurfaceSampleRecord>&& surfaceSamples)
         : m_Handle(handle), m_Vertices(std::move(vertices)), m_Indices(std::move(indices)),
-          m_SubMeshes(std::move(submeshes)), m_MaterialSlotNames(std::move(slotNames))
+          m_SubMeshes(std::move(submeshes)), m_MaterialSlotNames(std::move(slotNames)),
+          m_SurfaceSamples(std::move(surfaceSamples))
     {
         if (!m_Handle.IsValid() || !Skeletal::ValidateSkeletalSubmeshData({m_SubMeshes.data(),m_SubMeshes.size()},
                 {m_Indices.data(),m_Indices.size()},m_Vertices.size(),m_MaterialSlotNames.size()).Succeeded())

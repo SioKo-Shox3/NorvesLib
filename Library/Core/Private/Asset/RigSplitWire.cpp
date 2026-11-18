@@ -150,7 +150,7 @@ namespace NorvesLib::Core::Skeletal::SplitWire
                                           Four('M', 'N', 'G', 'T'), Four('S', 'U', 'B', 'M'), Four('M', 'S', 'L', 'T'),
                                           Four('M', 'A', 'T', 'S'), Four('C', 'L', 'I', 'P'), Four('C', 'H', 'A', 'N'),
                                           Four('S', 'A', 'M', 'P'), Four('S', 'O', 'C', 'K'), Four('L', 'O', 'D', 'S'),
-                                          Four('P', 'A', 'R', 'T')};
+                                          Four('P', 'A', 'R', 'T'), Four('S', 'U', 'R', 'F')};
             return (IsStaticRootFrameProfile(profile) && code == Four('A', 'F', 'R', 'M')) ||
                    std::find(std::begin(codes), std::end(codes), code) != std::end(codes);
         }
@@ -330,6 +330,83 @@ namespace NorvesLib::Core::Skeletal::SplitWire
         out = std::move(bytes);
         return RigV1Status::Success;
     }
+    RigV1Status ValidateSurfaceSampleTable(C::Span<const SurfaceSampleRecord> samples, uint32_t vertexCount)
+    {
+        if (samples.empty() || samples.size() > MaximumSurfaceSampleCount)
+        {
+            return RigV1Status::LimitExceeded;
+        }
+        if (!samples.data())
+        {
+            return RigV1Status::InvalidInput;
+        }
+        for (const auto& sample : samples)
+        {
+            if (!IsValidSurfaceSampleRecord(sample, vertexCount))
+            {
+                return RigV1Status::BadWire;
+            }
+        }
+        return RigV1Status::Success;
+    }
+
+    RigV1Status ReadSurfaceSampleTable(View bytes, const Section& surface, uint32_t vertexCount,
+                                       C::VariableArray<SurfaceSampleRecord>& out)
+    {
+        if (surface.Offset == 0 && surface.Size == 0 && surface.Count == 0)
+        {
+            out = C::VariableArray<SurfaceSampleRecord>{};
+            return RigV1Status::Success;
+        }
+        if (!surface.Count || surface.Count > MaximumSurfaceSampleCount)
+        {
+            return RigV1Status::LimitExceeded;
+        }
+        if (!bytes.data() || surface.Record != SurfaceSampleRecordBytes || !surface.Offset ||
+            surface.Size != uint64_t(surface.Count) * SurfaceSampleRecordBytes ||
+            surface.Offset > bytes.size() || surface.Size > bytes.size() - surface.Offset)
+        {
+            return RigV1Status::BadWire;
+        }
+
+        C::VariableArray<SurfaceSampleRecord> candidate;
+        candidate.resize(surface.Count);
+        for (size_t i = 0; i < candidate.size(); ++i)
+        {
+            const size_t offset = size_t(surface.Offset) + i * SurfaceSampleRecordBytes;
+            for (size_t word = 0; word < 4; ++word)
+            {
+                candidate[i].Words[word] = U32(bytes, offset + word * 4);
+            }
+            if (!IsValidSurfaceSampleRecord(candidate[i], vertexCount))
+            {
+                return RigV1Status::BadWire;
+            }
+        }
+        out = std::move(candidate);
+        return RigV1Status::Success;
+    }
+
+    RigV1Status WriteSurfaceSampleTable(C::Span<const SurfaceSampleRecord> samples, Bytes& out)
+    {
+        const auto status = ValidateSurfaceSampleTable(samples, SurfaceSampleMaxVertexIndex + 1u);
+        if (status != RigV1Status::Success)
+        {
+            return status;
+        }
+        Bytes candidate(samples.size() * SurfaceSampleRecordBytes, 0);
+        for (size_t i = 0; i < samples.size(); ++i)
+        {
+            const size_t offset = i * SurfaceSampleRecordBytes;
+            for (size_t word = 0; word < 4; ++word)
+            {
+                W32(candidate, offset + word * 4, samples[i].Words[word]);
+            }
+        }
+        out = std::move(candidate);
+        return RigV1Status::Success;
+    }
+
     RigV1Status WriteSkinLodTables(const SkinLodTablesV1& tables, Bytes& lods, Bytes& parts)
     {
         if (&lods == &parts || tables.Lods.empty() != tables.Parts.empty())
