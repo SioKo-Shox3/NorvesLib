@@ -8,6 +8,8 @@
 // 切り抜きの変種は、視界の確保の印の付いた材質のディザも受け持つ。
 // discard で深度の書き込みも止めるため、切り抜きの FS では早期の深度テストを宣言しない。
 // 通常の FS の早期深度テストを保つため、切り抜きを分ける。
+// GBUFFER_LOD_CROSSFADE を定義した gbuffer_crossfade.frag は段の遷移のディザを受け持つ。
+// 切り抜きの変種も段の遷移を判定し、両変種では早期の深度テストを宣言しない。
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
 #extension GL_ARB_sparse_texture2 : require
 #endif
@@ -21,6 +23,10 @@ layout(location = 5) in vec3 fragViewDir;
 layout(location = 6) in vec4 fragCurrentClip;
 layout(location = 7) in vec4 fragPreviousClip;
 layout(location = 8) flat in vec4 fragInstanceShadingParams;
+#if defined(GBUFFER_ALPHA_CLIP) || defined(GBUFFER_LOD_CROSSFADE)
+layout(location = 11) flat in float fragLodCrossfade;
+#include "Common/LodCrossfade.glsl"
+#endif
 #ifdef GBUFFER_DISSOLVE
 layout(location = 9) in vec3 fragRestPosition;
 layout(location = 10) in float fragDissolveProtect;
@@ -83,8 +89,8 @@ layout(set = 0, binding = 17) uniform sampler2D puddleField;
 NORVES_DECLARE_ENVIRONMENT_UBO(0, 13)
 NORVES_DECLARE_PUDDLE_SURFACE_UBO(0, 15)
 #define VT_FEEDBACK_BINDING 11
-#ifdef GBUFFER_ALPHA_CLIP
-// 切り抜いた画素の深度への書き込みを discard で止めるため、早期の深度テストを宣言しない。
+#if defined(GBUFFER_ALPHA_CLIP) || defined(GBUFFER_LOD_CROSSFADE)
+// 切り抜きと段の遷移で捨てた画素の深度を書かないように、早期の深度テストを宣言しない。
 #define NORVES_VT_FEEDBACK_LATE_DEPTH_TESTS 1
 #endif
 #include "Common/VirtualTextureFeedback.glsl"
@@ -168,6 +174,13 @@ void main()
     // discard（OpKill）の後は画面微分が未定義になるため、切り抜きの判定より前に取る。
     vec3 normalDx = dFdxFine(normal);
     vec3 normalDy = dFdyFine(normal);
+
+#if defined(GBUFFER_ALPHA_CLIP) || defined(GBUFFER_LOD_CROSSFADE)
+    if (LodCrossfadeShouldDiscard(fragLodCrossfade, floor(gl_FragCoord.xy)))
+    {
+        discard;
+    }
+#endif
 
 #ifdef GBUFFER_ALPHA_CLIP
     float coverage = textureSamples.Albedo.a * params.w;

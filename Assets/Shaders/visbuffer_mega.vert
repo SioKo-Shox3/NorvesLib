@@ -19,10 +19,11 @@ layout(set = 0, binding = 0) uniform VisFrame
     vec4 vertexAnimTime;
 } frame;
 
-// インスタンスの表（binding 1）とメッシュの表（binding 22）。描画が引くのは変換だけ。
+// インスタンスの表（binding 1）とメッシュの表（binding 22）。変換と遷移の値を引く。
 #define MEGA_INSTANCE_BINDING 1
 #define MEGA_MESH_BINDING 22
 #include "Common/MegaInstanceTable.glsl"
+#include "Common/LodCrossfade.glsl"
 #include "Common/VertexAnimation.glsl"
 
 // コマンドごとの描画情報（x = インスタンスの番号, y = payload）。添え字は firstInstance
@@ -32,6 +33,7 @@ layout(std430, set = 0, binding = 2) readonly buffer DrawInfoBuffer
 };
 
 layout(location = 0) flat out uint outRecord;
+layout(location = 1) flat out float outLodCrossfade;
 
 void main()
 {
@@ -43,4 +45,5 @@ void main()
     worldPos.xyz = ApplyVertexAnimation(worldPos.xyz, inPosition, params, frame.vertexAnimTime.x);
     gl_Position = frame.projection * frame.view * worldPos;
     outRecord = uint(gl_InstanceIndex) + 1u;
+    outLodCrossfade = LodCrossfadeFromTint(LoadMegaInstanceTint(drawInfo.x));
 }
