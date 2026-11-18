@@ -12353,3 +12353,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: G6-GR103-BLENDER-CHECK の done-when (1) は `test_pipeline.py` を回す前提だが、試験を作らない決まりで作っていない（CHECK は今 backlog）。土台メッシュは作者が手で作る資産でリポジトリに無い。
 - Notes: 反復 4（判断役の判断に従う）: 試験の verify 行（`BlenderStagesCoreTest.py`・`RigValidateTest.py`）は絶対規則 11 に従って外し、構文の確かめ `python -B -m py_compile Scripts/Blender/bpy_stage.py Scripts/Blender/common.py Scripts/Blender/export_gltf.py Scripts/Blender/pipeline.py Scripts/Blender/rebuild_on_base.py Scripts/Blender/rig_core.py Scripts/Blender/transfer_weights.py` に置き換えた。87cc8f15 で終了コード 0（`.harness/runs/20261118-063226/G6-GR103-BLENDER-STAGES-iter4-verify.txt`）。`Scripts/Blender/` と文書は変えていない。
 - Notes: Blender の上での 3 段の確かめ（ベイク・ウェイトの転送・書き出しの実際の動き）は G6-GR103-BLENDER-CHECK で行う。
+- U1 SDK に依らない撮影の受け付け・進行・完了イベントの組み立て(BridgeCaptureProtocol)を作る: 着地(直し 0 回)
