@@ -1,4 +1,5 @@
 ﻿#include "RigSplitCook.h"
+#include "SurfaceSampleTableBuilder.h"
 #include "Animation/RigRootFrame.h"
 #include "Animation/SkeletalBindRowMath.h"
 #include "MeshMaterialV1Plan.h"
@@ -528,6 +529,18 @@ namespace NorvesLib::Tools::AssetCook
             loaded.ReserveDerived = Derived;
             C::VariableArray<MeshMaterialV1Plan> plans;
             plans.reserve(keys.size());
+            // Entries の再確保をまたぐので、全材質を読むまでは画像の ID だけを持つ。
+            struct PendingSurfaceAlbedo
+            {
+                uint32_t ImageIndex = UINT32_MAX;
+                float Factor[3] = {1, 1, 1};
+            };
+            const bool bSurfaceSamples = candidate.Import.Settings.SurfaceSamples.bRequested;
+            C::VariableArray<PendingSurfaceAlbedo> sourceAlbedos;
+            if (bSurfaceSamples)
+            {
+                sourceAlbedos.reserve(keys.size());
+            }
             Hash hash;
             hash.String(request.Profile == S::RigImportProfile::DirectTrs128 ? "NorvesLib.RigSplit.v1"
                         : request.Profile == S::RigImportProfile::StaticRootFrame128
@@ -583,6 +596,31 @@ namespace NorvesLib::Tools::AssetCook
                 hash.Number(key);
                 hash.Number(plan.SourceHash);
                 hash.Number(plan.SettingsHash);
+                if (bSurfaceSamples)
+                {
+                    PendingSurfaceAlbedo sourceAlbedo;
+                    for (size_t channel = 0; channel < 3; ++channel)
+                    {
+                        sourceAlbedo.Factor[channel] = plan.Material.BaseColor[channel];
+                    }
+                    if (!plan.Textures[0].empty())
+                    {
+                        const auto albedo = std::find_if(plan.Images.begin(), plan.Images.end(),
+                            [&](const auto& image) { return image.LogicalPath == plan.Textures[0]; });
+                        if (albedo == plan.Images.end())
+                        {
+                            return fail("split_surface_samples_albedo");
+                        }
+                        const auto sourceImage = std::find_if(images.Entries.begin(), images.Entries.end(),
+                            [&](const auto& entry) { return entry.Index == albedo->ImageIndex; });
+                        if (sourceImage == images.Entries.end())
+                        {
+                            return fail("split_surface_samples_albedo");
+                        }
+                        sourceAlbedo.ImageIndex = sourceImage->Index;
+                    }
+                    sourceAlbedos.push_back(sourceAlbedo);
+                }
                 if (plan.Material.BaseColor[0] != 1.0f || plan.Material.BaseColor[1] != 1.0f ||
                     plan.Material.BaseColor[2] != 1.0f)
                 {
@@ -705,6 +743,12 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return fail("split_material_closure");
             }
+            // ここから画像の読み込みは増えず、images は標本の生成が終わるまで生存する。
+            C::VariableArray<SurfaceSampleAlbedoSource> slotAlbedo;
+            if (bSurfaceSamples)
+            {
+                slotAlbedo.reserve(candidate.SlotSourceMaterials.size());
+            }
             C::VariableArray<S::SkinMaterialV1> slots;
             slots.reserve(candidate.SlotSourceMaterials.size());
             for (const auto key : candidate.SlotSourceMaterials)
@@ -715,7 +759,28 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     return fail("split_slot_source_mapping");
                 }
-                const auto& p = plans[size_t(found - keys.begin())];
+                const size_t planIndex = size_t(found - keys.begin());
+                const auto& p = plans[planIndex];
+                if (bSurfaceSamples)
+                {
+                    const auto& pending = sourceAlbedos[planIndex];
+                    SurfaceSampleAlbedoSource albedo;
+                    for (size_t channel = 0; channel < 3; ++channel)
+                    {
+                        albedo.Factor[channel] = pending.Factor[channel];
+                    }
+                    if (pending.ImageIndex != UINT32_MAX)
+                    {
+                        const auto image = std::find_if(images.Entries.begin(), images.Entries.end(),
+                            [&](const auto& entry) { return entry.Index == pending.ImageIndex; });
+                        if (image == images.Entries.end())
+                        {
+                            return fail("split_surface_samples_albedo");
+                        }
+                        albedo.Image = &image->Decoded;
+                    }
+                    slotAlbedo.push_back(albedo);
+                }
                 S::SkinMaterialV1 material;
                 material.Record = p.Material;
                 if (p.Sidedness == I::DoubleSidedSetting::Auto && !closure.bAlmostClosed)
@@ -754,6 +819,11 @@ namespace NorvesLib::Tools::AssetCook
                     hash.Number(std::bit_cast<uint64_t>(target));
                 }
                 hash.Number(std::bit_cast<uint64_t>(settings.ThetaRef));
+            }
+            if (bSurfaceSamples)
+            {
+                hash.String("norves.surface-samples.v1");
+                hash.Number(candidate.Import.Settings.SurfaceSamples.Count);
             }
             candidate.SourceHash = hash.Value;
             if (request.bInventoryOnly)
@@ -876,6 +946,22 @@ namespace NorvesLib::Tools::AssetCook
                 candidate.SkinnedLod.DegenerateTriangleCount = lodResult.DegenerateTriangleCount;
                 candidate.SkinnedLod.DuplicateTriangleCount = lodResult.DuplicateTriangleCount;
                 candidate.SkinnedLod.Lods = std::move(lodResult.Lods);
+            }
+            if (bSurfaceSamples)
+            {
+                C::VariableArray<S::SurfaceSampleRecord> samples;
+                if (!BuildSurfaceSampleTable(*mesh.GetData(), {slotAlbedo.data(), slotAlbedo.size()},
+                                             candidate.Import.Settings.SurfaceSamples.Count, samples, error))
+                {
+                    return fail("split_surface_samples_build");
+                }
+                S::SkinMeshV1 meshWithSamples;
+                if (!S::AttachSkinMeshSurfaceSamplesV1(mesh, std::move(samples), meshWithSamples, report,
+                                                      request.Limits, request.Profile))
+                {
+                    return fail("split_surface_samples_attach");
+                }
+                mesh = std::move(meshWithSamples);
             }
             if (!S::WriteSkeletonV1(skeleton, candidate.Skeleton.Payload, report, request.Limits, request.Profile) ||
                 !S::WriteSkinMeshV1(mesh, candidate.Mesh.Payload, report, request.Limits, request.Profile) ||

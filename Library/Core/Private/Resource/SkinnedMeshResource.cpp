@@ -42,7 +42,16 @@ namespace NorvesLib::Core
     {
         if (m_bSplitV1)
         {
-            ReleaseRenderAssetLease();
+            // 表がある split だけ、粒の放出が GPU から頂点と標本を読むための lease を作る。
+            // 表が無い split は従来どおり lease を持たない。
+            if (m_SplitMesh && !m_SplitMesh->SurfaceSamples.empty())
+            {
+                RefreshRenderAssetLease();
+            }
+            else
+            {
+                ReleaseRenderAssetLease();
+            }
             SetResourceState(m_SplitMesh ? ResourceState::Loaded : ResourceState::Failed);
             return bool(m_SplitMesh);
         }
@@ -103,6 +112,7 @@ namespace NorvesLib::Core
             size += m_SplitMesh->InverseBindMatrices.size() * sizeof(Container::FixedArray<float, 16>);
             size += m_SplitMesh->Topology.CanonicalBytes.size() + m_SplitMesh->SkeletonPath.size();
             size += m_SplitMesh->SubMeshes.size() * sizeof(Skeletal::SkeletalSubMesh);
+            size += m_SplitMesh->SurfaceSamples.size() * sizeof(Skeletal::SurfaceSampleRecord);
             for (const auto& slot : m_SplitMesh->Slots)
             {
                 size += sizeof(slot) + slot.Name.size();
@@ -115,6 +125,10 @@ namespace NorvesLib::Core
                     size += path.size();
                 }
             }
+        }
+        if (m_RenderAssetLease)
+        {
+            size += m_RenderAssetLease->GetSurfaceSamples().size() * sizeof(Skeletal::SurfaceSampleRecord);
         }
         return size;
     }
@@ -265,16 +279,19 @@ namespace NorvesLib::Core
     void SkinnedMeshResource::RefreshRenderAssetLease()
     {
         ReleaseRenderAssetLease();
-        if (m_bSplitV1)
+        if (m_bSplitV1 && (!m_SplitMesh || m_SplitMesh->SurfaceSamples.empty()))
         {
             return;
         }
-        if (GetResourceId() == 0 || m_Vertices.empty() || m_Indices.empty())
+        const auto& vertices = GetVertices();
+        const auto& indices = GetIndices();
+        const auto& submeshes = GetSubMeshes();
+        if (GetResourceId() == 0 || vertices.empty() || indices.empty())
         {
             return;
         }
-        if (!Skeletal::ValidateSkeletalSubmeshData({m_SubMeshes.data(), m_SubMeshes.size()},
-                {m_Indices.data(), m_Indices.size()}, m_Vertices.size(), m_MaterialSlots.size()).Succeeded())
+        if (!Skeletal::ValidateSkeletalSubmeshData({submeshes.data(), submeshes.size()},
+                {indices.data(), indices.size()}, vertices.size(), m_MaterialSlots.size()).Succeeded())
         {
             return;
         }
@@ -291,10 +308,10 @@ namespace NorvesLib::Core
         }
 
         Container::VariableArray<Rendering::SkinnedMeshVertex> renderVertices;
-        renderVertices.resize(m_Vertices.size());
-        for (size_t vertexIndex = 0; vertexIndex < m_Vertices.size(); ++vertexIndex)
+        renderVertices.resize(vertices.size());
+        for (size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex)
         {
-            const Skeletal::SkeletalVertex& source = m_Vertices[vertexIndex];
+            const Skeletal::SkeletalVertex& source = vertices[vertexIndex];
             Rendering::SkinnedMeshVertex& destination = renderVertices[vertexIndex];
             destination.Position[0] = source.Position.X;
             destination.Position[1] = source.Position.Y;
@@ -311,8 +328,8 @@ namespace NorvesLib::Core
             }
         }
 
-        Container::VariableArray<uint32_t> renderIndices = m_Indices;
-        Container::VariableArray<Skeletal::SkeletalSubMesh> renderSubmeshes = m_SubMeshes;
+        Container::VariableArray<uint32_t> renderIndices = indices;
+        Container::VariableArray<Skeletal::SkeletalSubMesh> renderSubmeshes = submeshes;
         Rendering::SkinnedMeshHandle handle;
         handle.Id = GetResourceId();
         ++m_RenderAssetGeneration;
@@ -321,12 +338,26 @@ namespace NorvesLib::Core
             ++m_RenderAssetGeneration;
         }
         handle.Generation = m_RenderAssetGeneration;
-        m_RenderAssetLease = Container::MakeShared<Rendering::SkinnedMeshAssetLease>(
-            handle,
-            std::move(renderVertices),
-            std::move(renderIndices),
-            std::move(renderSubmeshes),
-            std::move(slotNames));
+        if (m_SplitMesh && !m_SplitMesh->SurfaceSamples.empty())
+        {
+            Container::VariableArray<Skeletal::SurfaceSampleRecord> surfaceSamples = m_SplitMesh->SurfaceSamples;
+            m_RenderAssetLease = Container::MakeShared<Rendering::SkinnedMeshAssetLease>(
+                handle,
+                std::move(renderVertices),
+                std::move(renderIndices),
+                std::move(renderSubmeshes),
+                std::move(slotNames),
+                std::move(surfaceSamples));
+        }
+        else
+        {
+            m_RenderAssetLease = Container::MakeShared<Rendering::SkinnedMeshAssetLease>(
+                handle,
+                std::move(renderVertices),
+                std::move(renderIndices),
+                std::move(renderSubmeshes),
+                std::move(slotNames));
+        }
     }
 
     void SkinnedMeshResource::ReleaseRenderAssetLease()
