@@ -8215,7 +8215,7 @@
 - notes: SDK の仮想関数 `assetGetProperties`・`assetSetProperty`・`assetSave` は、今は NorvesEditor のブランチ `task/E4-001`(7537f47)にしかない。E4-001 は blocked で、統合ブランチにはまだ入っていない。NorvesLib のビルドが読む `NORVES_BRIDGE_SDK_DIR`(NorvesEditor のメインの作業ツリー)にこの口が無いうちは verify の 1 行目が落ちる。その場合は NorvesEditor を書き換えず、理由を書いてこのタスクを blocked にする。E4-001 が統合された後で todo に戻す。線の上の名前は `Docs/Plans/GameFeatureRoadmap.md` の GR137 の節に合わせる。Bridge のプロトコルの境界なので評価者を通す。
 
 ## GAME-GR137-CAPTURE-WIRE: NorvesLibBridgeAdapter に決定的な撮影(`viewport.captureDeterministic` と完了イベント `viewport.captureCompleted`)をつなぎ、能力 `viewport.capture` を広告する
-- status: todo
+- status: done
 - done-when: SDK の `IBridgeEngineAdapter` に入った `viewportCaptureDeterministic` を `NorvesLibBridgeAdapter` で上書きする。線の上のメソッド名・欄・エラーコードは、NorvesEditor の `bridge/spec/schema` にある `viewport.captureDeterministic` と `viewport.captureCompleted` の定義に合わせる。
 
   **(1) 受け付け**
@@ -8242,7 +8242,7 @@
     - 撮影中の 2 件目が拒否される。
     - 完了イベントの captureId が受け付けの応答と一致する。
     - 時間切れが理由付きの完了イベントになり、残った結果が次の撮影へ漏れない。
-- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path 'C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp' -Pattern 'viewportCaptureDeterministic' -Quiet)) { exit 1 }"`
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path 'C:/Users/oreor/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp' -Pattern 'viewportCaptureDeterministic' -Quiet)) { exit 1 }"`
 - verify: `cmake --build build --config Debug --target Game BridgeCaptureProtocolTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^BridgeCaptureProtocolTest$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Game/Bridge/NorvesLibBridgeAdapter.h, Game/Bridge/NorvesLibBridgeAdapter.cpp, Game/Bridge/BridgeDeterministicCapture.h, Game/Bridge/BridgeDeterministicCapture.cpp, Game/Bridge/BridgeCaptureProtocol.h, Game/Bridge/BridgeCaptureProtocol.cpp, Game/GameApplicationHandler.h, Game/GameApplicationHandler.cpp, Game/CMakeLists.txt, Test/Game/Bridge/BridgeCaptureProtocolTest.cpp, Test/Game/Bridge/CMakeLists.txt
