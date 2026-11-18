@@ -8180,7 +8180,7 @@
 - notes: 要件 `#### GR48` の受け入れ確認の遷移のスイープ・検証レイヤー・記録（ロードマップ 2626・2627 行）と段取りの P5（実際の AI の木での見た目の調整。2283 行）。木の樹種（針葉樹・枯れ木）は画像の生成の指示の記述で、企画は未決なので見本の 2 種にする。AI の高ポリのメッシュの LOD の鎖（GR80、G17）がまだ無いときは、近景と中景を MegaGeometry のクラスタの LOD で描き（G12-GR48-MESH-LOD-SELECT の notes）、遠景だけをインポスターにする。重い処理（ComfyUI での 3D の生成）は GPU を使うので、Game の撮影と同時に走らせない。撮影を開いて目で確かめる。違ったら GR48 の各タスクの paths の範囲で直す。
 
 ## G12-GR40-SCENE-PAYLOAD: セルの中身にシーンの JSON の部分木を使えるようにし、読み・解析をワーカーで、生成を GameThread で予算ごとに行う
-- status: todo
+- status: done
 - after: G12-GR40-WORLD-PAYLOADS, G12-GR92-ASSETREF-SCENE-V3, G12-GR92-ASSET-BIND, G12-GR92-PREFAB-FILE, G12-GR92-BRIDGE-SCENE
 - gr: GR40
 - needs-gr: GR92
@@ -8254,7 +8254,7 @@
   - **起動しない:** 実 GPU での撮影セッションの確かめは GAME-GR137-VFX-CHECK の `BridgeDeterministicCaptureVulkanTest` が受け持つ。このタスクでは起動しない。
 
 ## G8-GR17-ENEMY-COMPONENT-P1: 撃破済みの Id を明示で受け付け直す口を DefeatGate に足し、進行に数えない撃破を ProgressionState へ流さない経路を作る
-- status: todo
+- status: done
 - after: G8-GR17-ENEMY-COMPONENT
 - done-when: (1) 受け付け直し: 完了した Id を明示で受け付け直す口(例 `DefeatGate::Rearm(enemyId)`)を足す。`EnemyComponent` は生成(BeginPlay)のときに自分の EnemyId でこれを呼ぶ。ランチャーから同じシーンへ入り直すときと、セーブからのやり直しで同じ Id の敵がまた出たとき、その敵を倒せないまま進行が止まらないようにするためである。受け付け直した後の `BeginDefeat` は受け付けて、`OnDefeatCompleted` をもう 1 回だけ出す。次の 2 つは今と同じく無視し、`GetIgnoredBeginCount` を増やす: 受け付け直していない完了済みの Id への `BeginDefeat`、保留中(未完了)の Id への受け付け直し。`ProgressionState` は同じ Id を二重に記録せず、`OnFinalUnlocked` を出し直さない。(2) 進行への経路: `BeginDefeat` で「進行に数えるか」を渡せるようにする。既定は「数える」にして、今ある呼び出しの動きは変えない。`EnemyComponent` は EnemyDefinition の項目(例 `countsForProgression`、既定 true)からこの値を渡す。GameplayModule は数える撃破の完了だけを `ProgressionState::MarkDefeated` へ流す。数えない撃破は `OnDefeatCompleted` と領域の `MarkCleared` には届くが、`ProgressionState::GetIgnoredIdCount` を増やさず、警告も出さない。数える撃破なのに進行の定義に無い Id は、今と同じく警告を出して診断の数を増やす(シ者の Id の綴り違いを黙らせない)。(3) 試験は今ある束に足し、新しい実行ファイルは作らない。`DefeatGateTest` に足すケース: 受け付け直した後に同じ Id の完了が 2 回目も 1 回だけ出る、受け付け直していない 2 回目は無視される、保留中の受け付け直しは無視される、数えない撃破の完了では ProgressionState の診断の数が増えない。`EnemyStateMachineTest` に足すケース: 同じ EnemyId の敵を破棄して作り直すと、もう一度倒せて完了が出る。`EnemyDefinitionLoadTest` に足すケース: 新しい項目の型の誤りを、ファイルとキーの分かるエラーで拒否する。
 - verify: `cmake --build build --config Debug --target Game PhysicsDynamicsTest -- /m:1`

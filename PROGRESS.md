@@ -12578,9 +12578,22 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: 毛の断片シェーダー（`skinned_fur_gbuffer.frag`）は paths の外なので、粗さは今のまま材質の一つの値（`furShellParams.w`）を書き、照明はその粗さから指数を決める。SSAO の割合の既定は 0.3、ずらしは ±0.1、強さは 0.05、2 つめの指数の倍率は 0.5、透過の指数 8・強さ 1（すべて仮。`LightingPass::SetShadingModelLightingConstants` で差し替える）。毛の AO は殻の自己遮蔽なので直接光の拡散にも掛ける（ほかの材質は直接光に AO を掛けない）。
 - Notes: 要起票: 毛の断片シェーダー `skinned_fur_gbuffer.frag` が GBuffer の粗さを材質の一つの値で書き、領域の表（`FurMaterialRegion::lobes`）から書いていない。G6-GR34-FUR-LIGHTING の done-when が前提にする「Fur の FS が領域の表から粗さを書く」を受け持つタスクが TASKS.md に無く、領域ごとのハイライトの違いが出ない。
 
-- U1 ループの平滑で近傍を格子の時刻で取り、周期で折り返す: 着地(直し 0 回)
-### G4-GR128-PROCESSING-CASES-P1 ループの平滑の継ぎ目（2026-11-18、run 20261118-152431 の反復 1、完了）
-- Done: `SkeletalClipProcessing.cpp` の `SmoothChannels` に周期（格子の間隔の単位、`outputDuration * OutputFps`）を渡し、ループのクリップでは近傍 k を添字の剰余ではなく時刻 `i + k` を周期で `fmod` して取り、間のキーを補間（回転は Slerp・並進は線形）するようにした。周期が整数のコマにならず末尾の間隔が短い格子（例: 12.5 コマ）でも、継ぎ目をまたぐ近傍を等間隔とみなさない。端数が 0 のときは元のキーをそのまま使うので、整数の周期のクリップと継ぎ目から離れたキーの結果は前とビット単位で同じ。ループでないクリップの平滑は変えていない。
-- 確かめ: `cmake --build build --config Debug -- /m:1` 終了コード 0・エラーの行なし（`SkeletalClipProcessing.obj` は編集の後に再コンパイル）、numstat の 2 通りが一致（37 追加・6 削除）。証拠は `.harness/runs/20261118-152431/G4-GR128-PROCESSING-CASES-P1-u1-unit-verify.txt`。
-- 試験は作らない・回さない決まりにより、done-when の `MotionProcessingTest` の `TestSmoothing`（12.5 コマの合成クリップと `CheckLoop`）は作っていない（試験の .cpp は既に消えている）。ctest も回していない。
-- Next: ランナーの再検証と評価者の反証。人が見るときの見どころ: 周期が整数のコマにならないループの歩き・走りのクリップ（`SmoothingRadius` が 1 以上の role-profile で焼いたもの）を再生し、ループの継ぎ目で動きが一瞬速くなったり詰まったりしないこと。
+- U1 シーンの読み込みを「読み・解析」「スキーマ照合」「ルート 1 つずつの生成」の 3 段に分ける: 着地(直し 2 回)
+- U2 payload の種類 `scene` とそのハンドラーを足す: 着地(直し 0 回)
+- Done（2026-11-18、run 20261118-124726 の反復 1）: `SceneSerializer` のシーン読み込みを 3 段に分けた。(a) ワーカーで呼べる `ReadDocumentFromFile`・`ReadDocumentFromAsset`（読みと JSON の構造の解析。World・ClassRegistry・TypeRegistry に触れない）、(b) GameThread の `BeginSpawn`（版 1・2 の移行と物理量の検証、`ReconcileWithSchema` 相当の照合、一時の ResourceRegistry を持つ `SceneSpawnJob` を作る）、(c) `SpawnNextRoot`（ルートを 1 つだけ生成し、最後のルートの後に EntityRefId を張り替える）と `CancelSpawn`（完了前に生成したルートを World から消す）。`LoadIntoWorld`・`LoadIntoWorldFromAsset` は (a)→(b)→(c) を順に回す形にし、統計・戻り値・ルートの順・ログの文言を変えていない。フレームをまたぐので、生成物は生ポインタでなく Entity の ObjectId と Component の ComponentId で控え、張り替えのときに World から引き直す。
+- Done（同）: セルの payload の種類 `scene`（`kScenePayloadKind`）と `ScenePayloadHandler`（`WorldPayloadHandlers`）を足した。Prepare（ワーカー）で `ReadDocumentFromAsset` し、準備済みの文書を排他つきの表に置く。CommitStep の最初の歩で `BeginSpawn`、以後の歩で `SetRootsPerStep`（既定 1）ぶん `SpawnNextRoot` を進める。セルが生成したルートの ObjectId を持ち（シーンのルートは `LoadIntoWorld` と同じく World のルートのまま）、休眠はルートの `SetActive`、解放は生成の途中なら `CancelSpawn`、済んでいればルートの `RemoveEntity` を予算ごとに行う。GameModeScope の `TrackStreaming` の Cleanup（StopAndJoin）でルートが消え、Component の資産の束縛も外れる。
+- Notes: `TryParseJson` は版 1・2 の移行と物理量の検証で ClassRegistry・TypeRegistry を引くので、ワーカーでは構造の解析（`ParseSceneDocumentStructure`）だけを行い、移行と検証（`FinalizeSceneDocument`）は `BeginSpawn` の頭で GameThread に回した。`TryParseJson` 自体の振る舞いは変えていない。資産パスの検証の `Identity` は排他つきの IdentityPool なのでワーカーから作ってよい。
+- Notes: done-when の `StreamingScenePayloadTest` は絶対規則 11 に従って作っていない。`SceneSerializerTest`・`SceneFileRoundTripTest`・`StreamingPayloadTest`・`StreamingCellStateMachineTest` はこのブランチに無く回していない。確かめは `cmake --build build --config Debug --target Game -- /m:1` の終了コード 0（`.harness/runs/20261118-124726/G12-GR40-SCENE-PAYLOAD-U2-verify.txt`）。
+- Next: Game のどのモードも `ScenePayloadHandler` をまだ登録していない。セルのマニフェストに `{"kind": "scene", "logicalPath": ...}` を書くモードが登録するときに、World と AssetSystem をハンドラーより長く生かし、`TrackStreaming` でモードの終わりにセルを外す。
+
+- U1 DefeatGate に受け付け直し(Rearm)と進行に数えるかの引数を足し、GameplayModule は数える撃破だけを進行へ流す: 着地(直し 0 回)
+- U2 EnemyDefinition に countsForProgression(既定 true)を足して読み込む: 着地(直し 0 回)
+- U3 EnemyComponent が BeginPlay で自分の Id を受け付け直し、撃破の開始で定義の countsForProgression を渡す: 着地(直し 0 回)
+
+## 2026-11-18 G8-GR17-ENEMY-COMPONENT-P1（run 20261118-144514 の反復 1、完了）
+- Done: `DefeatGate::Rearm(enemyId)` を足した。完了済みの Id に受け付け直しの印を付け、次の `BeginDefeat` でその項目を退役させて新しい項目を末尾に足す（保留の添字を動かさず、通知中に呼ばれても同じ `Update` では完了しない）ので、`OnDefeatCompleted` がもう 1 回だけ出る。受け付け直していない完了済みの Id への `BeginDefeat` と、保留中の Id への `Rearm` は無視して `GetIgnoredBeginCount` を増やす。初めての Id・不正な Id への `Rearm` は何もしない。`BeginDefeat(enemyId, bCountsForProgression = true)` にし、数える撃破の完了だけを出す `OnProgressionDefeatCompleted` を `OnDefeatCompleted` より先に配る。GameplayModule は `ProgressionState::MarkDefeated` をこの新しい通知へ付け替えたので、数えない撃破は `OnDefeatCompleted`・領域の `MarkCleared` には届くが、進行の診断の数も警告も増やさない（数える撃破で進行の定義に無い Id は今と同じく警告と診断の数）。`ProgressionState` は変えていない（同じ Id を二重に記録せず、`OnFinalUnlocked` は 1 回だけ）。`EnemyDefinition` に `countsForProgression`（既定 true。真偽値でなければファイルとキーのパス付きで拒否）を足し、`EnemyComponent` は BeginPlay で自分の EnemyId を `Rearm` し、撃破の開始で定義の値を `BeginDefeat` へ渡す。
+- 証拠: `.harness/runs/20261118-144514/verify-G8-GR17-ENEMY-COMPONENT-P1-U3.txt`（`cmake --build build --config Debug --target Game -- /m:1`。タスクの verify のビルドの行から試験のターゲットを外した形。Game.exe を生成して BuildExitCode=0・エラー 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。
+- 試験: done-when (3) の試験のケースと verify の ctest の行は、人の決まり（試験を作らない・回さない。試験は TEST-REMOVE-1114 で消してある）により作らず回していない。
+- 人が見るときの見どころ: シ者のいるシーン（戦闘の垂直スライス）で敵を倒し、ランチャーへ戻って同じシーンへ入り直したとき、同じ敵をもう一度倒せて撃破の完了（消える・領域が Cleared になる）まで進むこと。
+- Next: ランナーの評価者の反証（Object の寿命・撃破の通知の順）。
+- Notes: 既知の限界: 前の敵の撃破が保留中（保留の解消を待つ間）に同じ Id の敵が生成されると、その `Rearm` は決まりどおり無視されるので、前の撃破が完了した後に新しい敵を倒しても撃破ゲートに受け付けられない。シーンの入り直しでは前の World の破棄で保留が外れるが、完了は次の `DefeatGate::Update` なので、その前に新しい敵の BeginPlay が走る順だとこの経路に入る。退役した項目は消さずに残す（1 回の入り直しにつき Id 1 つ分）。
