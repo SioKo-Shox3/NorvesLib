@@ -7816,7 +7816,7 @@
 - notes: ロードマップ 1945・1957 行、要件 `#### GR60` の (a) 表面・ボーンのエミッタ（GR57 の P6）と P3・P4 の一部。GR57 の P6 は「段階をまたぐ注意」4459・4467 行の案どおり G10 で作り、順は GR19 の Core の純部品（G10-GR19-ANCHOR-CORE）→ この項目 → 効果（G10-GR60-VANISH-EFFECT）にした。G7 の計画が P6 を G7 の中に入れていたら、この項目はそれを GR19 の規約（`SkinPosition` の式・LOD0 の三角形）に合わせる改修に縮める。UNCERTAIN: GR57 の GPU パーティクルの型・シェーダー・試験の実行ファイルの名前（要件の設計案は `Library/Core/Public/Rendering/GpuParticle/`・`Assets/Shaders/Particles/ParticleSpawn.comp`・`GpuParticleBurstQueue`）は G7 の実装で決まるので、着手時に読んで合わせる。今あるのは CPU の `Particle::ParticleSystem`（`Library/Core/Public/Particle/ParticleSystem.h`）だけ。`SURF` は `RigSplitV1Wire.md:83` で予約済み。選定課題 G9-S3（人型のシ者の骨格の出所）を、推奨（G10 の着手前まで保留し、Kimodo の出力を見てから決める）を受けてここで決めた: (C) Kimodo の SOMA 版の出力の骨格に合わせる（SMPL-X 版は使わない）。理由: Kimodo の公式の説明（NVIDIA の Hugging Face の model card と research.nvidia.com の Quick Start）で、SOMA 版の重みは NVIDIA Open Model License で商用に使え、SMPL-X 版（Kimodo-SMPLX-RP）は研究用の NVIDIA R&D Model License なので頒布に使えない。人間大のシ者の動きを同じモデルで作れば、写し（GR85）を挟まずに骨格がそろう。SOMA の骨格は 30 関節と案内されていて、関節の上限 128 の中に入る。エンジンの側は骨格に依らない（`humanoid_v1` のロールの表と骨の組をデータで持つ）ので、この決定はデータの差し替えで変えられる。UNCERTAIN: SOMA の関節の名前と親の並びは未確認（骨格の説明の頁は取れなかった）で、UniRig で決まった骨格へ重みを付けられるかも未確認。実物の Kimodo の出力を取り込むときに、SOMA の関節を `humanoid_v1` のロールへ写す profile を `Assets/Retarget/` に置く（作者の手元の生成物はリポジトリに入れない）。危険地帯（アセットの形式・RenderThread）なので評価者を通す。やらないこと: 灰雲・破片・効果の定義（G10-GR60-VANISH-EFFECT）。
 
 ## G10-GR60-VANISH-EFFECT: ディゾルブの閾値・表面と骨のエミッタ・単発の放出・灰雲と破片を時間の割り付けで束ねる消滅の効果を作り、灰と光の 2 セットのデータを置く
-- status: todo
+- status: done
 - after: G10-GR60-SKIN-SURFACE-EMITTER, G10-SHISHA-SHOWCASE, G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT
 - gr: GR60
 - needs-gr: GR57
