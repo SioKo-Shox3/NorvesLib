@@ -12597,14 +12597,23 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: シ者のいるシーン（戦闘の垂直スライス）で敵を倒し、ランチャーへ戻って同じシーンへ入り直したとき、同じ敵をもう一度倒せて撃破の完了（消える・領域が Cleared になる）まで進むこと。
 - Next: ランナーの評価者の反証（Object の寿命・撃破の通知の順）。
 - Notes: 既知の限界: 前の敵の撃破が保留中（保留の解消を待つ間）に同じ Id の敵が生成されると、その `Rearm` は決まりどおり無視されるので、前の撃破が完了した後に新しい敵を倒しても撃破ゲートに受け付けられない。シーンの入り直しでは前の World の破棄で保留が外れるが、完了は次の `DefeatGate::Update` なので、その前に新しい敵の BeginPlay が走る順だとこの経路に入る。退役した項目は消さずに残す（1 回の入り直しにつき Id 1 つ分）。
-- U1 UTF-8 の読み書き(Utf8.h/.cpp)を足し、厳密な走査と TextComponent を同じ規則へ寄せる: 着地(直し 0 回)
-- U2 FontFaceCache と、コードポイントの表・フォールバックの face・BuildCpu/Upload を持つ FontAtlas: 着地(直し 1 回)
 
-## 2026-11-18 G15-GR69-UTF8-FONTATLAS（run 20261118-184115 の反復 1、完了）
-- Done: `Text/Utf8.h`（実装 `Private/Text/Utf8.cpp`）に `DecodeUtf8`（不正な先頭バイト・継続バイトの欠落・過長表現・サロゲート・0x10FFFF 超・途中切れは U+FFFD で 1 バイト前進）・`AppendUtf8`（4 バイトまで。符号化は `EncodeJsonUnicodeScalar<char>` を使う）・`IsValidUtf8`・`ForEachUtf8Codepoint` を足した。厳密な 1 文字の読み `Utf8Detail::TryDecodeUtf8Strict` を `TextDetail::ForEachUnicodeScalar` の 1 バイトの枝も使い、表は 1 つだけ。`TextComponent::BuildGlyphBoardProxies` はコードポイントごとに走査する（ASCII の基準線・字間・改行・空白・`\x7F` の '?' は今のまま）。
-- Done: `FontFaceCache`（論理パスごとにブロブを 1 回だけ読む。失敗は覚えない。Mutex で守る）を新設。`FontAtlasDesc` に `Codepoints`（空なら 0x20〜0x7E）・`Faces`（フォールバックの順。空なら `FontLogicalPath`）・`Padding`・`MaxAtlasSize` を足し、字形を整列したコードポイントの表（二分探索）にした。欠落は '?' → U+25A1 → U+FFFD の順。`Build` を `BuildCpu`（GPU に触らない）と `Upload` に分け、`Build` は両方を同期で呼ぶ包み（`FontFaceCache&` を受ける多重定義もある）。幅 0 は 64 から 2 倍ずつ試す自動、上限に収まらなければ false。既定の `FontAtlasDesc{}` は並び・詰め方・幅 512・画素の規則が前と同じ。
-- 証拠: `.harness/runs/20261118-184115/verify-G15-GR69-UTF8-FONTATLAS-U2.txt`（`cmake --build build --config Debug --target Game -- /m:1`。Game.exe を生成して終了コード 0・error の行 0、既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致、新規ファイルは UTF-8 + BOM + CRLF）。
-- 試験: done-when (4) の Utf8Test・FontAtlasTest・TextComponentBoardProxyTest の拡張と verify の ctest の行は、人の決まり（試験を作らない・回さない。対象の試験は TEST-REMOVE-1114 で消してある）により作らず回していない。`Docs/Testing.md` も触っていない。
-- 人が見るときの見どころ: 今のところ日本語を出す画面は無い。既定のフォント（ランチャーと各シーンの ASCII の文字）が前と同じ見た目で出ること。
-- Next: ランナーの評価者の反証（Public API の FontAtlas・TextComponent）。G15-GR69-STRINGTABLE-LAYOUT・G15-GR69-ASYNC-ATLAS が `BuildCpu`/`FontFaceCache` を使う。
-- Notes: 既知の限界: `FontFaceCache` を GEngine に持たせる配線はしていない（`ApplicationProcessor.cpp` の既定のフォントは今の `Build(FontAtlasDesc{}, ...)` のまま、一時のキャッシュで読む）。`Faces` の 1 本でも読めないと焼き全体が失敗する。`Codepoints` を指定したときは代わりの字 '?'・U+25A1・U+FFFD を自動で足す（どの face にも無い字は焼かない）。
+- U1 ループの平滑で近傍を格子の時刻で取り、周期で折り返す: 着地(直し 0 回)
+### G4-GR128-PROCESSING-CASES-P1 ループの平滑の継ぎ目（2026-11-18、run 20261118-152431 の反復 1、完了）
+- Done: `SkeletalClipProcessing.cpp` の `SmoothChannels` に周期（格子の間隔の単位、`outputDuration * OutputFps`）を渡し、ループのクリップでは近傍 k を添字の剰余ではなく時刻 `i + k` を周期で `fmod` して取り、間のキーを補間（回転は Slerp・並進は線形）するようにした。周期が整数のコマにならず末尾の間隔が短い格子（例: 12.5 コマ）でも、継ぎ目をまたぐ近傍を等間隔とみなさない。端数が 0 のときは元のキーをそのまま使うので、整数の周期のクリップと継ぎ目から離れたキーの結果は前とビット単位で同じ。ループでないクリップの平滑は変えていない。
+- 確かめ: `cmake --build build --config Debug -- /m:1` 終了コード 0・エラーの行なし（`SkeletalClipProcessing.obj` は編集の後に再コンパイル）、numstat の 2 通りが一致（37 追加・6 削除）。証拠は `.harness/runs/20261118-152431/G4-GR128-PROCESSING-CASES-P1-u1-unit-verify.txt`。
+- 試験は作らない・回さない決まりにより、done-when の `MotionProcessingTest` の `TestSmoothing`（12.5 コマの合成クリップと `CheckLoop`）は作っていない（試験の .cpp は既に消えている）。ctest も回していない。
+- Next: ランナーの再検証と評価者の反証。人が見るときの見どころ: 周期が整数のコマにならないループの歩き・走りのクリップ（`SmoothingRadius` が 1 以上の role-profile で焼いたもの）を再生し、ループの継ぎ目で動きが一瞬速くなったり詰まったりしないこと。
+
+- U1 層のインポスターの契約（型・セルの帯の判定・影の板の GLSL）と FramePacket・ViewRenderContext の運び口: 着地(直し 0 回)
+- U2 SceneView に層のインポスターの登録と、セルの帯・個体ごとの段の選択・Mega の抑制と遷移の値を足す: 着地(直し 0 回)
+- U4 太陽の VSM へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U5 CSM（カスケード）へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
+- U3 層のインポスターの個体を ImpostorBatch と影の投影物の一覧にして FramePacket へ運び、全体を確かめる（最後）: 着地(直し 1 回)
+### G12-GR48-LAYER-SHADOW（2026-11-18、run 20261118-135807）
+- Done: GR47 の散布（`MegaGeometryScatterComponent` が 1 本ごとに出す `MegaGeometryProxy`）を配置の層とし、Entity を作らずにインポスターの段を足した。`SceneView::SetMegaMeshImpostor` で MegaMesh ごとにアトラスを登録すると、層の個体を 64 m の XZ のセル（`LAYER_IMPOSTOR_CELL_SIZE_METERS`）に分け、セルの最短・最長の距離で全部メッシュ／全部インポスター／混在を決め、混在のセルだけ個体ごとに MESH-LOD-SELECT の画面の大きさの式とヒステリシスで段を選ぶ。インポスターの段の個体は Mega を抑え、CROSSFADE の遷移の値（1/127 の丸め）のディザでつなぐ。可視の個体はアトラスの組ごとに `ImpostorBatch` へ束ねて `ImpostorGBufferPass` で描く。影は遷移させず、Mega の元が遷移の終わりまで落とし、インポスターは Mega を隠したときだけ落とす。影を落とす個体は `ImpostorShadowCaster`・`ImpostorShadowAtlas` の一覧にしてメインのビューから `FramePacket` へ写し、太陽の VSM は新しい記録の種類（インポスターの板）を被覆で切り抜く版で描き（クリップマップの範囲と予算の内を近い順。キャッシュの無効化と統計付き）、CSM は VSM が太陽の影を持たないときだけ専用のパイプライン（`impostor_shadow.vert/.frag`）でカスケードごとに描く。影の到達距離（`MegaMeshImpostorDesc::ShadowDistance`）の外の個体と、種で影を切った個体（`MegaGeometryProxy::bCastShadow`）は投影物にしない。インポスターは TLAS に入れない。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）が、着地と同じ中身の作業ツリーで EXIT_CODE=0、`Game.exe` のリンクまで通った（`.harness/runs/20261118-135807/verify-G12-GR48-LAYER-SHADOW-U3-build.txt`）。このタスクで触ったシェーダー（`vsm_draw_alphaclip.vert`・`vsm_draw.vert`・`impostor_shadow.vert`・`impostor_shadow.frag`、`Common/ImpostorShadowCard.glsl` を include する入口）は `glslc` で全部終了コード 0。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致し、新規ファイルは BOM 付き・CRLF。verify の ctest の行と done-when (3) の試験（GR47 の層の試験のケース・`ImpostorShadowVulkanTest`）は人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: 散布の MegaMesh に `SetMegaMeshImpostor` でアトラスを登録した場面で、低い太陽のもと、遠景の木・岩がインポスターに替わる距離の前後へカメラを動かし、(a) 替わる帯にディザの抜け・ポップが無いこと、(b) 地面の影が遷移の間に二重・欠けにならないこと、(c) 影の形が被覆どおりに切り抜かれ（板の四角い影にならない）、影の到達距離の外の個体は影を落とさないこと。
+- Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
+- Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
+- 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。
