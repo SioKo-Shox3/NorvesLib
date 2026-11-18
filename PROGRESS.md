@@ -12577,3 +12577,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（危険地帯: ライティング・GBuffer・照明の UBO の Public API）。撮影での目視は G6-GR34-FUR-CHECK、毛のシーンは G6-GR34-COAT-SCENE、濡れの応答は G6-GR35-WET-LOOK。人が見るときの見どころ: 今はどのシーンにも Fur の材質が無く、Fur でない画素の照明・SSAO・SSR の式は前のままなので、Rendering3DTest（天球・地面・球・岩）とランチャーの各シーンの見た目は変わらない。毛のシーンができたら、逆光で毛の縁が明るくなるか、流れに沿ったハイライトの帯が 2 本出て 2 本目に毛色が付くか、SSAO の on/off で毛の暗さの荒れが少ないか、SSR を on にしても毛の画素に反射が乗らないかを見る。
 - Notes: 判断: 毛の断片シェーダー（`skinned_fur_gbuffer.frag`）は paths の外なので、粗さは今のまま材質の一つの値（`furShellParams.w`）を書き、照明はその粗さから指数を決める。SSAO の割合の既定は 0.3、ずらしは ±0.1、強さは 0.05、2 つめの指数の倍率は 0.5、透過の指数 8・強さ 1（すべて仮。`LightingPass::SetShadingModelLightingConstants` で差し替える）。毛の AO は殻の自己遮蔽なので直接光の拡散にも掛ける（ほかの材質は直接光に AO を掛けない）。
 - Notes: 要起票: 毛の断片シェーダー `skinned_fur_gbuffer.frag` が GBuffer の粗さを材質の一つの値で書き、領域の表（`FurMaterialRegion::lobes`）から書いていない。G6-GR34-FUR-LIGHTING の done-when が前提にする「Fur の FS が領域の表から粗さを書く」を受け持つタスクが TASKS.md に無く、領域ごとのハイライトの違いが出ない。
+
+- U1 ループの平滑で近傍を格子の時刻で取り、周期で折り返す: 着地(直し 0 回)
+### G4-GR128-PROCESSING-CASES-P1 ループの平滑の継ぎ目（2026-11-18、run 20261118-152431 の反復 1、完了）
+- Done: `SkeletalClipProcessing.cpp` の `SmoothChannels` に周期（格子の間隔の単位、`outputDuration * OutputFps`）を渡し、ループのクリップでは近傍 k を添字の剰余ではなく時刻 `i + k` を周期で `fmod` して取り、間のキーを補間（回転は Slerp・並進は線形）するようにした。周期が整数のコマにならず末尾の間隔が短い格子（例: 12.5 コマ）でも、継ぎ目をまたぐ近傍を等間隔とみなさない。端数が 0 のときは元のキーをそのまま使うので、整数の周期のクリップと継ぎ目から離れたキーの結果は前とビット単位で同じ。ループでないクリップの平滑は変えていない。
+- 確かめ: `cmake --build build --config Debug -- /m:1` 終了コード 0・エラーの行なし（`SkeletalClipProcessing.obj` は編集の後に再コンパイル）、numstat の 2 通りが一致（37 追加・6 削除）。証拠は `.harness/runs/20261118-152431/G4-GR128-PROCESSING-CASES-P1-u1-unit-verify.txt`。
+- 試験は作らない・回さない決まりにより、done-when の `MotionProcessingTest` の `TestSmoothing`（12.5 コマの合成クリップと `CheckLoop`）は作っていない（試験の .cpp は既に消えている）。ctest も回していない。
+- Next: ランナーの再検証と評価者の反証。人が見るときの見どころ: 周期が整数のコマにならないループの歩き・走りのクリップ（`SmoothingRadius` が 1 以上の role-profile で焼いたもの）を再生し、ループの継ぎ目で動きが一瞬速くなったり詰まったりしないこと。
