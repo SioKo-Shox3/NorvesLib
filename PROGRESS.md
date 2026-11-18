@@ -12580,3 +12580,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 毛の頂点シェーダーで、毛の力に重力の向き × kSag × W を足す: 着地(直し 0 回)
 - U3 照明の濡れの口 FurApplyWetLobes を埋め、全体の kGloss を shadingModelParams[0].w に詰める: 着地(直し 0 回)
 - U1 濡れの共通関数 SurfaceWetness.glsl を作り、毛の断片シェーダーで暗化・彩度・粗さと長さ・太さ・束を掛け、P0 に w を書く: 着地(直し 1 回)
+- U4 FurRendering.md と GpuLayoutRegistry.md に濡れの節と決定 G6-S12 を書き、全体のビルドと GLSL の確かめを通す: 着地(直し 1 回)

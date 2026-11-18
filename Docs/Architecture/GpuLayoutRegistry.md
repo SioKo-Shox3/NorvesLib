@@ -62,14 +62,16 @@ CPU の `ShadingModel` から GBuffer の ID への変換は `MaterialTypes.h::T
 | ID | C++ 定数（`GBufferContract`） | GLSL 定数 | 意味 | P0 | P1 |
 |---|---|---|---|---|---|
 | 0 | `ShadingModelDefaultLit` | `GBUFFER_SHADING_MODEL_DEFAULT_LIT` | 標準のライティング | 濡れの感度（`ResolveWetSurfaceResponse`） | 水たまりの被覆 0〜1（書き手が `ApplyWetSurfaceWithPuddle` の返り値を書く。水たまりが無ければ 0） |
-| 1 | `ShadingModelFur` | `GBUFFER_SHADING_MODEL_FUR` | 毛皮 | 濡れ度 | 流れの角（書いた法線から作る Duff ら 2017 の正規直交基底の上の接線の角を `[0, 1)` で表す） |
+| 1 | `ShadingModelFur` | `GBUFFER_SHADING_MODEL_FUR` | 毛皮 | 画素の濡れ度 `w = W × 領域の濡れやすさ`（UNORM8。決定 G6-S12） | 流れの角（書いた法線から作る Duff ら 2017 の正規直交基底の上の接線の角を `[0, 1)` で表す） |
 | 2 | `ShadingModelEye` | `GBUFFER_SHADING_MODEL_EYE` | 目 | 湿り（鏡面の強さ） | 未使用 |
 | 3 | `ShadingModelPaleFlat` | `GBUFFER_SHADING_MODEL_PALE_FLAT` | 淡い平坦な面 | 消滅度 | 未使用 |
 | 4〜15 | 予約 | 予約 | 未割当 | 未割当 | 未割当 |
 
 Fur の殻の高さは AO（`Material.b`）に反映する。ただし値は高さそのものではなく、`AoRoot` と `AoExponent` から求めた遮蔽値である。`Emissive.a` は半精度で分解能 `1/2048` ≒ 0.18 度。角の符号化と復号は `Common/FurStrand.glsl` の `FurEncodeFlowAngle`・`FurDecodeFlowTangent` を使う。
 
-ID が 0 でない画素は `lighting.frag` が `Common/ShadingModels.glsl` の `ApplyShadingModelSurface`・`EvaluateShadingModelDirect`・`ShadingModelFinalize` で面・直接光・最終色を描き分け、ニューラル BRDF を使わず解析の式で評価する（検証表示を除く）。照明が P0・P1 のうち現在使う値は Eye の P0（鏡面の強さ）と DefaultLit の P1（水たまりの被覆。空由来の鏡面の遮りに使う）で、他はファーのシェル・濡れ・消滅の段階で使う枠である。PaleFlat は `GBufferEncodeMaterialForShadingModel` で GBuffer に書く時点で粗さ 1・金属度 0 になり、SSR は粗さが終了値以上の画素を棄却するため改造しない（既定の終了値は 0.7）。半透明とパストレーサーは ID を読まない。
+**決定 G6-S12（濡れの適用の範囲と符号化）:** 毛の濡れの見た目は Fur の画素（殻と殻 0 の皮膚）だけに掛け、Fur の `P0` には照明がつやを強めるために使う画素の `w` を書く。鼻・肉球・目など Fur でないスキンの slot と静的メッシュの濡れは、地面・草・岩の濡れ（GR53）の仕組みで行う。`DefaultLit` の `P0` は濡れの感度のままである。G7-S6 の (A) に従い、濡れは GBuffer へ書く前にアルベド・粗さ・法線へ適用済みにし、最終の `w` は書き戻さない。このため Fur でない slot へ毛の `W` を `P0` で渡すと意味がぶつかる。暗化・彩度・粗さの式は `Common/SurfaceWetness.glsl` に材質に依らない形で置き、GR53 も使える。
+
+ID が 0 でない画素は `lighting.frag` が `Common/ShadingModels.glsl` の `ApplyShadingModelSurface`・`EvaluateShadingModelDirect`・`ShadingModelFinalize` で面・直接光・最終色を描き分け、ニューラル BRDF を使わず解析の式で評価する（検証表示を除く）。照明が P0・P1 のうち現在使う値は Fur の P0（濡れのつや）と P1（流れの角）、Eye の P0（鏡面の強さ）、DefaultLit の P1（水たまりの被覆。空由来の鏡面の遮りに使う）で、他は濡れ・消滅の段階で使う枠である。PaleFlat は `GBufferEncodeMaterialForShadingModel` で GBuffer に書く時点で粗さ 1・金属度 0 になり、SSR は粗さが終了値以上の画素を棄却するため改造しない（既定の終了値は 0.7）。半透明とパストレーサーは ID を読まない。
 PaleFlat のアルベドは `Color`（リニア RGB）とし、直接光の係数は `mix(max(NdotL, 0) * shadow, mix(WrapMin, 1, clamp(NdotL * 0.5 + 0.5, 0, 1) * mix(1, shadow, ShadowStrength)), Flatness)`（shadow は 0〜1 に補正）とする。
 環境光の拡散は `Color / PI * flatAmbientIrradiance` と AO・RTGI・DDGI・空の遮蔽を含む局所の拡散を `mix(1, AmbientLocalMix, Flatness)` の重みで混ぜる。`flatAmbientIrradiance` は IBL が有効なら `E_avg * ambientColor.w`（平均照度が無効なら 0）、IBL が無効なら `ambientColor.rgb * ambientColor.w * PI` とする。
 直接・間接の鏡面と間接鏡面の反射率には、それぞれ `SpecularScale` を掛ける。
@@ -348,7 +350,7 @@ MegaGeometry の `Common/MegaInstanceTable.glsl` は別の構造体を読む。�
 
 | 要素 | x | y | z | w |
 |---|---|---|---|---|
-| `shadingModelParams[0]` | Fur の wrap の量（0 で通常の Lambert） | Fur の鏡面に使う粗さの下限 | Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × 値)） | 予約（0） |
+| `shadingModelParams[0]` | Fur の wrap の量（0 で通常の Lambert） | Fur の鏡面に使う粗さの下限 | Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × 値)） | Fur の濡れのつや `kGloss`（毛の 2 つのローブの指数と強さに `1 + kGloss × P0`。全体の値で `LightingPass.cpp` のローカル定数 1.0、仮） |
 | `shadingModelParams[1]` | Fur の一つ目のローブのずらし | Fur の二つ目のローブのずらし | Fur の一つ目のローブの強さ | Fur の二つ目のローブの強さ（毛色を掛ける） |
 
 PaleFlat は `paleFlatColorAndWrapMin`・`paleFlatShape`・`paleFlatAverageIrradiance` を使う。
@@ -635,8 +637,8 @@ C++ は `Library/Core/Public/Rendering/FurTypes.h::FurMaterialGpuParams`、GLSL 
 | 32 | `Strand: float[4]` | `vec4 strand` | `RootRadius` / `TipRadius` / `ThicknessExponent` / `Tilt` |
 | 48 | `Undercoat: float[4]` | `vec4 undercoat` | rgb = 下毛の線形色、a = `UndercoatAlbedoMix` |
 | 64 | `Occlusion: float[4]` | `vec4 occlusion` | x = `AoRoot`、y = `AoExponent`、zw = 空き（0） |
-| 80 | `WetGeometry: float[4]` | `vec4 wetGeometry` | `WetLengthCollapse` / `WetThicken` / `WetClump` / `WetSag`。各応答 × 濡れ度 |
-| 96 | `WetShading: float[4]` | `vec4 wetShading` | `WetDarken` / `WetDesaturate` / `WetRoughness` / `WetGloss`。各応答 × 濡れ度 |
+| 80 | `WetGeometry: float[4]` | `vec4 wetGeometry` | `WetLengthCollapse` / `WetThicken` / `WetClump` / `WetSag`。各応答 × `W`。毛の FS は xyz に領域の濡れやすさ `s` を掛けて使い、垂れの w は頂点で `W` のまま使う |
+| 96 | `WetShading: float[4]` | `vec4 wetShading` | `WetDarken` / `WetDesaturate` / `WetRoughness` / `WetGloss`。各応答 × `W`。毛の FS は xyz に領域の濡れやすさ `s` を掛けて使う。`WetGloss` は照明に届かず、現在は読まない |
 | 112 + 48 i（i = 0〜7） | `Regions[i]: FurMaterialGpuRegion` | `FurMaterialRegion regions[FUR_MAX_REGION_COUNT]`（8 要素） | 領域 i |
 
 領域 1 つは **48 バイト**。次のオフセットは各領域の先頭からの相対位置。
@@ -647,8 +649,8 @@ C++ は `Library/Core/Public/Rendering/FurTypes.h::FurMaterialGpuParams`、GLSL 
 | +16 | `Lobes: float[4]` | `vec4 lobes` | `PrimaryShift` / `SecondaryShift` / `PrimaryExponent` / `SecondaryExponent` |
 | +32 | `Wet: float[4]` | `vec4 wet` | x = `WetSusceptibility`、yzw = 空き（0） |
 
-濡れ度はインスタンスの `ShadingParams` の P0（1 節の ID 1）。Pack は `[0, 1]` に収め（負・非有限は 0）、応答 × 濡れ度だけを書き、生の濡れ度は書かない。
-濡れの応答がすべて 0 なら濡れ度に依らず定数は同じで、シェーダーは領域の `wet.x`（C++ の `Wet[0]`）を掛けて使う。殻の描画のシェーダーは今は `wet.x` と濡れの応答の定数を読まず、濡れ度を `P0` に書くだけで、使うのは照明の項目（`G6-GR34-FUR-LIGHTING`）である。
+濡れ度 `W` はインスタンスの `ShadingParams` の P0 を優先し、未指定なら材質値を使う（1 節の ID 1）。Pack は `[0, 1]` に収め（負・非有限は 0）、応答 × `W` だけを書き、生の濡れ度は書かない。
+濡れの応答がすべて 0 なら `W` に依らず濡れの定数は同じ。FS は領域の `wet.x`（C++ の `Wet[0]`）を `s` として応答に掛け、GBuffer の `P0` に `W × s` を書く。頂点の垂れには `s` を掛けず、照明は材質の `WetGloss` の代わりに全体の `kGloss` を使う。
 領域数が 0 の材質は 1 にして既定の領域を書き、使わない領域の枠も `FurRegion` の既定値で埋める。
 
 ### マップの印
