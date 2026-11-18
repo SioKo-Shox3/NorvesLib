@@ -1,18 +1,25 @@
-﻿// ワールドの地形区画・散布チャンク・コード配置をセル単位で出し入れする。
+﻿// ワールドの地形区画・散布チャンク・コード配置・シーン JSON のルートをセル単位で出し入れする。
 // ハンドラーの所有と StreamingSystem への登録は利用側が行う。
-// 休眠時は地形の描画を残して物理の印を落とし、散布の範囲を無効にし、配置のルートを非アクティブにする。
+// 休眠時は地形の描画を残して物理の印を落とし、散布の範囲を無効にし、配置とシーンのルートを非アクティブにする。
 #pragma once
 
 #include "Container/StringView.h"
 #include "Container/UnorderedMap.h"
 #include "Delegate/Delegate.h"
+#include "Scene/SceneSerializer.h"
 #include "Streaming/IStreamingPayloadHandler.h"
 #include "Streaming/ITerrainTileSite.h"
+#include "Thread/Mutex.h"
 
 namespace NorvesLib::Core
 {
     class Entity;
     class World;
+}
+
+namespace NorvesLib::Core::Asset
+{
+    class AssetSystem;
 }
 
 namespace NorvesLib::Core::Rendering
@@ -35,7 +42,7 @@ namespace NorvesLib::Core::Streaming
     // メッシュの頂点・インデックスのバッファの GetSize の和を GPU のバイトとして返す。バッファが無ければ 0 として数える。
     StreamingPayloadBytes MeasureMeshGpuBytes(const Rendering::ProceduralMeshGPUData& mesh);
 
-    // 3 種とも事前に読むファイルはなく、Prepare はワーカーで取り消しの印だけを見る。
+    // 地形・散布・コード配置は事前に読むファイルがなく、Prepare はワーカーで取り消しの印だけを見る。
     // それ以外の操作とペイロードの状態はすべて GameThread に限る。
     // TerrainSystem はハンドラーより長く生き、site は束ねている間は利用側が生かす。
     class TerrainTilePayloadHandler final : public IStreamingPayloadHandler
@@ -175,5 +182,46 @@ namespace NorvesLib::Core::Streaming
         Container::UnorderedMap<uint64_t, PayloadState> m_States;
         uint64_t m_NextBuilderId = 1;
         uint32_t m_ItemsPerStep = 8;
+    };
+    // World と AssetSystem はハンドラーより長く生かし、World を片付ける前に
+    // StreamingSystem の StopAndJoin / Shutdown でセルを外す。
+    // AssetSystem のマニフェストは StreamingSystem が準備中に差し替えない。
+    // Prepare 以外の操作と生成状態の参照は GameThread に限る。
+    class ScenePayloadHandler final : public IStreamingPayloadHandler
+    {
+    public:
+        ScenePayloadHandler(World& world, const Asset::AssetSystem& assetSystem);
+        ScenePayloadHandler(const ScenePayloadHandler&) = delete;
+        ScenePayloadHandler& operator=(const ScenePayloadHandler&) = delete;
+
+        void SetRootsPerStep(uint32_t count);
+        uint32_t GetRootsPerStep() const;
+        // 生成済みルートの ObjectId。返した配列は状態の変更・解放まで有効。
+        const Container::VariableArray<uint64_t>* FindCellRoots(StreamingCellId cell, uint32_t payloadIndex) const;
+
+        const char* GetKind() const override;
+        EStreamingPrepareResult Prepare(const StreamingPayloadContext& context, const StreamingCancelToken& cancel) override;
+        EStreamingStepResult CommitStep(const StreamingPayloadContext& context, StreamingStepCursor& cursor, uint64_t& outCommittedBytes) override;
+        bool IsPayloadReady(const StreamingPayloadContext& context) const override;
+        void SetDormant(const StreamingPayloadContext& context, bool bDormant) override;
+        EStreamingStepResult UnloadStep(const StreamingPayloadContext& context, StreamingStepCursor& cursor) override;
+        void DiscardPrepared(const StreamingPayloadContext& context) override;
+        // ルートが持つ資源は数えない。
+        StreamingPayloadBytes GetResidentBytes(const StreamingPayloadContext& context) const override;
+
+    private:
+        struct PayloadState
+        {
+            Scene::SceneSpawnJob Job;
+            Container::VariableArray<uint64_t> RootIds;
+            size_t RemovedCount = 0;
+        };
+
+        World& m_World;
+        const Asset::AssetSystem& m_AssetSystem;
+        mutable Thread::Mutex m_PreparedMutex;
+        Container::UnorderedMap<uint64_t, Scene::SceneDocument> m_Prepared;
+        Container::UnorderedMap<uint64_t, PayloadState> m_States;
+        uint32_t m_RootsPerStep = 1;
     };
 } // namespace NorvesLib::Core::Streaming

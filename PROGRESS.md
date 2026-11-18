@@ -12416,3 +12416,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes（確かめの証拠）: SDK 入りの構成で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0（`BridgeDeterministicCapture.cpp`・`BridgeCaptureProtocol.cpp`・`NorvesLibBridgeAdapter.cpp`・`GameApplicationHandler.cpp` をコンパイルし Game.exe をリンク）。verify の 1 行目（SDK の口の検査）も終了コード 0。証拠は `.harness/runs/20261118-082637/GAME-GR137-CAPTURE-WIRE-U3-verify.txt`。試験・起動・撮影は回さない決まり。
 - Next: 人が見るときは、NorvesEditor の `viewport_capture` を `settleFrames` を省いて（既定 0）呼び、`{captureId}` が返って PNG と同じ captureId の `viewport.captureCompleted` が届くことを見る。
 - U1 シーンの読み込みを「読み・解析」「スキーマ照合」「ルート 1 つずつの生成」の 3 段に分ける: 着地(直し 2 回)
+- U2 payload の種類 `scene` とそのハンドラーを足す: 着地(直し 0 回)
