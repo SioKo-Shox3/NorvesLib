@@ -8205,9 +8205,9 @@
 - notes: 完了条件はロードマップ 2599〜2602 行の撮影の部分。計測は RelWithDebInfo（AGENTS.md の絶対規則 8）。GPU とフレームの時間を測るので占有する。直す必要が出たら、この項目では直さずに `G12-GR40-FIX-<名前>` を足す。`STREAMING_CELL` の記録の形は G12-GR40-CELL-CORE で決める（無ければこの項目でログの読み方を足すだけにし、ライブラリは変えない）。UNCERTAIN: スナップの座標（1500,1500）は grassland の地形の範囲に依る仮の値で、着手時に範囲の中の遠い点に置き直す。
 
 ## GAME-GR137-ASSET-EDIT-WIRE: NorvesLibBridgeAdapter に資産のプロパティの一覧・設定・保存をつなぎ、能力 asset.edit を広告する
-- status: todo
+- status: done
 - done-when: `NorvesLibBridgeAdapter` に `assetGetProperties`・`assetSetProperty`・`assetSave` を実装し、`getCapabilities` で能力 `asset.edit` を広告する。中身は既存の `Game/Bridge/BridgeAssetPropertyEditor` に任せる。資産は `logicalPath` で指し、開く処理はアダプタの中で行い、線には出さない。各メソッドの params と result の形は SDK の `adapter.hpp` のコメントどおりにする。`asset.setProperty` の結果には `previousValue` を必ず入れる。拒否は `ENGINE_ASSET_EDIT_REJECTED` で返し、`data` の `reason` には `type_mismatch`・`out_of_range`・`unknown_property`・`unknown_asset` を、保存の失敗では `save_failed` を入れる。拒否したときは値を変えない。params と結果の変換は Game のソースを組み込まない単位(例: `Game/Bridge/BridgeAssetEditProtocol.{h,cpp}`)に置く。SDK がある構成では `BridgeAssetPropertyEditTest` に次の場合を足し、すべて通す。一覧→設定→保存→一覧で値が一致する。`previousValue` が設定前の値と一致する。型違い・範囲外・未知の場所・未知の資産の 4 つを reason つきで拒否し、前の値を保つ。`NORVES_BRIDGE_SDK_DIR` を指定した Debug の構成で、Game がビルドできる。
-- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path 'C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp' -Pattern 'assetGetProperties' -Quiet)) { exit 1 }"`
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path (Join-Path $env:USERPROFILE 'Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp') -Pattern 'assetGetProperties' -Quiet)) { exit 1 }"`
 - verify: `cmake --build build --config Debug --target Game BridgeAssetPropertyEditTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^BridgeAssetPropertyEditTest$" --output-on-failure --timeout 180`
 - paths: Game/Bridge/NorvesLibBridgeAdapter.h, Game/Bridge/NorvesLibBridgeAdapter.cpp, Game/Bridge/BridgeAssetEditProtocol.h, Game/Bridge/BridgeAssetEditProtocol.cpp, Game/Bridge/BridgeAssetPropertyEditor.h, Game/Bridge/BridgeAssetPropertyEditor.cpp, Game/CMakeLists.txt, Test/Game/Bridge/BridgeAssetPropertyEditTest.cpp, Test/Game/Bridge/CMakeLists.txt
