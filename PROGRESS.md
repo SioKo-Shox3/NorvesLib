@@ -12436,3 +12436,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 SSR で Fur の画素を飛ばす: 着地(直し 0 回)
 - U3 照明の 3 つの口の Fur の分岐を FurShading.glsl へつなぎ、SSAO を Fur で弱める: 着地(直し 0 回)
 - U5 流れの角の符号化・復号の C++ の参照を置く: 着地(直し 0 回)
+- U6 FurRendering.md に照明の節を書き、全体のビルドと GLSL の確かめを通す: 着地(直し 0 回)
