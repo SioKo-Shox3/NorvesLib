@@ -11,6 +11,7 @@ layout(location = 4) flat in uint vOrientation;
 layout(location = 5) in float vStreakAspect;
 layout(location = 6) flat in float vFlipbookPhase;
 layout(location = 7) flat in float vFlipbookSeed;
+layout(location = 8) flat in uint vParticleSerial;
 layout(location = 0) out vec4 outColor;
 
 // 前向き描画の拡散 IBL と同じ経緯度写像を使う。
@@ -27,7 +28,18 @@ void main()
     GpuEmitterParams e = drawEmitters.emitters[vEmitterIndex];
 
     float shape;
-    if (vFlipbookPhase >= 0.0)
+    if (e.plateSides >= 3u && e.plateSides <= 8u)
+    {
+        float distanceToEdge = GpuParticlePlateDistance(e, vParticleSerial, vQuadUV);
+        // 四角形の境界からはみ出さないよう、輪郭の内側の約１画素だけを滑らかにする。
+        float edgeWidth = max(fwidth(distanceToEdge), 1.0e-6);
+        shape = 1.0 - smoothstep(-edgeWidth, 0.0, distanceToEdge);
+        if (shape <= 0.0)
+        {
+            discard;
+        }
+    }
+    else if (vFlipbookPhase >= 0.0)
     {
         float r = length(vQuadUV);
         if (r > 1.0)

@@ -7816,7 +7816,7 @@
 - notes: ロードマップ 1945・1957 行、要件 `#### GR60` の (a) 表面・ボーンのエミッタ（GR57 の P6）と P3・P4 の一部。GR57 の P6 は「段階をまたぐ注意」4459・4467 行の案どおり G10 で作り、順は GR19 の Core の純部品（G10-GR19-ANCHOR-CORE）→ この項目 → 効果（G10-GR60-VANISH-EFFECT）にした。G7 の計画が P6 を G7 の中に入れていたら、この項目はそれを GR19 の規約（`SkinPosition` の式・LOD0 の三角形）に合わせる改修に縮める。UNCERTAIN: GR57 の GPU パーティクルの型・シェーダー・試験の実行ファイルの名前（要件の設計案は `Library/Core/Public/Rendering/GpuParticle/`・`Assets/Shaders/Particles/ParticleSpawn.comp`・`GpuParticleBurstQueue`）は G7 の実装で決まるので、着手時に読んで合わせる。今あるのは CPU の `Particle::ParticleSystem`（`Library/Core/Public/Particle/ParticleSystem.h`）だけ。`SURF` は `RigSplitV1Wire.md:83` で予約済み。選定課題 G9-S3（人型のシ者の骨格の出所）を、推奨（G10 の着手前まで保留し、Kimodo の出力を見てから決める）を受けてここで決めた: (C) Kimodo の SOMA 版の出力の骨格に合わせる（SMPL-X 版は使わない）。理由: Kimodo の公式の説明（NVIDIA の Hugging Face の model card と research.nvidia.com の Quick Start）で、SOMA 版の重みは NVIDIA Open Model License で商用に使え、SMPL-X 版（Kimodo-SMPLX-RP）は研究用の NVIDIA R&D Model License なので頒布に使えない。人間大のシ者の動きを同じモデルで作れば、写し（GR85）を挟まずに骨格がそろう。SOMA の骨格は 30 関節と案内されていて、関節の上限 128 の中に入る。エンジンの側は骨格に依らない（`humanoid_v1` のロールの表と骨の組をデータで持つ）ので、この決定はデータの差し替えで変えられる。UNCERTAIN: SOMA の関節の名前と親の並びは未確認（骨格の説明の頁は取れなかった）で、UniRig で決まった骨格へ重みを付けられるかも未確認。実物の Kimodo の出力を取り込むときに、SOMA の関節を `humanoid_v1` のロールへ写す profile を `Assets/Retarget/` に置く（作者の手元の生成物はリポジトリに入れない）。危険地帯（アセットの形式・RenderThread）なので評価者を通す。やらないこと: 灰雲・破片・効果の定義（G10-GR60-VANISH-EFFECT）。
 
 ## G10-GR60-VANISH-EFFECT: ディゾルブの閾値・表面と骨のエミッタ・単発の放出・灰雲と破片を時間の割り付けで束ねる消滅の効果を作り、灰と光の 2 セットのデータを置く
-- status: todo
+- status: done
 - after: G10-GR60-SKIN-SURFACE-EMITTER, G10-SHISHA-SHOWCASE, G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT
 - gr: GR60
 - needs-gr: GR57
@@ -7952,7 +7952,7 @@
 - notes: 要件 `#### GR92` の受け入れ確認の「実機の小さな場面」「欠落・失敗」（ロードマップ 2633・2634 行）。`--load-scene` のシーンの id（sandbox で受けるか、専用の id にするか）は G12-GR92-PREFAB-FILE で決めた形に合わせて `-Scene` を直してよい。撮影を開いて目で確かめる。違ったら G12-GR92-ASSET-BIND・G12-GR92-PREFAB-FILE の paths の範囲で直す。
 
 ## G12-GR93-EDIT-VIEW: ImGui の配置の画面で、マーカーを地面の当たった位置に置き・選び・動かし・保存し、持ち場・点・痕跡をデバッグ描画で見られる
-- status: todo
+- status: done
 - after: G12-GR93-MARKERS-SNAP, G12-GR92-PREFAB-FILE, G12-GR92-BRIDGE-SCENE
 - gr: GR93
 - done-when: (1) 画面に依存しない編集の操作 `Library/Modules/Gameplay` の `LevelEditOperations`（画面の中心の光線 → 地面の当たった位置へ種類を指定してマーカーを置く・選ぶ・動かす・消す、Key の重複の検査と自動の採番、全マーカーの再吸着、`Gameplay.scene.json` への保存（G12-GR92-ASSETREF-SCENE-V3 の壊れない保存）、領域の外の参照は Key で引く）がある。(2) Game の `Game/Gameplay/Level/LevelEditView`（`IImGuiView`。`--imgui` のときだけ `RegisterImGuiView` で登録）がその操作の画面で、`LevelMarkerDebugDraw` が持ち場の球・箱・円柱、ファストトラベル点と見どころの印、痕跡のスプラインを `DebugDrawQueue` へ描く。描く数はカメラからの距離で絞り、`kMaxDebugLineVertices`（`DebugDrawQueue.h:22`、1<<16）を超えない。(3) 試験: `PhysicsDynamicsTest` の束へ `LevelEditOperationsTest` を MEMBER で足す（地面の Box への光線で置いた位置が地面 + GroundOffset、Key の重複を拒否して採番、動かしたあとの再吸着、保存 → 読み込みで全マーカーの PROPERTY が一致、選択中のマーカーを消しても落ちない、1000 個のマーカーで描画の頂点が上限を超えない）。`BridgeAssetPropertyEditTest` の場面の文書のケースに、クラス名を指定したマーカーの生成・Component の追加・String と float と bool の設定・保存 → 読み込みの一致を足す。`Game` がビルドできる。
@@ -8205,9 +8205,9 @@
 - notes: 完了条件はロードマップ 2599〜2602 行の撮影の部分。計測は RelWithDebInfo（AGENTS.md の絶対規則 8）。GPU とフレームの時間を測るので占有する。直す必要が出たら、この項目では直さずに `G12-GR40-FIX-<名前>` を足す。`STREAMING_CELL` の記録の形は G12-GR40-CELL-CORE で決める（無ければこの項目でログの読み方を足すだけにし、ライブラリは変えない）。UNCERTAIN: スナップの座標（1500,1500）は grassland の地形の範囲に依る仮の値で、着手時に範囲の中の遠い点に置き直す。
 
 ## GAME-GR137-ASSET-EDIT-WIRE: NorvesLibBridgeAdapter に資産のプロパティの一覧・設定・保存をつなぎ、能力 asset.edit を広告する
-- status: todo
+- status: done
 - done-when: `NorvesLibBridgeAdapter` に `assetGetProperties`・`assetSetProperty`・`assetSave` を実装し、`getCapabilities` で能力 `asset.edit` を広告する。中身は既存の `Game/Bridge/BridgeAssetPropertyEditor` に任せる。資産は `logicalPath` で指し、開く処理はアダプタの中で行い、線には出さない。各メソッドの params と result の形は SDK の `adapter.hpp` のコメントどおりにする。`asset.setProperty` の結果には `previousValue` を必ず入れる。拒否は `ENGINE_ASSET_EDIT_REJECTED` で返し、`data` の `reason` には `type_mismatch`・`out_of_range`・`unknown_property`・`unknown_asset` を、保存の失敗では `save_failed` を入れる。拒否したときは値を変えない。params と結果の変換は Game のソースを組み込まない単位(例: `Game/Bridge/BridgeAssetEditProtocol.{h,cpp}`)に置く。SDK がある構成では `BridgeAssetPropertyEditTest` に次の場合を足し、すべて通す。一覧→設定→保存→一覧で値が一致する。`previousValue` が設定前の値と一致する。型違い・範囲外・未知の場所・未知の資産の 4 つを reason つきで拒否し、前の値を保つ。`NORVES_BRIDGE_SDK_DIR` を指定した Debug の構成で、Game がビルドできる。
-- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path 'C:/Users/KINGkawamura/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp' -Pattern 'assetGetProperties' -Quiet)) { exit 1 }"`
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path (Join-Path $env:USERPROFILE 'Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp') -Pattern 'assetGetProperties' -Quiet)) { exit 1 }"`
 - verify: `cmake --build build --config Debug --target Game BridgeAssetPropertyEditTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^BridgeAssetPropertyEditTest$" --output-on-failure --timeout 180`
 - paths: Game/Bridge/NorvesLibBridgeAdapter.h, Game/Bridge/NorvesLibBridgeAdapter.cpp, Game/Bridge/BridgeAssetEditProtocol.h, Game/Bridge/BridgeAssetEditProtocol.cpp, Game/Bridge/BridgeAssetPropertyEditor.h, Game/Bridge/BridgeAssetPropertyEditor.cpp, Game/CMakeLists.txt, Test/Game/Bridge/BridgeAssetPropertyEditTest.cpp, Test/Game/Bridge/CMakeLists.txt

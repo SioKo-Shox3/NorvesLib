@@ -9,7 +9,8 @@ namespace Game::GameModes
     // 場面のファイルでは Build/Update/Leave + 接尾辞の 3 関数を Game::GameModes に定義する。
 #define SHISHA_SHOWCASE_SCENES(X) \
     X("base", ShishaShowcaseBaseScene) \
-    X("pale", ShishaShowcasePaleScene)
+    X("pale", ShishaShowcasePaleScene) \
+    X("dissolve", ShishaShowcaseDissolveScene)
 
 #define SHISHA_SHOWCASE_DECLARE(name, suffix) \
     bool Build##suffix(ShishaShowcaseSceneContext&); \

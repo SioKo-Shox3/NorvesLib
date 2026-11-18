@@ -1046,7 +1046,8 @@ namespace NorvesLib::Core::Particle
         {
             return false;
         }
-        if (version != kVfxCookedVersion && version != kVfxCookedVersionLegacyV2 &&
+        if (version != kVfxCookedVersion && version != kVfxCookedVersionLegacyV3 &&
+            version != kVfxCookedVersionLegacyV2 &&
             version != kVfxCookedVersionLegacyV1)
         {
             return Fail(outError, "bad_version", "Effect.Header");
@@ -1105,6 +1106,10 @@ namespace NorvesLib::Core::Particle
         const uint32_t emitterPropertyCount = version == kVfxCookedVersionLegacyV1 ? 3u : emitterSchema.ParameterCount;
         // 版 1・2 の GpuSpriteRenderer は DrawInSlotOrder を持たず、先頭 10 個だけを保存する。
         constexpr uint32_t kGpuSpriteRendererLegacyParameterCount = 10u;
+        // 版 3 以前は消滅用の引数を持たず、読み終えた末尾を既定値で埋める。
+        constexpr uint32_t kInitShapeLegacyParameterCount = 7u;
+        constexpr uint32_t kInitLifetimeLegacyParameterCount = 1u;
+        constexpr uint32_t kGpuSpriteRendererLegacyV3ParameterCount = 12u;
         for (uint32_t index = 0; index < emitterCount; ++index)
         {
             VfxEmitterAsset emitter;
@@ -1133,9 +1138,25 @@ namespace NorvesLib::Core::Particle
                 {
                     return Fail(outError, "unknown_module", "Module", "Type");
                 }
-                const uint32_t storedParameterCount =
-                    version <= kVfxCookedVersionLegacyV2 && module.Type == VfxModuleType::GpuSpriteRenderer ?
-                    kGpuSpriteRendererLegacyParameterCount : schema->ParameterCount;
+                uint32_t storedParameterCount = schema->ParameterCount;
+                if (version <= kVfxCookedVersionLegacyV3)
+                {
+                    switch (module.Type)
+                    {
+                    case VfxModuleType::InitShape:
+                        storedParameterCount = kInitShapeLegacyParameterCount;
+                        break;
+                    case VfxModuleType::InitLifetime:
+                        storedParameterCount = kInitLifetimeLegacyParameterCount;
+                        break;
+                    case VfxModuleType::GpuSpriteRenderer:
+                        storedParameterCount = version <= kVfxCookedVersionLegacyV2 ?
+                            kGpuSpriteRendererLegacyParameterCount : kGpuSpriteRendererLegacyV3ParameterCount;
+                        break;
+                    default:
+                        break;
+                    }
+                }
                 if (!ReadValues(reader, *schema, "Values", storedParameterCount, module.Values, outError))
                 {
                     return false;
