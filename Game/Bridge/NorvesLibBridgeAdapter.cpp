@@ -28,18 +28,21 @@
 #include "Core/Public/Container/StringView.h"
 
 #include <cerrno>
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <unordered_map>
 
 #include <Windows.h>
 
 #include "Norves/Bridge/Dto/common.hpp"
+#include "Norves/Bridge/Dto/events.hpp"
 #include "Norves/Bridge/Dto/methods.hpp"
 
 namespace Game::Bridge
@@ -318,6 +321,26 @@ namespace Game::Bridge
                 return std::string_view{};
             }
             return std::string_view(s.data(), s.size());
+        }
+
+        /** @brief 撮影要求のエラーにメソッド名と理由コードを付ける。 */
+        AdapterResult MakeCaptureError(std::string_view method, std::string_view reason,
+                                       std::string_view code, std::string_view message)
+        {
+            std::string data = R"({"method":")";
+            AppendJsonString(data, method);
+            data += R"(","reason":")";
+            AppendJsonString(data, reason);
+            data += R"("})";
+
+            auto parsed = JsonValue::parse(data);
+            if (parsed.is_err())
+            {
+                NORVES_LOG_WARNING("Bridge", reinterpret_cast<const char*>(u8"撮影エラーの詳細を JSON に変換できませんでした"));
+                return AdapterResult::err(BridgeError{std::string(code), std::string(message), std::nullopt});
+            }
+            return AdapterResult::err(
+                BridgeError{std::string(code), std::string(message), std::move(parsed).value()});
         }
 
         /**
@@ -1831,9 +1854,8 @@ namespace Game::Bridge
         // asset.reloadManifest 用（実装済み）。asset.edit は
         // asset.getProperties / asset.setProperty / asset.save 用（実装済み）。viewport.thumbnail は
         // viewport.getThumbnail 用（実装済み、キャプチャ未到着時も cache/placeholder success）。
-        // 実エンジンの capability 検証は superset（部分集合包含）方針なので、実装済み token のみ
-        // 広告すればよい（mock の 8 token fixture には合わせない）。
-        return OkLiteral(
+        // 決定的な撮影が利用可能な場合だけ viewport.capture を広告する。
+        std::string capabilities =
             R"({"capabilities":[)"
             R"({"name":"runtime.control","version":"0.1","description":"Play/pause/stop control."},)"
             R"({"name":"log.stream"},)"
@@ -1846,7 +1868,13 @@ namespace Game::Bridge
             R"({"name":"object.edit"},)"
             R"({"name":"asset.read"},)"
             R"({"name":"asset.reload"},)"
-            R"({"name":"asset.edit"}]})");
+            R"({"name":"asset.edit"})";
+        if (BridgeCaptureProtocol::IsCaptureAvailable(MakeEngineDeterministicFrameSource()))
+        {
+            capabilities += R"(,{"name":"viewport.capture"})";
+        }
+        capabilities += "]}";
+        return OkLiteral(capabilities);
     }
 
     AdapterResult
@@ -1868,9 +1896,116 @@ namespace Game::Bridge
         return AdapterResult::ok(snap.to_json());
     }
 
+    void NorvesLibBridgeAdapter::TickDeterministicCapture()
+    {
+        BridgeCaptureCompletedEvent event;
+        if (!m_CaptureProtocol.Drive(event))
+        {
+            return;
+        }
+        if (m_Host == nullptr)
+        {
+            NORVES_LOG_WARNING("Bridge", reinterpret_cast<const char*>(u8"撮影完了イベントの送信先がありません"));
+            return;
+        }
+
+        Norves::Bridge::Dto::ViewportCaptureCompletedEvent dto;
+        dto.captureId = std::string(ViewOf(event.CaptureId));
+        dto.status = event.bSucceeded ? Norves::Bridge::Dto::ViewportCaptureStatus::Succeeded
+                                      : Norves::Bridge::Dto::ViewportCaptureStatus::Failed;
+        dto.path = std::string(ViewOf(event.Path));
+        dto.width = event.Width;
+        dto.height = event.Height;
+        dto.frame = event.Frame;
+        dto.pixelDigest.value = std::string(ViewOf(event.PixelDigestHex));
+        dto.fileBytes = event.FileBytes;
+        if (!event.bSucceeded)
+        {
+            dto.failure.code = std::string(ViewOf(event.FailureCode));
+            dto.failure.message = std::string(ViewOf(event.FailureMessage));
+        }
+        m_Host->EmitEvent(Norves::Bridge::Dto::ViewportCaptureCompletedEventName, dto.to_json());
+    }
+
+    AdapterResult
+    NorvesLibBridgeAdapter::viewportCaptureDeterministic(const JsonValue& params)
+    {
+        const std::string paramsText = params.dump();
+        const auto parseString = [&](std::string_view key, NorvesLib::Core::Container::String& out) {
+            const std::optional<std::string> raw = ExtractTopLevelJsonField(paramsText, key);
+            std::string decoded;
+            if (!raw.has_value() || !DecodeJsonString(TrimJsonWhitespace(*raw), decoded))
+            {
+                return false;
+            }
+            out.append(decoded.data(), decoded.size());
+            return true;
+        };
+        const auto parseInteger = [&](std::string_view key, uint32_t& out) {
+            const std::optional<std::string> raw = ExtractTopLevelJsonField(paramsText, key);
+            if (!raw.has_value())
+            {
+                return false;
+            }
+            const std::string_view token = TrimJsonWhitespace(*raw);
+            if (token.empty())
+            {
+                return false;
+            }
+            const auto result = std::from_chars(token.data(), token.data() + token.size(), out);
+            return result.ec == std::errc{} && result.ptr == token.data() + token.size();
+        };
+
+        BridgeCaptureParams captureParams;
+        if (!parseString("captureDir", captureParams.CaptureDir) ||
+            !parseString("outputName", captureParams.OutputName) ||
+            !parseInteger("settleFrames", captureParams.SettleFrames) ||
+            !parseInteger("maxWidth", captureParams.MaxWidth) ||
+            !parseInteger("maxHeight", captureParams.MaxHeight))
+        {
+            return MakeCaptureError("viewport.captureDeterministic", "invalid_params",
+                                    Norves::Bridge::ErrorEngineInvalidParams,
+                                    reinterpret_cast<const char*>(u8"撮影のパラメータを読み取れませんでした"));
+        }
+
+        const BridgeCaptureAcceptResult result =
+            m_CaptureProtocol.Accept(captureParams, MakeEngineDeterministicFrameSource());
+        switch (result.Status)
+        {
+            case BridgeCaptureAcceptStatus::Accepted:
+            {
+                std::string response = R"({"captureId":")";
+                AppendJsonString(response, ViewOf(result.CaptureId));
+                response += R"("})";
+                return OkLiteral(response);
+            }
+            case BridgeCaptureAcceptStatus::Disabled:
+                return MakeCaptureError("viewport.captureDeterministic", "deterministic_capture_disabled",
+                                        Norves::Bridge::ErrorMethodNotSupported,
+                                        reinterpret_cast<const char*>(u8"決定的な撮影は有効になっていません"));
+            case BridgeCaptureAcceptStatus::InvalidParams:
+                return MakeCaptureError("viewport.captureDeterministic", ViewOf(result.Reason),
+                                        Norves::Bridge::ErrorEngineInvalidParams,
+                                        reinterpret_cast<const char*>(u8"撮影のパラメータが不正です"));
+            case BridgeCaptureAcceptStatus::Busy:
+                return MakeCaptureError("viewport.captureDeterministic", "capture_busy",
+                                        "ENGINE_CAPTURE_BUSY",
+                                        reinterpret_cast<const char*>(u8"別の撮影が進行中です"));
+        }
+        return MakeCaptureError("viewport.captureDeterministic", "invalid_params",
+                                Norves::Bridge::ErrorEngineInvalidParams,
+                                reinterpret_cast<const char*>(u8"撮影の受付結果が不正です"));
+    }
+
     AdapterResult
     NorvesLibBridgeAdapter::viewportGetThumbnail(const JsonValue& params)
     {
+        if (m_CaptureProtocol.IsBusy())
+        {
+            return MakeCaptureError("viewport.getThumbnail", "capture_busy", "ENGINE_CAPTURE_BUSY",
+                                    reinterpret_cast<const char*>(u8"別の撮影が進行中です"));
+        }
+
         const FrameCaptureThumbnailOptions options = ParseViewportThumbnailOptions(params);
 
         CapturedFrame frame;

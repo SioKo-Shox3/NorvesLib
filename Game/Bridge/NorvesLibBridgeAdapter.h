@@ -17,6 +17,7 @@
 #if defined(NORVES_BRIDGE_ENABLED)
 
 #include "Bridge/BridgeAssetEditProtocol.h"
+#include "Bridge/BridgeCaptureProtocol.h"
 
 #include <cstdint>
 #include <string>
@@ -80,6 +81,11 @@ namespace Game::Bridge
          * @param host イベント発火用の host（借用）
          */
         void SetHost(Game::Bridge::BridgeServerHost& host) { m_Host = &host; }
+
+        /**
+         * @brief GameThread の EndFrame の後・次の AdvanceFrame の前に毎フレーム 1 回、撮影を進める。
+         */
+        void TickDeterministicCapture();
 
 #if defined(NORVES_BRIDGE_TESTING)
         struct ViewportThumbnailCaptureProviderForTesting
@@ -443,6 +449,7 @@ namespace Game::Bridge
          * encoder と Bridge の base64 helper で schema 準拠の成功応答を返す。フレーム未到着、
          * pending、未初期化、GEngine null、キャプチャ/エンコード失敗、params 不正はいずれも
          * BridgeError にせず、cap に収まる直近キャッシュまたは placeholder を返す。
+         * 決定的な撮影が撮影枠を使用中の場合は ENGINE_CAPTURE_BUSY を返す。
          *
          * @param params リクエスト params（借用、maxWidth/maxHeight を lenient に読む）
          * @return {imageBase64,mimeType,width,height} を収めた成功 JsonValue
@@ -450,6 +457,14 @@ namespace Game::Bridge
          */
         Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
         viewportGetThumbnail(const Norves::Bridge::JsonValue& params) override;
+
+        /**
+         * @brief viewport.captureDeterministic の要求を受け付け、撮影 ID を返す。
+         * @param params 撮影先、出力名、待機フレーム数、最大寸法を含む要求。
+         * @return 受付結果または理由を含むエラー。
+         */
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        viewportCaptureDeterministic(const Norves::Bridge::JsonValue& params) override;
 
     private:
         /** @brief 初回の資産編集要求でサービスを生成し、未保存の編集を保持する。 */
@@ -486,6 +501,8 @@ namespace Game::Bridge
          * @note SetHost で注入され、EmitEvent / Start・StopLogForwarding はゲームスレッド上から呼ばれる。
          */
         Game::Bridge::BridgeServerHost* m_Host = nullptr;
+
+        BridgeCaptureProtocol m_CaptureProtocol;
 
         std::string m_CachedViewportThumbnailBase64;
         uint32_t m_CachedViewportThumbnailWidth = 0;

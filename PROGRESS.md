@@ -12392,28 +12392,26 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: `kind` に未知の名前（SDK の見本の `"object"` のような汎用の分類を含む）や Entity でないクラスが来たら、基底の Entity に落とさず accepted:false にした。保存先の親ディレクトリは作らない（無ければ save_failed）。
 - Notes: 既知の限界: スナップショットの enum が文字列から JSON の数に変わったので、受け取り側が文字列を前提にしていれば合わせる必要がある。`LoadScene` は途中で失敗しても生成できたルートが World に残る（`SceneSerializer::LoadIntoWorld` と同じ）。
 
-- U1 SDK に依らない資産の編集の変換と状態(BridgeAssetEditProtocol)を作る: 着地(直し 1 回)
-- U2 NorvesLibBridgeAdapter に asset.getProperties・setProperty・save をつなぎ、asset.edit を広告する: 着地(直し 0 回)
+- U1 SDK に依らない撮影の受け付け・進行・完了イベントの組み立て(BridgeCaptureProtocol)を作る: 着地(直し 0 回)
 
-## GAME-GR137-ASSET-EDIT-WIRE NorvesLibBridgeAdapter に資産のプロパティの一覧・設定・保存をつなぎ、能力 asset.edit を広告する（2026-11-18、run 20261118-080412 の反復 1〜2、完了）
+## GAME-GR137-CAPTURE-WIRE 決定的な撮影を Bridge へつなぐ（2026-11-18、run 20261118-082637）
 
-- Done: `Game/Bridge/BridgeAssetEditProtocol.{h,cpp}` に SDK の型を使わない `BridgeAssetEditService` を足した。params の JSON 文字列を受け、asset.getProperties・asset.setProperty・asset.save の結果の JSON か拒否（method・reason・path・英語の固定文の message）を返す。logicalPath ごとに文書を開いて保持し（開く処理は線に出さない）、未保存の編集は次の一覧に出る。setProperty は設定前の値を `previousValue` に必ず入れ、拒否のときは値を変えない。`BridgeAssetProperty` に `Description` を足し、VfxSchema の説明を一覧の `description` に出す。
-- Done: `NorvesLibBridgeAdapter` に `assetGetProperties`・`assetSetProperty`・`assetSave` を override し、`params.dump()` をサービスへ渡して、成功は result、拒否は `ENGINE_ASSET_EDIT_REJECTED` と `data {method, reason, path?}` で返す。サービスは最初の asset.* の呼び出しで `NORVES_SOURCE_ASSET_DIR`（`<repo>/Assets`）を根に作る。`bridge.getCapabilities` の末尾に `asset.edit` を足した（既存の能力の並びは変えていない）。
-- 確かめ: このマシンの SDK（`C:/Users/oreor/Documents/NorvesEditor`、7537f47 を含む）の `adapter.hpp` に `assetGetProperties` があること（終了コード 0）。`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp` で構成した Debug で `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`NorvesLibBridgeAdapter.cpp` のコンパイルと `Game.exe` のリンクあり、error の行 0）。証拠は `.harness/runs/20261118-080412/GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`。
-- Next: ランナーの評価者の反証（Bridge のプロトコルの境界）。人が見るときは、SDK 入りの Game に NorvesEditor をつなぎ、`Vfx/FootSplash.vfx.json` で一覧 → 設定 → 保存 → 一覧で値が一致すること、`previousValue` が設定前の値であること、型違い・範囲外・未知の場所・未知の資産をそれぞれの reason で拒否して前の値を保つことを見る。
-- Notes: verify の 1 行目は別マシンのパス（`C:/Users/KINGkawamura/...`。このマシンには無い）を見ているので、同じ中身をこのマシンのパスで確かめた（上の確かめ）。
-- Notes: 試験は作らない決まり（絶対規則 11）なので `BridgeAssetPropertyEditTest` は作っていない。verify のビルドの行は試験のターゲットを外した `--target Game` で回した。アプリは起動していない。
-- Notes: 判断: logicalPath は Game の資産の根（`NORVES_SOURCE_ASSET_DIR`）からの相対の道（例 `Vfx/FootSplash.vfx.json`）。必須の欄の欠落・型違いも `ENGINE_ASSET_EDIT_REJECTED` で返す（logicalPath → unknown_asset、path → unknown_property、value → type_mismatch）。この枠の `build` は SDK なしの構成のまま置いている。
-
-### GAME-GR137-ASSET-EDIT-WIRE を閉じる（2026-11-18、run 20261118-080412 の反復 4）
-
-- Done: 判断役の判断（選択肢 1）どおり、verify の 1 行目を `C:/Users/KINGkawamura/...` を直に指す形から `Join-Path $env:USERPROFILE 'Documents/NorvesEditor/...'` で引く形に書き換え、項目を done にした。確かめる中身（SDK の `adapter.hpp` に `assetGetProperties` があること）は変えていない。実装は反復 1〜2 で着地したまま（54f4651f 以降 `Game`・`Library` の変更なし）。
-- 確かめ: 書き換えた行を cmd から回して終了コード 0、同じ形で無い文字列を探すと終了コード 1（判定が効いている）。証拠は `.harness/runs/20261118-080412/verify-GAME-GR137-ASSET-EDIT-WIRE-iter4-line1.txt`。このマシンの `adapter.hpp` の 230・243・255 行目に 3 つの仮想関数がある。ビルドの行の証拠は反復 2 の `GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`（SDK 入りの Debug で `--target Game` 終了コード 0、error の行 0）。
-- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
-- Notes: 要起票: `GAME-GR137-CAPTURE-WIRE` の verify の 1 行目（TASKS.md 8246 行付近）も `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を直に指しており、このマシンでは PathNotFound で終了コード 1 になる（この項目の反復 2 の再検証と同じ落ち方）。着手前に同じ形（`Join-Path $env:USERPROFILE ...`）に直す。
-
-### GAME-GR137-ASSET-EDIT-WIRE を統合ブランチへ戻す（2026-11-18、run 20261118-113224 の反復 1）
-
-- Done: 実装は変えていない（`afc92c72`・`256b6334` で着地した `BridgeAssetEditProtocol.{h,cpp}` と `NorvesLibBridgeAdapter` の 3 メソッドと能力 `asset.edit` の広告のまま）。統合ブランチでは項目が todo のままで実装が未統合だったので、確かめ直して done に戻した。
-- 確かめ: verify の 1 行目をこのマシンで回して終了コード 0（`.harness/runs/20261118-113224/GAME-GR137-ASSET-EDIT-WIRE-verify1.txt`）。ビルドの行は試験のターゲットを外した `cmake --build build --config Debug --target Game -- /m:1` で終了コード 0、error の行 0（`GAME-GR137-ASSET-EDIT-WIRE-build.txt`）。この枠の `build` は SDK なしの構成なので、アダプタの新しい経路のコンパイルの証拠は run 20261118-080412 の SDK 入りの Debug のビルド（`GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`、終了コード 0）のまま。ctest の行は試験を回さない決まりで回していない。
-- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
+- In progress: `Game/Bridge/BridgeCaptureProtocol.h/.cpp`（SDK に依らない受け付け・場所の検査・captureId・専有・毎フレームの駆動・`.png.tmp` → `.png` の書き出し・PNG を RGBA8 に戻した画素の要約値・完了イベントの構造体）を入れた。SDK なしの構成で Debug の Game のビルドは終了コード 0。
+- Next: Adapter（`viewportCaptureDeterministic` の上書き・`viewport.capture` の広告・サムネイルの busy の拒否・完了イベントの送信）と `GameApplicationHandler::OnPostRender` からの毎フレームの駆動をつなぐ。確かめは SDK 入りの構成（`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp`）のビルド。仕上げの前にこの枠の `build` も SDK 入りで構成し直して Game を一度組む（今の枠の `build` は SDK なしで、Bridge のコードが空でコンパイルされる）。
+- Notes: verify の 1 行目は `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を読むが、この機械にそのパスは無い（同じ検査を `C:/Users/oreor/Documents/NorvesEditor/...` で回すと `viewportCaptureDeterministic` があり通る。NorvesEditor の 8e99e4b が SDK に入口と DTO を足している）。行を直さない限り再検証の 1 行目は落ちる。
+- Notes: 存在しないディレクトリは done-when に従って受け付けで拒否する（`ENGINE_INVALID_PARAMS`・理由 `capture_dir_not_found`）。NorvesEditor の仕様文書（`bridge/spec/docs/message-payloads.md`・`docs/memory-buffer-policy.md`）は「受け付けた後に `OUTPUT_WRITE_FAILED` で完了」と書いており食い違う。受け付けの後に書けなかったときは `OUTPUT_WRITE_FAILED` で完了する。
+- Notes: 完了イベントの欄は schema に合わせた。done-when の PixelHash・PngHash のうち、schema にあるのは `pixelDigest`（PNG を RGBA8 に戻した画素の FNV-1a 64。エディタが PNG を復号して数える値と同じ）と `fileBytes` で、PngHash の欄は無い（additionalProperties: false）。`frame` は schema のとおり要求の settleFrames。
+- Notes: 既存の `ValidateBridgeDeterministicCaptureRequest` は settleFrames 0 を拒否する（schema は 0〜600）。done-when の「寸法の上限は既存の検査を使う」に従い、そのまま使った。
+- U2 NorvesLibBridgeAdapter と GameThread の毎フレームへ撮影をつなぎ、能力 viewport.capture を広告する: 着地(直し 0 回)
+- Done（実装）: done-when の (1)〜(3) を実装した。`NorvesLibBridgeAdapter::viewportCaptureDeterministic` を上書きして `BridgeCaptureProtocol` の受け付けへ渡し、受け付けは `{captureId}` だけを返す。拒否は、`--capture-deterministic` なしが `METHOD_NOT_SUPPORTED`（理由 `deterministic_capture_disabled`）、params と場所の不正が `ENGINE_INVALID_PARAMS`（理由コードは受け付けの検査のもの）、撮影中の 2 件目が `ENGINE_CAPTURE_BUSY`（理由 `capture_busy`）。`getCapabilities` は撮影できるときだけ `viewport.capture` を足し、`viewport.getThumbnail` は撮影の専有中（時間切れの後の回収中を含む）に `ENGINE_CAPTURE_BUSY` で拒否する。`GameApplicationHandler::OnPostRender`（EndFrame の後・次の AdvanceFrame の前）から `TickDeterministicCapture` で毎フレーム進め、完了を `viewport.captureCompleted` の DTO に写して `BridgeServerHost::EmitEvent` で 1 回送る。
+- Notes: 確かめは SDK なしと SDK 入り（`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp`）の両方の構成で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0。SDK 入りで `NorvesLibBridgeAdapter.cpp`・`GameApplicationHandler.cpp` がコンパイルされ Game.exe がリンクされた（`.harness/runs/20261118-082637/GAME-GR137-CAPTURE-WIRE-U2-verify.txt`）。この枠の `build` は SDK なしの構成のまま。
+- Notes: done-when (4) の `BridgeCaptureProtocolTest` は絶対規則 11 に従って作っていない（SDK に依らない部分の切り出し `BridgeCaptureProtocol` は実装した）。
+- Notes（人が見るときの見どころ）: SDK 入りで組んだ Game を `--capture-deterministic` で起動して NorvesEditor からつなぐと、`getCapabilities` に `viewport.capture` が出て、`viewport.captureDeterministic` が `{captureId}` を返し、撮影の後に指定のディレクトリへ PNG が置かれて同じ captureId の `viewport.captureCompleted` が 1 回届く。撮影中のサムネイルは `ENGINE_CAPTURE_BUSY`。`--capture-deterministic` なしでは `viewport.capture` が出ず、要求は `METHOD_NOT_SUPPORTED` になる。
+- Next: verify の 1 行目は `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を読み、この機械に無いので再検証で必ず落ちる。同じ検査をこの機械の NorvesEditor（`C:/Users/oreor/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp`。終了コード 0 を確認済み）へ向けた行に直してから done にする（`blocked/GAME-GR137-CAPTURE-WIRE.md`）。
+- Done（2026-11-18、run 20261118-082637 の反復 3）: verify の 1 行目の検査先を、ビルドが読む SDK と同じ `C:/Users/oreor/Documents/NorvesEditor/bridge/cpp/engine-sdk/include/Norves/Bridge/adapter.hpp` に置き換えた（調べる語 `viewportCaptureDeterministic` とほかの verify の行・done-when は変えていない）。置き換えた行はこの枠で終了コード 0。実装は着地済みのまま追加の変更は無く、status を done にした。
+- Notes（確かめの証拠）: SDK 入りの構成でのコンパイルとリンクは `.harness/runs/20261118-082637/GAME-GR137-CAPTURE-WIRE-U2-verify.txt` の 28〜635 行（`NorvesLibBridgeAdapter.cpp`・`BridgeCaptureProtocol.cpp`・`GameApplicationHandler.cpp` をコンパイルし、Game.exe のリンクが終了コード 0）。この枠の `build` は SDK なしの構成なので、verify の 2 行目は Adapter をコンパイルしない。撮影・起動の確かめは回さない決まり。
+- Notes: 要起票: GAME-GR137 の別のタスク（`TASKS.md` 8210 行あたり、`assetGetProperties` の検査）の verify の 1 行目も、この機械に無い `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を読み、ランナーの再検証で必ず落ちる（`ls C:/Users/KINGkawamura` は No such file or directory）。
+- U3 撮影の検査で settleFrames 0 を受け付ける(schema の 0〜600 に合わせる): 着地(直し 0 回)
+- Done（2026-11-18、run 20261118-082637 の反復 4）: 差し戻し（schema が 0〜600 と定める `settleFrames` の 0 を `invalid_settle_frames` で拒否していた）を直した。`ValidateBridgeDeterministicCaptureRequest` の下限を外し上限 600 だけを検査する。受け付け（`BridgeCaptureProtocol`）とセッションの `Begin` は同じ関数を通すので、両方が 0 を通す。0 のときはエポックの 0 番を観測した最初の `Tick` で撮影を要求し、結果はエポックの 1 番になる（ほかの値と同じく +1。完了イベントの `frame` は schema のとおり `settleFrames`）。上の Notes の「settleFrames 0 を拒否する」は、この直しで当たらなくなった。
+- Notes（確かめの証拠）: SDK 入りの構成で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0（`BridgeDeterministicCapture.cpp`・`BridgeCaptureProtocol.cpp`・`NorvesLibBridgeAdapter.cpp`・`GameApplicationHandler.cpp` をコンパイルし Game.exe をリンク）。verify の 1 行目（SDK の口の検査）も終了コード 0。証拠は `.harness/runs/20261118-082637/GAME-GR137-CAPTURE-WIRE-U3-verify.txt`。試験・起動・撮影は回さない決まり。
+- Next: 人が見るときは、NorvesEditor の `viewport_capture` を `settleFrames` を省いて（既定 0）呼び、`{captureId}` が返って PNG と同じ captureId の `viewport.captureCompleted` が届くことを見る。
