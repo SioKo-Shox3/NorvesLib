@@ -12617,3 +12617,20 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
 - Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
 - 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。
+
+## G12-GR93-PAINT 配置の画面のブラシで草の密度と枯れのマスクを地形の当たった位置に塗り、地形のマスクの cook へ渡せる PNG に書く（2026-11-18）
+- U1 マスクの層・円形ブラシ・R8 PNG の読み書き: 着地(直し 0 回)
+- U2 枯れの手続きの初期値（持ち場と枯れの源から smoothstep と雑音）: 着地(直し 0 回)
+- U3 LevelEditOperations にマスクを合わせる・塗る・消す・保存・読み直しを足す: 着地(直し 0 回)
+- U4 配置の画面にブラシの操作と枯れの初期値を足す: 着地(直し 0 回)
+- Done: `Gameplay/Level/LevelPaintMask.h`: 地形の高さ格子（`TerrainHeightField::GetGridLayout()`）に整列した 8bit のマスク 1 層（値と、消すときに戻す基準値）、円形ブラシ（半径・強さ・減衰。重み = 強さ × (1 − smoothstep(半径 × (1 − 減衰), 半径, 距離))）の塗る・消す、8bit グレースケール PNG の保存（一時ファイルから置換）と読み込み（寸法の照合・flip_z の行順）。
+- Done: 枯れの初期値 `BuildLevelDrynessBaseline`: 持ち場（`TerritoryMarkerComponent` の EngageRadius × 倍率）の円を外側へ smoothstep で減衰させた値と、`WitherSourceComponent`（形・半径・向き・減衰・DefaultLevel。再生中の登録と同じ渡し方）を一時の `DrynessMap` で評価した値の最大を取り、(seed, 格子) の整数ハッシュの値雑音で標本の位置をずらして縁を乱す。
+- Done: `LevelEditOperations`: `BindPaintMasks`（置き場の既存の PNG を読み、無い層は基準値で始める。読めない PNG があれば何も変えない）・`PaintMask`・`EraseMask`・`SavePaintMasks`・`LoadPaintMasks`・`SetPaintMaskBaseline`・`RegenerateDrynessBaseline`。
+- Done: `LevelEditView`（窓「配置の編集」の節「草の密度・枯れのペイント」）: 層・操作・半径・強さ・減衰・塗る値・置き場・flip_z の入力、地形に合わせる・1 回塗る・連続で塗る・保存・読み直す・枯れの初期値を作り直す、ブラシの円（外周と減衰の始まり）のデバッグ描画。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`LevelPaintMask.cpp`・`LevelEditOperations.cpp`・`LevelEditView.cpp` のコンパイルを含む。`.harness/runs/20261118-161848/G12-GR93-PAINT-U4-verify-build-game.txt`）。
+- Next: ランナーの評価。地形の spec（`Assets/TerrainSpecs/Grassland/GrasslandTerrain.json`）の recipe.paint からこの PNG を指すのは、塗った絵を人が見てから決める（今回の paths の外）。
+- Notes: 判断: マスクの「タイル」は地形の高さ格子 1 枚分（Grassland は 513 × 513）。GR89 の cook（`Tools/AssetCook/TerrainMasks.cpp` の `ComputeTerrainMasks`）はペイント画像に高さ格子と同寸法の 8bit PNG を 1 枚求めるため、分割したタイルは cook がそのまま読めない（`Tools/AssetCook` は paths の外）。ファイルは `Assets/Levels/<地域>/Masks/grass_density.png`・`dry_grass.png`（recipe.paint の target 名と同じ）。
+- Notes: spec への書き方: `"paint": [{"target": "grass_density", "mode": "multiply", "path": "../../Levels/Sample/Masks/grass_density.png"}, {"target": "dry_grass", "mode": "override", "path": "../../Levels/Sample/Masks/dry_grass.png"}]`（パスは spec の場所が基準）。草の密度の基準値は 255（multiply で中立。塗って減らす）、枯れは手続きの初期値ごと override で入れる（spec の dry_grass の規則は置き換わる）。1 チャンネルなのでアルファは 255 として読まれる。spec の height_source.flip_z が true なら画面の「spec の flip_z と同じにする」を on にする。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when (3) の `LevelEditOperationsTest` のブラシのケースと、この PNG を入力にした AssetCook の地形のマスクの試験は作っていない・回していない。PNG の形式（8bit・1 チャンネル・高さ格子と同寸法・flip_z の行順・値は最初のチャンネル）は cook の `DecodeTerrainPaintPng`・`ComputeTerrainMasks` の要件に合わせた。
+- Notes: 人が見るときの見どころ: `--scene=grassland --imgui` で窓「配置の編集」の「草の密度・枯れのペイント」を開き、草原の内側で「画面の中心の地形に合わせる」を押すと格子が 513 列 × 513 行・間隔 1 m と出る。地面に緑（外周）と黄（減衰の始まり）の円が出て、「画面の中心に塗る（1 回）」で変わった標本の数が出る。「保存」で `Assets/Levels/Sample/Masks/` に 2 枚の PNG ができ、画像で見ると塗った所が円になっている（草の密度は白地に黒い円、枯れは持ち場の周りが明るい）。spec に上の paint を足して `Scripts/CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` で焼くと、草の密度（GRS0）と枯れ草（MSK0 の G）に入る。
+- Notes: 既知の限界: ブラシの中心は画面の中心の光線だけ（マウスの位置では塗らない）。取り消しは無い（「消す」で基準値へ戻すか「読み直す」）。外周の環の上で「合わせる」と外周の粗い格子に合わさる（表示の間隔で分かるので、草原の内側で合わせ直す）。枯れの初期値に枯れの源を焼き込むと静的な下地として残り、シ者の撃破で戻るのは実行時の枯れ度の分だけになる（「枯れの源を使う」を切れば持ち場だけで作る）。
