@@ -88,13 +88,14 @@ namespace NorvesLib::Core::Animation
             std::sort(values.begin(), values.end());
             return values[values.size() / 2];
         }
-        void SmoothChannels(S::SkeletalAnimationClip& clip, uint32_t radius, bool loop, uint32_t& count)
+        void SmoothChannels(S::SkeletalAnimationClip& clip, uint32_t radius, bool loop, double period, uint32_t& count)
         {
             if (!radius)
             {
                 return;
             }
             // 局所二次近似の中心値で平滑化し、単純平均による周期運動の振幅の縮みを抑える。
+            // ループの近傍は時刻を周期で折り返して取り、最後の短い格子間隔を等間隔とみなさない。
             const double r = radius, points = 2 * r + 1;
             const double secondMoment = r * (r + 1) * (2 * r + 1) / 3;
             const double fourthMoment = r * (r + 1) * (2 * r + 1) * (3 * r * r + 3 * r - 1) / 15;
@@ -111,13 +112,42 @@ namespace NorvesLib::Core::Animation
                     const auto anchor = Quaternion(original[i].Value);
                     for (int k = -int(radius); k <= int(radius); ++k)
                     {
-                        int64_t index = int64_t(i) + k;
-                        index = loop ? (index % int64_t(samples) + samples) % samples
-                                     : std::clamp<int64_t>(index, 0, samples - 1);
                         const double weight = radius >= 2
                                                   ? (fourthMoment - secondMoment * double(k) * k) / denominator
                                                   : radius + 1 - std::abs(k);
-                        auto value = original[size_t(index)].Value;
+                        S::SkeletalValue value;
+                        if (loop)
+                        {
+                            double u = std::fmod(double(int64_t(i) + k), period);
+                            if (u < 0)
+                            {
+                                u += period;
+                            }
+                            if (u >= period)
+                            {
+                                u = 0;
+                            }
+                            const size_t j = std::min(size_t(std::floor(u)), samples - 1);
+                            const double right = j + 1 < samples ? double(j + 1) : period;
+                            const double alpha = std::clamp((u - double(j)) / (right - double(j)), 0.0, 1.0);
+                            value = original[j].Value;
+                            if (alpha > 0)
+                            {
+                                const auto& a = original[j].Value;
+                                const auto& b = original[j + 1].Value;
+                                value = channel.Path == S::SkeletalAnimationPath::Rotation
+                                            ? Value(Detail::Slerp(Quaternion(a), Quaternion(b), float(alpha)))
+                                            : S::SkeletalValue{float(double(a.X) + (double(b.X) - a.X) * alpha),
+                                                               float(double(a.Y) + (double(b.Y) - a.Y) * alpha),
+                                                               float(double(a.Z) + (double(b.Z) - a.Z) * alpha),
+                                                               float(double(a.W) + (double(b.W) - a.W) * alpha)};
+                            }
+                        }
+                        else
+                        {
+                            const int64_t index = std::clamp<int64_t>(int64_t(i) + k, 0, samples - 1);
+                            value = original[size_t(index)].Value;
+                        }
                         if (channel.Path == S::SkeletalAnimationPath::Rotation)
                         {
                             const auto q = Quaternion(value);
@@ -817,7 +847,8 @@ namespace NorvesLib::Core::Animation
                 previousZ = dz;
             }
         }
-        SmoothChannels(clip, settings.SmoothingRadius, loop, report.SmoothedChannels);
+        SmoothChannels(clip, settings.SmoothingRadius, loop, outputDuration * settings.OutputFps,
+                       report.SmoothedChannels);
         report.SeamAfterRadians = loop ? 0 : report.SeamBeforeRadians;
         report.AverageSpeedMetersPerSecond = report.PlanarDistanceMeters / outputDuration;
         report.PoseEvaluations = eval.Count;
