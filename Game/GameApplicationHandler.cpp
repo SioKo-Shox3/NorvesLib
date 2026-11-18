@@ -4827,6 +4827,10 @@ namespace Game
             NorvesLib::Modules::Gui::RegisterImGuiView(&m_EngineStatsImGuiView);
             m_bEngineStatsImGuiViewRegistered = true;
             LOG_INFO("EngineStats ImGui view registered");
+            m_LevelEditView.SetGameModeController(m_pGameModeStateMachine);
+            NorvesLib::Modules::Gui::RegisterImGuiView(&m_LevelEditView);
+            m_bLevelEditViewRegistered = true;
+            LOG_INFO("配置編集の ImGui 画面を登録しました");
         }
 
         // ImGui モジュールは入力ルーターの最上位で F1 を予約し、解除中は下位の入力を止める（--imgui のデバッグ用）。
@@ -5606,6 +5610,12 @@ namespace Game
             m_bEngineStatsImGuiViewRegistered = false;
         }
         m_EngineStatsImGuiView.ClearRenderingCoordinator();
+        if (m_bLevelEditViewRegistered)
+        {
+            NorvesLib::Modules::Gui::UnregisterImGuiView(&m_LevelEditView);
+            m_bLevelEditViewRegistered = false;
+        }
+        m_LevelEditView.Shutdown();
         if (m_bPauseMenuRegistered)
         {
             m_PauseMenu.SetEnabled(false);

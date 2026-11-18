@@ -32,6 +32,7 @@
 
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Debug/EngineStatsImGuiView.h"
+#include "Gameplay/Level/LevelEditView.h"
 #include "Pause/PauseMenuView.h"
 #endif
 
@@ -420,6 +421,8 @@ namespace Game
         bool m_bImGuiRequested = false;
         bool m_bEngineStatsImGuiViewRegistered = false;
         Game::Debug::EngineStatsImGuiView m_EngineStatsImGuiView;
+        bool m_bLevelEditViewRegistered = false;
+        Game::LevelEdit::LevelEditView m_LevelEditView;
 #endif
     };
 
