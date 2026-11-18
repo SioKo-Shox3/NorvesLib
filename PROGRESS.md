@@ -12259,3 +12259,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（GBuffer・ビジビリティバッファの経路・RenderThread へ渡す値 = 危険地帯）。遷移のスイープの確かめは G12-GR48-CHECK、影の投影と配置の層は G12-GR48-LAYER-SHADOW。
 - Notes: 採った判断: (1) done-when の不等号（出ていく側 p < f・入ってくる側 p ≥ f）は f を進み具合 0→1 とすると帯の入口で入ってくる側が全画素になってポップするので、入ってくる側 p < f・出ていく側 p ≥ f にした（相補は同じ）。(2) ディザは時間で変えない固定の Bayer。(3) 独自プログラムの材質（`GBufferProgramRegistry` のプログラム）はディザの版へ切り替えず、遷移中は両段を重ねて描く。(4) 遷移の版のパイプラインが作れなかった側と線の表示のときは、既存の版でディザ無しに描く（警告を 1 回ログに出す）。(5) paths の外では `RenderingCoordinator.cpp` に時計を渡す呼び出しだけを足した。既知の限界: スキンメッシュには段の選択が無いので、断片の判定は共有するが頂点は常に値 0 を渡す（遷移しない）。done-when (3) の撮影の解析の台本・カメラの台本は撮影・参照比較をしない決まりで、(4) の試験（`MeshLODSelectionTest` のケース・`LodCrossfadeVulkanTest`）は試験を作らない決まりで作っていない。描画結果は確かめていない（アプリの起動・撮影は回さない決まり）。
 - U9 Mega を元に持つ板の遷移の値を、Mega の色味の A と同じ 1/127 の刻みに丸めて相補を保つ: 着地(直し 0 回)
+
+### G12-GR48-CROSSFADE 差し戻しの直しと仕上げ（2026-11-18、run 20261118-113221・反復 2）
+
+- Done: 評価の差し戻し（MegaGeometry を元に持つ板と Mega で遷移の値の丸め方が違い、ディザのしきい値 (b+0.5)/16 が f と丸めた f の間に入るフレームで 1/16 の画素が穴か重なりになる）を直した。`SceneView::CullBoardProxy` で元が MegaGeometry のとき、次のフレームへ渡す値を `DecodeLODCrossfadeFromTint(PackLODCrossfadeIntoTint(0u, sourceValue))` で Mega の色味の A と同じ 1/127 の刻みに丸める。Mega（`MegaGeometryProxy::LODCrossfadeValue` → 色味の A）と次のフレームの板（`-valueIt->second` → `CustomData[3]`）が同じ q/127 を使うので、画素ごとに正確に相補になる。q/127 は (2k+1)/32 と一致しないので、GPU の割り算の誤差でも判定はずれない。メッシュを元に持つ板・メッシュの段の間は両側とも丸めない float を同じ進み具合から作るので変えていない。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）が、着地と同じ中身の作業ツリーで SceneView.cpp を再コンパイルし、Core.lib と Game.exe を生成して EXIT_CODE=0。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は 4 行追加・1 行削除で一致。verify の ctest の行と done-when (3) の台本・(4) の試験は人の決まり（試験・撮影を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: 荒野で MegaGeometry の木へ向かってカメラを前後させ、メッシュ↔インポスターの 0.25 秒のディザの帯に、格子状の抜け（1 フレームの穴）が出ないこと。
+- Next: ランナーの評価者の反証（GBuffer・ビジビリティバッファの経路・RenderThread へ渡す値 = 危険地帯）。遷移のスイープの確かめは G12-GR48-CHECK。
+- Notes: 既知の限界（前の節に加えて）: 遷移中に `UpdateMeshProxy` で段の数が減ると、出ていく側の写しが無効な段を指したまま最大 0.25 秒残ることがある。`Docs/Architecture/GpuLayoutRegistry.md` の `customData.w` の説明は遷移の値を入れる前のまま。Viewport の無い互換の経路（`PrepareDrawCommands()`）は時計を受け取らないので即座に切り替わる。
