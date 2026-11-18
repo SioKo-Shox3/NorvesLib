@@ -12541,3 +12541,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 退避した配置の編集の操作を当て直し、読み込みの事前解析と Entity の持ち主への通知を足す: 着地(直し 0 回)
 - U5 退避したマーカーのデバッグ描画を当て直す: 着地(直し 0 回)
 - U3 ImGui の配置の画面と --imgui のときだけの登録: 着地(直し 0 回)
+- U1 マスクの層・円形ブラシ・R8 PNG の読み書き: 着地(直し 0 回)
