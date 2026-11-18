@@ -41,7 +41,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
     mat4 invViewProjectionCameraRelative; // カメラの位置を原点にした逆ViewProjection（深度から位置を戻すときの画素の向き）
     vec4 depthLinearization; // x=近方面(m), y=近方面÷遠方面（正射影は0で、invViewProjectionで戻す）
-    vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] 予約（0）
+    vec4 shadingModelParams[2]; // [0] x=Furのwrap（0でLambert）, y=Fur鏡面粗さの下限, z=Eye鏡面のP0あたりの増分（鏡面×(1+P0×値)）, w=予約0; [1] x=Furの一つ目のローブのずらし, y=二つ目のずらし, z=一つ目の強さ, w=二つ目の強さ
     uvec4 skyOcclusionInfo; // 有効 / 段の数 / 解像度 / 反射を辿る最大距離（m、float のビット列）
     vec4 skyOcclusionParams; // 強度 / 拡散の指数 / 地面高(m) / 鏡面の強さ
     vec4 skyOcclusionBounce; // rgb=遮蔽物の反射色×強度、w=0
@@ -53,6 +53,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 cloudShadowCenterAndExtent; // x=中心X(m), y=中心Z(m), z=一辺(m), w=地面の太陽の直達に雲の影を掛けるなら1
     vec4 cloudShadowSunAndBottom; // xyz=太陽へ向かう向き, w=雲の底の高度(m)
     vec4 cloudShadowOutside; // x=マスクの外の透過率（一様の直達の係数f）, y=1/f, zw=未使用
+    vec4 furShadingParams; // x=Furの二つ目の指数の倍率, y=逆光の透過の指数, z=逆光の透過の強さ, w=Furの画素にSSAOを掛ける割合
 } params;
 
 // ライトデータ構造

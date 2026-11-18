@@ -12432,3 +12432,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 取り込み直後の確かめ（別の枠の build）がリンクで落ちたのは、取り込みで Game/Bridge に増えた .cpp（BridgeAssetPath.cpp・BridgeSceneDocumentService.cpp）が、ビルドの途中の GLOB の作り直しより前に読み込まれた Game.vcxproj に入らず、`Game::Bridge::AssetPath::*` が未解決になったため。コードの不具合ではなく、構成を作り直してからビルドすれば通る。
 - Next: 撮影・GPU の計測・試験は回さない決まり。人が見るときの見どころは前の節（Fur の材質を持つスキンの slot だけが殻で描かれ、Fur の無いシーンの見た目は変わらない）のとおり。
 - U1 毛の照明の GLSL ライブラリ FurShading.glsl を作り、流れの角の符号化・復号をそこへ移す: 着地(直し 0 回)
+- U2 照明の定数に Fur の Kajiya-Kay・透過・SSAO の重みを足し、UBO を広げる: 着地(直し 0 回)
