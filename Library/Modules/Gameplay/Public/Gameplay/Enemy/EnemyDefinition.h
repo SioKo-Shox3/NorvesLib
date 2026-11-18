@@ -71,6 +71,7 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         Core::Container::String Id;
         Core::Container::String Archetype;
         bool bIsFinal = false;
+        bool bCountsForProgression = true;
         float MaxHealth = 0.0f;
         float StaggerThreshold = 0.0f;
         Core::Identity AnimMachine;

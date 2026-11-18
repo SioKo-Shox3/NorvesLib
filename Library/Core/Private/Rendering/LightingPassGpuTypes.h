@@ -45,7 +45,8 @@ namespace NorvesLib::Core::Rendering
         // [0].y: Fur の鏡面に使う粗さの下限
         // [0].z: Eye の鏡面の強さの P0 あたりの増分（鏡面 × (1 + P0 × この値)）
         // [0].w: 予約（0）
-        // [1]: 予約（0）。PaleFlat は末尾の paleFlatColorAndWrapMin・paleFlatShape・paleFlatAverageIrradiance を使う
+        // [1].x: Fur の一つ目のローブのずらし、[1].y: 二つ目のずらし、[1].z: 一つ目の強さ、[1].w: 二つ目の強さ
+        // PaleFlat は末尾の paleFlatColorAndWrapMin・paleFlatShape・paleFlatAverageIrradiance を使う
         float shadingModelParams[2][4];
         uint32_t skyOcclusionInfo[4]; // 有効 / 段の数 / 解像度 / 反射を辿る最大距離（m、float のビット列）
         float skyOcclusionParams[4]; // 強度 / 拡散の指数 / 地面高(m) / 鏡面の強さ
@@ -58,6 +59,7 @@ namespace NorvesLib::Core::Rendering
         float CloudShadowCenterAndExtent[4]; // 中心X(m)、中心Z(m)、一辺(m)、地面の直達への適用フラグ
         float CloudShadowSunAndBottom[4]; // 太陽へ向かう向きxyz、雲の底の高度(m)
         float CloudShadowOutside[4]; // マスクの外の透過率f、1/f、未使用0、未使用0
+        float furShadingParams[4]; // x=Fur の二つ目の指数の倍率、y=逆光の透過の指数、z=逆光の透過の強さ、w=Fur の画素に SSAO を掛ける割合
     };
 
     struct GPULightData
@@ -73,7 +75,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPUDDGILightingParams, probeSpacing) == 16);
     static_assert(offsetof(GPUDDGILightingParams, probeCounts) == 32);
     static_assert(offsetof(GPUDDGILightingParams, info) == 48);
-    static_assert(sizeof(GPULightingParams) == 1200);
+    static_assert(sizeof(GPULightingParams) == 1216);
     static_assert(offsetof(GPULightingParams, invViewProjection) == 0);
     static_assert(offsetof(GPULightingParams, cameraPosition) == 64);
     static_assert(offsetof(GPULightingParams, ambientColor) == 80);
@@ -110,6 +112,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPULightingParams, CloudShadowCenterAndExtent) == 1152);
     static_assert(offsetof(GPULightingParams, CloudShadowSunAndBottom) == 1168);
     static_assert(offsetof(GPULightingParams, CloudShadowOutside) == 1184);
+    static_assert(offsetof(GPULightingParams, furShadingParams) == 1200);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);

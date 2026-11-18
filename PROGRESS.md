@@ -12541,19 +12541,59 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 退避した配置の編集の操作を当て直し、読み込みの事前解析と Entity の持ち主への通知を足す: 着地(直し 0 回)
 - U5 退避したマーカーのデバッグ描画を当て直す: 着地(直し 0 回)
 - U3 ImGui の配置の画面と --imgui のときだけの登録: 着地(直し 0 回)
-## G12-GR93-PAINT 配置の画面のブラシで草の密度と枯れのマスクを地形の当たった位置に塗り、地形のマスクの cook へ渡せる PNG に書く（2026-11-18）
-- U1 マスクの層・円形ブラシ・R8 PNG の読み書き: 着地(直し 0 回)
-- U2 枯れの手続きの初期値（持ち場と枯れの源から smoothstep と雑音）: 着地(直し 0 回)
-- U3 LevelEditOperations にマスクを合わせる・塗る・消す・保存・読み直しを足す: 着地(直し 0 回)
-- U4 配置の画面にブラシの操作と枯れの初期値を足す: 着地(直し 0 回)
-- Done: `Gameplay/Level/LevelPaintMask.h`: 地形の高さ格子（`TerrainHeightField::GetGridLayout()`）に整列した 8bit のマスク 1 層（値と、消すときに戻す基準値）、円形ブラシ（半径・強さ・減衰。重み = 強さ × (1 − smoothstep(半径 × (1 − 減衰), 半径, 距離))）の塗る・消す、8bit グレースケール PNG の保存（一時ファイルから置換）と読み込み（寸法の照合・flip_z の行順）。
-- Done: 枯れの初期値 `BuildLevelDrynessBaseline`: 持ち場（`TerritoryMarkerComponent` の EngageRadius × 倍率）の円を外側へ smoothstep で減衰させた値と、`WitherSourceComponent`（形・半径・向き・減衰・DefaultLevel。再生中の登録と同じ渡し方）を一時の `DrynessMap` で評価した値の最大を取り、(seed, 格子) の整数ハッシュの値雑音で標本の位置をずらして縁を乱す。
-- Done: `LevelEditOperations`: `BindPaintMasks`（置き場の既存の PNG を読み、無い層は基準値で始める。読めない PNG があれば何も変えない）・`PaintMask`・`EraseMask`・`SavePaintMasks`・`LoadPaintMasks`・`SetPaintMaskBaseline`・`RegenerateDrynessBaseline`。
-- Done: `LevelEditView`（窓「配置の編集」の節「草の密度・枯れのペイント」）: 層・操作・半径・強さ・減衰・塗る値・置き場・flip_z の入力、地形に合わせる・1 回塗る・連続で塗る・保存・読み直す・枯れの初期値を作り直す、ブラシの円（外周と減衰の始まり）のデバッグ描画。
-- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`LevelPaintMask.cpp`・`LevelEditOperations.cpp`・`LevelEditView.cpp` のコンパイルを含む。`.harness/runs/20261118-161848/G12-GR93-PAINT-U4-verify-build-game.txt`）。
-- Next: ランナーの評価。地形の spec（`Assets/TerrainSpecs/Grassland/GrasslandTerrain.json`）の recipe.paint からこの PNG を指すのは、塗った絵を人が見てから決める（今回の paths の外）。
-- Notes: 判断: マスクの「タイル」は地形の高さ格子 1 枚分（Grassland は 513 × 513）。GR89 の cook（`Tools/AssetCook/TerrainMasks.cpp` の `ComputeTerrainMasks`）はペイント画像に高さ格子と同寸法の 8bit PNG を 1 枚求めるため、分割したタイルは cook がそのまま読めない（`Tools/AssetCook` は paths の外）。ファイルは `Assets/Levels/<地域>/Masks/grass_density.png`・`dry_grass.png`（recipe.paint の target 名と同じ）。
-- Notes: spec への書き方: `"paint": [{"target": "grass_density", "mode": "multiply", "path": "../../Levels/Sample/Masks/grass_density.png"}, {"target": "dry_grass", "mode": "override", "path": "../../Levels/Sample/Masks/dry_grass.png"}]`（パスは spec の場所が基準）。草の密度の基準値は 255（multiply で中立。塗って減らす）、枯れは手続きの初期値ごと override で入れる（spec の dry_grass の規則は置き換わる）。1 チャンネルなのでアルファは 255 として読まれる。spec の height_source.flip_z が true なら画面の「spec の flip_z と同じにする」を on にする。
-- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when (3) の `LevelEditOperationsTest` のブラシのケースと、この PNG を入力にした AssetCook の地形のマスクの試験は作っていない・回していない。PNG の形式（8bit・1 チャンネル・高さ格子と同寸法・flip_z の行順・値は最初のチャンネル）は cook の `DecodeTerrainPaintPng`・`ComputeTerrainMasks` の要件に合わせた。
-- Notes: 人が見るときの見どころ: `--scene=grassland --imgui` で窓「配置の編集」の「草の密度・枯れのペイント」を開き、草原の内側で「画面の中心の地形に合わせる」を押すと格子が 513 列 × 513 行・間隔 1 m と出る。地面に緑（外周）と黄（減衰の始まり）の円が出て、「画面の中心に塗る（1 回）」で変わった標本の数が出る。「保存」で `Assets/Levels/Sample/Masks/` に 2 枚の PNG ができ、画像で見ると塗った所が円になっている（草の密度は白地に黒い円、枯れは持ち場の周りが明るい）。spec に上の paint を足して `Scripts/CookAssets.ps1 -OnlyLogicalPath "Terrain/Grassland/*"` で焼くと、草の密度（GRS0）と枯れ草（MSK0 の G）に入る。
-- Notes: 既知の限界: ブラシの中心は画面の中心の光線だけ（マウスの位置では塗らない）。取り消しは無い（「消す」で基準値へ戻すか「読み直す」）。外周の環の上で「合わせる」と外周の粗い格子に合わさる（表示の間隔で分かるので、草原の内側で合わせ直す）。枯れの初期値に枯れの源を焼き込むと静的な下地として残り、シ者の撃破で戻るのは実行時の枯れ度の分だけになる（「枯れの源を使う」を切れば持ち場だけで作る）。
+
+## G10-GR60-VANISH-EFFECT ディゾルブ・表面のエミッタ・単発の放出・灰雲と破片を時間の割り付けで束ねる消滅の効果（2026-11-18、run 20261118-113220）
+- Done: 消滅の効果 `VanishEffect`（`Library/Core/Public/Particle/VanishEffect.h`）。開始からの時刻でディゾルブの閾値のカーブ・エミッタごとの有効と生成率・時刻ごとの単発の放出を割り付け、World の時間のチャンネル（ヒットストップで 0）の dt で進める（dt ≤ 0 なら進まない）。外から呼べる口は `SetDissolveThreshold`（`SkinnedMeshComponent::SetDissolveThreshold` へ）・`SetEmitterEnabled`（有効と生成率の上書き）・`EmitBurst`（`VfxEffectSystem::RaiseGpuBurst` = GR57 の単発の放出の列の前の口）の 3 つ。単発の放出は「前の時刻 < 放出の時刻 ≤ 今の時刻」で 1 回ずつ出すので、刻みの幅によらない。
+- Done: 時間の割り付けの定義 `norves.vanish`（`VanishEffectDefinition.h`。長さ・閾値のキー・縁の発光の輝度・エミッタごとの有効と生成率のキー・単発の放出の列・参照する VFX の定義）と読み込み `LoadVanishEffectFile`。必須の欠落・未知のキー・負の時間・時刻の逆順・存在しないエミッタの参照を「<ファイル>: <キーの道>: <理由>」で拒否する。粒の定義は GR136 の VFX の定義（`VfxSchema.cpp`）に載せ、時間の割り付けだけ小さい JSON を足した。
+- Done: VFX の定義の書式に InitShape の SkinSurface（5）・Bone（6）とスキンの引数、InitLifetime の `LifetimeMax`（寿命の幅）、GpuSpriteRenderer の自転の速さ・板の多角形（辺の数・歪み）・大きさの上限（m）・画面の被覆の上限（画面の高さの割合）を足した（焼いた形式は版 4 で、旧版は既定値で読む。`GpuEmitterParams` は 400 B）。効果のシステムにエミッタごとの有効・生成率の上書きとスキンの源の結び付け（`SetInstanceSkinSource`）。粒のシェーダーで寿命の幅・板の自転と多角形の切り抜き・大きさと被覆の上限を描く。
+- Done: データ `Assets/Effects/ShishaVanish_Ash.{vfx,vanish}.json`（6 秒。灰 Ash: 低彩度・寿命 2〜4 秒・上昇と弱い重力・地面で止まって薄れる / 灰雲 AshCloud: 大きく薄いソフトの粒を数十個・大きさと被覆の上限 / 破片 Debris: 多角形の板・自転・落下・地面で止まる。縁の発光 2500 nit）と `ShishaVanish_Light.{vfx,vanish}.json`（5 秒。光 Glow・GlowBurst: 加算・短い寿命・上昇だけ・地面に当たらない。縁の発光 9000 nit）。値はすべて仮。
+- Done: 表面の標本の表（SURF）が無いスキンメッシュでも、SkinSurface のエミッタが頂点を一様に引いて粒を出す（表のあるメッシュは今と同じ式・同じ乱数の番号）。
+- Done: シ者の確かめの場面 `dissolve`（`Game/GameModes/ShishaShowcase/ShishaShowcaseDissolveScene.cpp`）と起動引数 `--shisha-vanish-set=ash|light`（既定 ash。開発ビルドだけで、重複・ほかの値・`--shisha-showcase` なしはエラー）。代役にディゾルブの材質（定義の縁の発光の輝度）を当て、準備から 1 秒（仮）待って効果を最初から最後まで 1 回流し、`SHISHA_SHOWCASE scene=dissolve stage=start|threshold50|end set=<セット> particles=<数>` を出す。終わった後は残った粒と消えた代役をそのまま置く。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた先頭で、`GpuParticleSimulationPass.cpp`・`ShishaShowcaseDissolveScene.cpp` のコンパイルと `Game.exe` のリンクまで）。`ParticleSpawn.comp` の `glslc --target-env=vulkan1.3` 終了コード 0。変えたファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread のパーティクル・アセットの読み込み）。起動しての確かめは G10-GR60-VANISH-CHECK。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (4) `VfxEffectSystemTest` への追加はしていない（`Docs/Testing.md` の 3 点も書かない）。ctest・撮影・GPU の計測は回さない決まり。
+- Notes: 人が見るときの見どころ: `Game.exe --shisha-showcase=dissolve --shisha-vanish-set=ash`（と `light`）。準備から約 1 秒で消滅が始まり、ログに `SHISHA_SHOWCASE scene=dissolve stage=start|threshold50|end` が出る。灰: 縁の帯から灰が上がって地面に積もる・灰雲・多角形の破片の板が回って落ちる。光: 縁の発光が強く、加算の光の粒が上がるだけ。
+- Notes: 判断: 選定課題 G10-S4（消え方の表現）はタスクの notes どおり灰と光の 2 セットを両方持つ。崩壊（C）は同じ枠で破片の量の値を上げれば作れる。
+- Notes: 判断: シ者の場面の代役は生の glTF（`ValidU8Float.gltf`）で SURF の表が無いので、表の無いスキンメッシュでは頂点を一様に引く代わりの道を足した（頂点の密度に比例し、面積には比例しない）。起動引数は既存の `--shisha-*` と同じく `Game/GameApplicationHandler.*` で受ける（paths の外だが、起動引数の置き場がそこにしか無い）。
+- Notes: 既知の限界: 撃破の流れ（G8 の `OnDefeatStarted`・`DefeatBloodPresenter`）への結線はしていない（確かめの場面だけ）。灰の風は GR57 の粒が受ける風の入力に任せる。
+- U4 消滅の効果の定義（norves.vanish）と、ファイルとキーの分かるエラーで拒否する読み込みを作る: 着地(直し 0 回)
+- U1 VFX 定義の書式にスキンの形・寿命の幅・板の自転と多角形・大きさと画面の被覆の上限を足し、GPU の放出の記述に欄を足す: 着地(直し 1 回)
+- U2 効果のシステムに、エミッタごとの有効・生成率の上書きとスキンの源の結び付けを足し、新しい欄を GPU の記述へ詰める: 着地(直し 0 回)
+- U3 粒のシェーダーで寿命の幅・板の自転と多角形の切り抜き・大きさと画面の被覆の上限を描き、スキンの形の単発の放出を表面から出す: 着地(直し 0 回)
+- U6 灰と光の 2 セットのデータ（VFX 定義と消滅の割り付け）を置く: 着地(直し 0 回)
+- U5 消滅の効果の本体 VanishEffect（時間の割り付けを World の dt で進め、3 つの口を呼ぶ）: 着地(直し 0 回)
+- U7 シ者の確かめの場面 dissolve と --shisha-vanish-set=ash|light: 着地(直し 0 回)
+- U9 表面の標本の表が無いスキンメッシュでも SkinSurface のエミッタが頂点から粒を出すようにする（統合した先頭で Game のビルドまで確かめる）: 着地(直し 0 回)
+
+- U1 毛の照明の GLSL ライブラリ FurShading.glsl を作り、流れの角の符号化・復号をそこへ移す: 着地(直し 0 回)
+- U2 照明の定数に Fur の Kajiya-Kay・透過・SSAO の重みを足し、UBO を広げる: 着地(直し 0 回)
+- U4 SSR で Fur の画素を飛ばす: 着地(直し 0 回)
+- U3 照明の 3 つの口の Fur の分岐を FurShading.glsl へつなぎ、SSAO を Fur で弱める: 着地(直し 0 回)
+- U5 流れの角の符号化・復号の C++ の参照を置く: 着地(直し 0 回)
+- U6 FurRendering.md に照明の節を書き、全体のビルドと GLSL の確かめを通す: 着地(直し 0 回)
+### G6-GR34-FUR-LIGHTING Fur の画素をラップの拡散・Kajiya-Kay の 2 ローブ・逆光の透過で照らし、SSAO を弱めて SSR から外す（2026-11-18、run 20261118-130153）
+- Done: 新規 `Assets/Shaders/Common/FurShading.glsl` に流れの角の基底・符号化・復号（`FurFlowBasis`・`FurEncodeFlowAngle`・`FurDecodeFlowTangent`。`FurStrand.glsl` から同じ式のまま移し、FurStrand.glsl は include する）、照明の定数の読み出し、粗さから Kajiya-Kay の指数（α = r²、`2/α² − 2` を [1, 2048]）、濡れの口 `FurApplyWetLobes`（今は恒等）、`EvaluateFurDirect`（拡散 = ラップ (N·L + w)/(1 + w) × 材質 AO、鏡面 = T を法線の向きへずらした T1・T2 の 2 ローブで 1 つめは色なし・2 つめは毛色、逆光の透過 = pow(saturate(V·−L), p) × (1 − AO) × 毛色 × 光 × 強さ × 影）を置いた。`Common/ShadingModels.glsl` の 3 つの口の Fur の分岐は、面の補正で P1 と書き込み法線から T を復元して環境光の粗さを下限まで上げ、光源ごとの口で `EvaluateFurDirect` を呼ぶ（G5 の最初の式を置き換えた）。`lighting.frag` は SSAO を Fur の画素だけ `mix(1, ssao, furShadingParams.w)` で掛け、Fur でない画素は前のまま `ao *= ssao`。`ssr.frag` は `Common/GBufferEncoding.glsl` の `GBufferDecodeNormal` で ID を読み、Fur の画素はシーンの色をそのまま返す。照明の定数 `ShadingModelLightingConstants` に Fur の 8 つの欄（ずらし 2・強さ 2・2 つめの指数の倍率・透過の指数・透過の強さ・SSAO の割合。既定はすべて仮）を足し、`shadingModelParams[1]` と末尾の新しい `furShadingParams`（offset 1200）へ詰めて照明の UBO を 1216 バイトにした（`GpuLayoutRegistry.md` を更新）。C++ の参照 `Library/Core/Private/Rendering/FurGBufferEncoding.h/.cpp` に GLSL と同じ式の基底・符号化・復号を置き、Core の CMakeLists に登録した。`Docs/Architecture/FurRendering.md` に照明の節（式・定数の表・SSAO と SSR の扱い）と既知の限界を書いた。
+- 証拠: `.harness/runs/20261118-130153/verify-G6-GR34-FUR-LIGHTING-U6.txt`（HEAD b3bbb644 で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0・エラー 0 で Game.exe まで。`lighting.frag`・`ssr.frag`・`skinned_fur_gbuffer.frag`・`.vert` を BOM を外した写しから glslc にかけて 4 本とも終了コード 0・`GLSL_CHECK OK`。シェーダーは実行時コンパイルなのでビルドでは GLSL の誤りが出ないため別に確かめた）。試験は作らない・回さない決まりなので、done-when の試験（`FurGBufferPackingTest`・`ShadingModelContractTest` の走査・`RenderingFurLightingVulkanTest`）は作っておらず、verify の ctest の行は回していない。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
+- Next: ランナーの評価者の反証（危険地帯: ライティング・GBuffer・照明の UBO の Public API）。撮影での目視は G6-GR34-FUR-CHECK、毛のシーンは G6-GR34-COAT-SCENE、濡れの応答は G6-GR35-WET-LOOK。人が見るときの見どころ: 今はどのシーンにも Fur の材質が無く、Fur でない画素の照明・SSAO・SSR の式は前のままなので、Rendering3DTest（天球・地面・球・岩）とランチャーの各シーンの見た目は変わらない。毛のシーンができたら、逆光で毛の縁が明るくなるか、流れに沿ったハイライトの帯が 2 本出て 2 本目に毛色が付くか、SSAO の on/off で毛の暗さの荒れが少ないか、SSR を on にしても毛の画素に反射が乗らないかを見る。
+- Notes: 判断: 毛の断片シェーダー（`skinned_fur_gbuffer.frag`）は paths の外なので、粗さは今のまま材質の一つの値（`furShellParams.w`）を書き、照明はその粗さから指数を決める。SSAO の割合の既定は 0.3、ずらしは ±0.1、強さは 0.05、2 つめの指数の倍率は 0.5、透過の指数 8・強さ 1（すべて仮。`LightingPass::SetShadingModelLightingConstants` で差し替える）。毛の AO は殻の自己遮蔽なので直接光の拡散にも掛ける（ほかの材質は直接光に AO を掛けない）。
+- Notes: 要起票: 毛の断片シェーダー `skinned_fur_gbuffer.frag` が GBuffer の粗さを材質の一つの値で書き、領域の表（`FurMaterialRegion::lobes`）から書いていない。G6-GR34-FUR-LIGHTING の done-when が前提にする「Fur の FS が領域の表から粗さを書く」を受け持つタスクが TASKS.md に無く、領域ごとのハイライトの違いが出ない。
+
+- U1 シーンの読み込みを「読み・解析」「スキーマ照合」「ルート 1 つずつの生成」の 3 段に分ける: 着地(直し 2 回)
+- U2 payload の種類 `scene` とそのハンドラーを足す: 着地(直し 0 回)
+- Done（2026-11-18、run 20261118-124726 の反復 1）: `SceneSerializer` のシーン読み込みを 3 段に分けた。(a) ワーカーで呼べる `ReadDocumentFromFile`・`ReadDocumentFromAsset`（読みと JSON の構造の解析。World・ClassRegistry・TypeRegistry に触れない）、(b) GameThread の `BeginSpawn`（版 1・2 の移行と物理量の検証、`ReconcileWithSchema` 相当の照合、一時の ResourceRegistry を持つ `SceneSpawnJob` を作る）、(c) `SpawnNextRoot`（ルートを 1 つだけ生成し、最後のルートの後に EntityRefId を張り替える）と `CancelSpawn`（完了前に生成したルートを World から消す）。`LoadIntoWorld`・`LoadIntoWorldFromAsset` は (a)→(b)→(c) を順に回す形にし、統計・戻り値・ルートの順・ログの文言を変えていない。フレームをまたぐので、生成物は生ポインタでなく Entity の ObjectId と Component の ComponentId で控え、張り替えのときに World から引き直す。
+- Done（同）: セルの payload の種類 `scene`（`kScenePayloadKind`）と `ScenePayloadHandler`（`WorldPayloadHandlers`）を足した。Prepare（ワーカー）で `ReadDocumentFromAsset` し、準備済みの文書を排他つきの表に置く。CommitStep の最初の歩で `BeginSpawn`、以後の歩で `SetRootsPerStep`（既定 1）ぶん `SpawnNextRoot` を進める。セルが生成したルートの ObjectId を持ち（シーンのルートは `LoadIntoWorld` と同じく World のルートのまま）、休眠はルートの `SetActive`、解放は生成の途中なら `CancelSpawn`、済んでいればルートの `RemoveEntity` を予算ごとに行う。GameModeScope の `TrackStreaming` の Cleanup（StopAndJoin）でルートが消え、Component の資産の束縛も外れる。
+- Notes: `TryParseJson` は版 1・2 の移行と物理量の検証で ClassRegistry・TypeRegistry を引くので、ワーカーでは構造の解析（`ParseSceneDocumentStructure`）だけを行い、移行と検証（`FinalizeSceneDocument`）は `BeginSpawn` の頭で GameThread に回した。`TryParseJson` 自体の振る舞いは変えていない。資産パスの検証の `Identity` は排他つきの IdentityPool なのでワーカーから作ってよい。
+- Notes: done-when の `StreamingScenePayloadTest` は絶対規則 11 に従って作っていない。`SceneSerializerTest`・`SceneFileRoundTripTest`・`StreamingPayloadTest`・`StreamingCellStateMachineTest` はこのブランチに無く回していない。確かめは `cmake --build build --config Debug --target Game -- /m:1` の終了コード 0（`.harness/runs/20261118-124726/G12-GR40-SCENE-PAYLOAD-U2-verify.txt`）。
+- Next: Game のどのモードも `ScenePayloadHandler` をまだ登録していない。セルのマニフェストに `{"kind": "scene", "logicalPath": ...}` を書くモードが登録するときに、World と AssetSystem をハンドラーより長く生かし、`TrackStreaming` でモードの終わりにセルを外す。
+
+- U1 DefeatGate に受け付け直し(Rearm)と進行に数えるかの引数を足し、GameplayModule は数える撃破だけを進行へ流す: 着地(直し 0 回)
+- U2 EnemyDefinition に countsForProgression(既定 true)を足して読み込む: 着地(直し 0 回)
+- U3 EnemyComponent が BeginPlay で自分の Id を受け付け直し、撃破の開始で定義の countsForProgression を渡す: 着地(直し 0 回)
+
+## 2026-11-18 G8-GR17-ENEMY-COMPONENT-P1（run 20261118-144514 の反復 1、完了）
+- Done: `DefeatGate::Rearm(enemyId)` を足した。完了済みの Id に受け付け直しの印を付け、次の `BeginDefeat` でその項目を退役させて新しい項目を末尾に足す（保留の添字を動かさず、通知中に呼ばれても同じ `Update` では完了しない）ので、`OnDefeatCompleted` がもう 1 回だけ出る。受け付け直していない完了済みの Id への `BeginDefeat` と、保留中の Id への `Rearm` は無視して `GetIgnoredBeginCount` を増やす。初めての Id・不正な Id への `Rearm` は何もしない。`BeginDefeat(enemyId, bCountsForProgression = true)` にし、数える撃破の完了だけを出す `OnProgressionDefeatCompleted` を `OnDefeatCompleted` より先に配る。GameplayModule は `ProgressionState::MarkDefeated` をこの新しい通知へ付け替えたので、数えない撃破は `OnDefeatCompleted`・領域の `MarkCleared` には届くが、進行の診断の数も警告も増やさない（数える撃破で進行の定義に無い Id は今と同じく警告と診断の数）。`ProgressionState` は変えていない（同じ Id を二重に記録せず、`OnFinalUnlocked` は 1 回だけ）。`EnemyDefinition` に `countsForProgression`（既定 true。真偽値でなければファイルとキーのパス付きで拒否）を足し、`EnemyComponent` は BeginPlay で自分の EnemyId を `Rearm` し、撃破の開始で定義の値を `BeginDefeat` へ渡す。
+- 証拠: `.harness/runs/20261118-144514/verify-G8-GR17-ENEMY-COMPONENT-P1-U3.txt`（`cmake --build build --config Debug --target Game -- /m:1`。タスクの verify のビルドの行から試験のターゲットを外した形。Game.exe を生成して BuildExitCode=0・エラー 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。
+- 試験: done-when (3) の試験のケースと verify の ctest の行は、人の決まり（試験を作らない・回さない。試験は TEST-REMOVE-1114 で消してある）により作らず回していない。
+- 人が見るときの見どころ: シ者のいるシーン（戦闘の垂直スライス）で敵を倒し、ランチャーへ戻って同じシーンへ入り直したとき、同じ敵をもう一度倒せて撃破の完了（消える・領域が Cleared になる）まで進むこと。
+- Next: ランナーの評価者の反証（Object の寿命・撃破の通知の順）。
+- Notes: 既知の限界: 前の敵の撃破が保留中（保留の解消を待つ間）に同じ Id の敵が生成されると、その `Rearm` は決まりどおり無視されるので、前の撃破が完了した後に新しい敵を倒しても撃破ゲートに受け付けられない。シーンの入り直しでは前の World の破棄で保留が外れるが、完了は次の `DefeatGate::Update` なので、その前に新しい敵の BeginPlay が走る順だとこの経路に入る。退役した項目は消さずに残す（1 回の入り直しにつき Id 1 つ分）。

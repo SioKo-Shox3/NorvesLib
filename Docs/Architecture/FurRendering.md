@@ -42,9 +42,39 @@ Length の R、Flow の RG、DensityClump の RG、Region の R を読み、未�
 
 殻 0 以外では、密度または `maxLength` が 0 以下なら破棄する。画素のセル座標の微分の最大が 0.7 以下なら毛の長さより高い殻と、セル内の円の外側を破棄する。円の直径の投影幅は最低 1 画素まで広げ、元の幅と広げた幅の比を被覆率として切り抜く。0.7 より大きい場合は近似した残存率 `clamp((maxLength - h) / (0.4 * maxLength), 0, 1)` と `min(1, PI * radius * radius)` を掛け、被覆率の期待値として切り抜く。TAA 適用時は画素と位相による Hash、それ以外は閾値 0.5 の Test を使う。
 
-殻 0 は毛の切り抜きを通さず皮膚面として残す。アルベドには根元の暗さから毛先の明るさへの補正と、根元ほど強い下毛色の混合を適用する。AO は `mix(AoRoot, 1, pow(h, AoExponent))`、法線は体の法線から流れの接線へ `Tilt * h` で補間して正規化する。GBuffer には金属度 0、材質の粗さ（未指定は 0.5）、この AO、`P0` に材質と個体から解決した濡れ度、`P1` に書き込み法線を基準とする流れの角を書く。`P1` の符号化・復号は `FurEncodeFlowAngle`・`FurDecodeFlowTangent`、発光 RGB は 0 である。
+殻 0 は毛の切り抜きを通さず皮膚面として残す。アルベドには根元の暗さから毛先の明るさへの補正と、根元ほど強い下毛色の混合を適用する。AO は `mix(AoRoot, 1, pow(h, AoExponent))`、法線は体の法線から流れの接線へ `Tilt * h` で補間して正規化する。GBuffer には金属度 0、材質の粗さ（未指定は 0.5）、この AO、`P0` に材質と個体から解決した濡れ度、`P1` に書き込み法線を基準とする流れの角を書く。`P1` の符号化・復号は `Common/FurShading.glsl` の `FurEncodeFlowAngle`・`FurDecodeFlowTangent` が担う。C++ の参照実装 `Library/Core/Private/Rendering/FurGBufferEncoding.cpp` と同じ式に保つ。発光 RGB は 0 である。
 
 マップは既存の `set 0` の binding 3〜6 を Length・Flow・DensityClump・Region に読み替える。これは GR26 が材質ごとのテクスチャ枠を持つまでの暫定である。
+
+## 照明
+
+毛の向き `T` は、GBuffer の `P1` の流れの角と書き込み法線 `N` から `FurDecodeFlowTangent` で復元する。Duff らの基底は `z = 0` で符号が反転する継ぎ目を持つが、書き込みと読み出しで同じ法線を使うので一致する。以下、`V` は点からカメラ、`L` は点から光源への正規化した向き、`H = normalize(V + L)` はハーフベクトルである。
+
+直接光の拡散は、`clamp((N·L + w) / (1 + w), 0, 1) × AO` を拡散 BRDF・光・影に掛ける。ここで `w = FurWrap`、AO は SSAO を重ねる前の GBuffer の材質 AO である。毛の AO は殻の自己遮蔽なので直接光にも掛ける。ほかの材質の直接光には AO を掛けない。
+
+鏡面は Kajiya-Kay の 2 ローブで、`Ti = normalize(T + N × shift_i)`、`sinTH_i = sqrt(max(1 - (Ti·H)², 0))` とする。各ローブは `smoothstep(-1, 0, Ti·H) × sinTH_i^e_i × (e_i + 2) / (2π)`。1 つめは色なし、2 つめには毛色を掛け、それぞれの強さで加算してから光・`max(N·L, 0)`・影を掛ける。指数には下限を適用する前の GBuffer の粗さ `r` を使い、`α = r²`、`e1 = clamp(2 / max(α², 1e-6) - 2, 1, 2048)`、`e2 = max(e1 × FurSecondaryExponentScale, 1)` とする。濡れの口 `FurApplyWetLobes` は今は恒等で、`G6-GR35-WET-LOOK` が濡れの応答を埋める。
+
+逆光の透過は `pow(saturate(V·−L), p) × (1 - AO) × 毛色 × 光 × 強さ × 影` を拡散へ足す。AO は直接光と同じ材質 AO、`p = FurTransmissionPower` である。
+
+環境光（IBL・DDGI・RTGI）は既存の式を使い、面の補正で粗さを少なくとも `FurMinSpecularRoughness` まで上げる。SSAO は殻の深度の段差で荒れるため、Fur の画素では材質 AO に `mix(1, SSAO, FurSsaoWeight)` を掛ける。SSR は Fur の画素を飛ばす。
+
+照明定数の C++ の欄は `ShadingModelLightingConstants`、既定値はすべて仮で、`LightingPass::SetShadingModelLightingConstants` で差し替える。UBO の配置と転送時の値の補正は [GPU の割り当て表](GpuLayoutRegistry.md) を参照する。
+
+| C++ の欄 | 既定値 | UBO の置き場 | 意味 |
+|---|---:|---|---|
+| `FurWrap` | 0.5 | `shadingModelParams[0].x` | 拡散のラップ量 |
+| `FurMinSpecularRoughness` | 0.6 | `shadingModelParams[0].y` | 面の鏡面粗さの下限 |
+| `EyeSpecularBoostPerP0` | 3.0 | `shadingModelParams[0].z` | Eye の P0 あたりの鏡面増分 |
+| `FurPrimaryShift` | 0.1 | `shadingModelParams[1].x` | 1 つめのローブのずらし |
+| `FurSecondaryShift` | -0.1 | `shadingModelParams[1].y` | 2 つめのローブのずらし |
+| `FurPrimarySpecularStrength` | 0.05 | `shadingModelParams[1].z` | 1 つめのローブの強さ |
+| `FurSecondarySpecularStrength` | 0.05 | `shadingModelParams[1].w` | 2 つめのローブの強さ |
+| `FurSecondaryExponentScale` | 0.5 | `furShadingParams.x` | 2 つめの指数の倍率 |
+| `FurTransmissionPower` | 8.0 | `furShadingParams.y` | 逆光の透過の指数 |
+| `FurTransmissionStrength` | 1.0 | `furShadingParams.z` | 逆光の透過の強さ |
+| `FurSsaoWeight` | 0.3 | `furShadingParams.w` | Fur の画素に SSAO を掛ける割合 |
+
+`shadingModelParams[0].w` は予約（0）である。
 
 ## 既知の限界
 
@@ -56,8 +86,10 @@ Length の R、Flow の RG、DensityClump の RG、Region の R を読み、未�
 - 頂点の押し出しは全体の `L` に基づく。Length と領域の長さ倍率は断片の残存判定に使い、領域の倍率が 1 を超えても最外殻を `L` より外へ押し出さない。
 - アルベドを含むテクスチャは通常の `texture` で読み、sparse の常駐確認・粗いミップへの退避・VT フィードバックを行わない。アルベドが VT の場合、未常駐領域の表示を保証できない。
 - アルベドの alpha や材質の `BaseColor`・被覆率、法線・粗さ・発光の各テクスチャは殻シェーダーでは使わない。殻 0 を含めアルベドの alpha は 1 として書く。
-- 現在の Fur の照明は拡散の wrap と鏡面の粗さの下限を使う。Kajiya-Kay・透過・SSAO と SSR の扱いは `G6-GR34-FUR-LIGHTING`、撮影・golden・性能の確かめは `G6-GR34-FUR-CHECK` の範囲である。
+- 毛の FS（`skinned_fur_gbuffer.frag`）は粗さに材質の一つの値（`furShellParams.w`）を書き、領域表の `FurMaterialRegion::lobes` を書かないため、領域ごとのハイライトの違いはまだ出ない。
+- 逆光の透過は `1 - AO` を掛けるため、AO が 1 に近い毛先ほど弱くなる。
+- パストレーサーと RT にはスキンが入らないため、毛も対象外である（GR104）。
 
 ## 人が見るときの見どころ
 
-今の各シーンには Fur の材質がまだないため、この描画の追加による見た目の変化はない。Fur の材質を張ったスキンのキャラクターを用意した場合は、体の輪郭と毛の流れ、根元から毛先の色と遮蔽、動いたときの追従、カメラの距離による殻数の切り替わり、画面端での消え方を見る。TAA のあるビューとないビューでは、細い毛や遠い毛の残り方も見比べる。
+今の各シーンには Fur の材質がまだない。毛のシーンは `G6-GR34-COAT-SCENE` が作る。Fur の材質を張ったスキンのキャラクターを用意した場合は、体の輪郭と毛の流れ、根元から毛先の色と遮蔽、動いたときの追従、カメラの距離による殻数の切り替わり、画面端での消え方を見る。TAA のあるビューとないビューでは、細い毛や遠い毛の残り方も見比べる。逆光で縁が明るくなるか、流れに沿って 2 本のハイライトの帯が出て 2 本目に毛色が付くか、SSAO の on/off で毛の暗さの荒れが少ないか、SSR を on にしても毛の画素に SSR の反射が乗らないかを見る。

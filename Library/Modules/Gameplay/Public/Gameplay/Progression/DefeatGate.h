@@ -35,8 +35,13 @@ namespace NorvesLib::Modules::Gameplay
         DefeatGate(DefeatGate&&) = delete;
         DefeatGate& operator=(DefeatGate&&) = delete;
 
-        /// 同じ ID の再開始と不正な ID は無視し、診断の数を増やす。
-        void BeginDefeat(const Core::Container::String& enemyId);
+        /// 同じ ID は完了後に受け付け直した場合のみ再開始でき、不正な ID と重複は無視して診断の数を増やす。
+        /// bCountsForProgression が true の場合、完了を進行にも通知する。
+        void BeginDefeat(const Core::Container::String& enemyId, bool bCountsForProgression = true);
+
+        /// 完了済みの ID を受け付け直す。不正・未登録の ID は無視する。
+        /// 保留中の場合は受け付け直さず、診断の数を増やす。
+        void Rearm(const Core::Container::String& enemyId);
         DefeatHoldHandle AddHold(const Core::Container::String& enemyId, Core::EntityHandle owner);
         void Release(DefeatHoldHandle handle);
 
@@ -45,6 +50,10 @@ namespace NorvesLib::Modules::Gameplay
         void Update(const Core::Delegate<bool, Core::EntityHandle>& isOwnerAlive);
         size_t GetIgnoredBeginCount() const { return m_IgnoredBeginCount; }
 
+        /// 進行に数える撃破の完了だけを通知する。
+        Core::MulticastDelegate<const Core::Container::String&> OnProgressionDefeatCompleted;
+
+        /// 進行の対象にかかわらず、すべての撃破完了を通知する。
         Core::MulticastDelegate<const Core::Container::String&> OnDefeatCompleted;
 
     private:
@@ -52,6 +61,9 @@ namespace NorvesLib::Modules::Gameplay
         {
             Core::Container::String EnemyId;
             bool bCompleted = false;
+            bool bCountsForProgression = true;
+            bool bRearmed = false;
+            bool bRetired = false;
         };
 
         struct Hold

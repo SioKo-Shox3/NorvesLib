@@ -222,6 +222,14 @@ bool ApplyParticleCollision(GpuEmitterParams emitter, GpuCollisionParams collisi
     {
         particle.posAge.xyz = hitPosition;
         particle.velLife.xyz = vec3(0.0);
+        uint orientation = (emitter.renderFlags >> kGpuEmitterRenderOrientationShift) & kGpuEmitterRenderOrientationMask;
+        if (orientation != 1u && any(notEqual(emitter.lifetimeMaxSpinSpeedMinMaxMaxSize.yz, vec2(0.0))))
+        {
+            // 固着後は速度を積分しないため、x を停止時の年齢に使う。この刻みの終端の角度を保持する。
+            float dt = (emitter.poolCapacitySeedFlags.w & kGpuEmitterFlagUnscaledTime) != 0u ?
+                simulation.unscaledDeltaTime : simulation.deltaTime;
+            particle.velLife.x = particle.posAge.w + dt;
+        }
         particle.meta.z |= kGpuParticleFlagStuck;
         particle.meta.w = GpuParticlePackNormal(normal);
     }

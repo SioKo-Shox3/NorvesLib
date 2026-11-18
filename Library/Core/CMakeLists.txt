@@ -87,6 +87,8 @@ set(PRIVATE_SOURCES
     Private/Particle/VfxEffectSystem.cpp
     Private/Particle/DefeatBloodSequence.cpp
     Private/Particle/DefeatBloodPresenter.cpp
+    Private/Particle/VanishEffectDefinition.cpp
+    Private/Particle/VanishEffect.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalJointIndex.h
@@ -327,6 +329,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
+    Private/Rendering/FurGBufferEncoding.h
+    Private/Rendering/FurGBufferEncoding.cpp
     Private/Rendering/FurMaterialGpu.cpp
     Private/Rendering/FurShellLod.cpp
     Private/Rendering/GpuResourceStore.cpp
@@ -698,6 +702,8 @@ set(PUBLIC_HEADERS
     Public/Particle/VfxSimulationMath.h
     Public/Particle/DefeatBloodSequence.h
     Public/Particle/DefeatBloodPresenter.h
+    Public/Particle/VanishEffectDefinition.h
+    Public/Particle/VanishEffect.h
     Public/Engine/ApplicationProcessor.h
     Public/Engine/FixedStepSettings.h
     # Animation

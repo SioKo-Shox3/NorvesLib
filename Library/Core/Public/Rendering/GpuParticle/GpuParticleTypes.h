@@ -141,7 +141,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved1;
     };
 
-    /// エミッタの GPU 定数。std430 の 16 バイト行を 23 行で構成する。
+    /// エミッタの GPU 定数。std430 の 16 バイト行を 25 行で構成する。
     /// CurveKeyCounts は Size・Color・Opacity・Stretch のキー数を下位から各 8 ビットに詰める（0 は曲線なし）。
     /// 別バッファのキーは CurveKeyOffset から同じ Target 順に連続して置く。
     /// RenderFlags は bit 0〜1 が向き、2 が合成、3 が描画段階、4 が照明、5 が幅 1px 未満の補償、6 がスロットの順に描く設定、8〜15 が手続きのフリップブックのコマ数（0 はなし）。
@@ -181,6 +181,11 @@ namespace NorvesLib::Core::Rendering
         uint32_t SkinAcceptMode; // 344: 表面の標本を受け入れる方式。
         uint32_t SkinSourceIndex; // 348: パスが毎フレーム書く源の行の番号。無しは kGpuSkinSourceNone。
         uint32_t SkinBoneMask[4]; // 352: 表面の受け入れと Bone の選択に使う骨の組（128 bit）。
+        float LifetimeMax, SpinSpeedMin, SpinSpeedMax, MaxSize; // 368: 寿命の上限・回転速度の範囲・大きさの上限。
+        float MaxScreenFraction; // 384: 画面の高さに対する見かけの直径の上限。
+        uint32_t PlateSides;
+        float PlateJitter;
+        uint32_t RenderReserved;
     };
 
     /// 正規化した年齢と値を組にした寿命曲線のキー。
@@ -218,7 +223,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuCollisionChildParams, ChildMinNormalY) == 4u);
     static_assert(offsetof(GpuCollisionChildParams, Reserved0) == 8u);
     static_assert(offsetof(GpuCollisionChildParams, Reserved1) == 12u);
-    static_assert(sizeof(GpuEmitterParams) == 368u);
+    static_assert(sizeof(GpuEmitterParams) == 400u);
     static_assert(alignof(GpuEmitterParams) == 16u);
     static_assert(offsetof(GpuEmitterParams, PoolOffset) == 0u);
     static_assert(offsetof(GpuEmitterParams, Capacity) == 4u);
@@ -272,6 +277,14 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GpuEmitterParams, SkinAcceptMode) == 344u);
     static_assert(offsetof(GpuEmitterParams, SkinSourceIndex) == 348u);
     static_assert(offsetof(GpuEmitterParams, SkinBoneMask) == 352u);
+    static_assert(offsetof(GpuEmitterParams, LifetimeMax) == 368u);
+    static_assert(offsetof(GpuEmitterParams, SpinSpeedMin) == 372u);
+    static_assert(offsetof(GpuEmitterParams, SpinSpeedMax) == 376u);
+    static_assert(offsetof(GpuEmitterParams, MaxSize) == 380u);
+    static_assert(offsetof(GpuEmitterParams, MaxScreenFraction) == 384u);
+    static_assert(offsetof(GpuEmitterParams, PlateSides) == 388u);
+    static_assert(offsetof(GpuEmitterParams, PlateJitter) == 392u);
+    static_assert(offsetof(GpuEmitterParams, RenderReserved) == 396u);
     static_assert(sizeof(GpuCurveKey) == 8u);
     static_assert(offsetof(GpuCurveKey, Time) == 0u);
     static_assert(offsetof(GpuCurveKey, Value) == 4u);
@@ -287,6 +300,8 @@ namespace NorvesLib::Core::Rendering
     static_assert(static_cast<uint32_t>(Particle::VfxSpawnShape::Cone) == 2u);
     static_assert(static_cast<uint32_t>(Particle::VfxSpawnShape::Box) == 3u);
     static_assert(static_cast<uint32_t>(Particle::VfxSpawnShape::CameraBox) == 4u);
+    static_assert(static_cast<uint32_t>(Particle::VfxSpawnShape::SkinSurface) == kGpuEmitterShapeSkinSurface);
+    static_assert(static_cast<uint32_t>(Particle::VfxSpawnShape::Bone) == kGpuEmitterShapeBone);
     static_assert(static_cast<uint32_t>(Particle::VfxCollisionResponse::Kill) == 0u);
     static_assert(static_cast<uint32_t>(Particle::VfxCollisionResponse::Stick) == 1u);
     static_assert(static_cast<uint32_t>(Particle::VfxCollisionResponse::Bounce) == 2u);

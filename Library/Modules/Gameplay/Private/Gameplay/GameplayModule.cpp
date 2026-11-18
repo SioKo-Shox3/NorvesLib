@@ -58,7 +58,7 @@ namespace NorvesLib::Modules::Gameplay
           m_EncounterService(m_ProgressionState),
           m_IsDefeatHoldOwnerAlive(this, &GameplayModule::IsDefeatHoldOwnerAlive)
     {
-        m_DefeatGate.OnDefeatCompleted.Add(&m_ProgressionState, &ProgressionState::MarkDefeated);
+        m_DefeatGate.OnProgressionDefeatCompleted.Add(&m_ProgressionState, &ProgressionState::MarkDefeated);
         m_InteractionService.SetEngagedQuery(Core::MakeDelegate(&m_EncounterService, &World::EncounterService::IsSensorEngaged));
     }
 
