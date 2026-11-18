@@ -83,6 +83,27 @@ namespace Game::Bridge
             return AdapterResult::ok(std::move(parsed).value());
         }
 
+        /** @brief 資産編集サービスの成功結果または構造化された拒否を SDK 型へ変換する。 */
+        AdapterResult ToAssetEditResult(const BridgeAssetEditReply& reply)
+        {
+            if (reply.bSuccess)
+            {
+                return OkLiteral(std::string_view(reply.ResultJson.c_str(), reply.ResultJson.size()));
+            }
+
+            const auto dataJson = BuildRejectionDataJson(reply.Rejection);
+            auto parsedData = JsonValue::parse(std::string_view(dataJson.c_str(), dataJson.size()));
+            std::optional<JsonValue> data = std::nullopt;
+            if (parsedData.is_ok())
+            {
+                data = std::move(parsedData).value();
+            }
+            return AdapterResult::err(BridgeError{
+                std::string(Norves::Bridge::ErrorEngineAssetEditRejected),
+                std::string(reply.Rejection.Message.c_str(), reply.Rejection.Message.size()),
+                std::move(data)});
+        }
+
         /**
          * @brief NorvesLib の Bridge runtime 状態を SDK の DTO enum へ変換する
          *
@@ -1822,7 +1843,7 @@ namespace Game::Bridge
     NorvesLibBridgeAdapter::getCapabilities(const JsonValue& /*params*/)
     {
         // runtime.control / log.stream / viewport.focus / viewport.thumbnail / scene.query / scene.edit / scene.liveUpdate /
-        // object.query / object.edit / asset.read / asset.reload を
+        // object.query / object.edit / asset.read / asset.reload / asset.edit を
         // 広告する。scene.query は scene.getTree と schema.getSnapshot を束ねる token（両者とも実装済み）。
         // scene.edit は scene.createObject / scene.deleteObject / scene.reparentObject /
         // scene.duplicateObject 用（実装済み。duplicate は新規 token を足さず scene.edit に含める）。
@@ -1830,7 +1851,8 @@ namespace Game::Bridge
         // object.query は object.getSnapshot 用（実装済み）。object.edit は object.setProperty 用
         // （実装済み）。asset.read は asset.resolve / asset.getManifest 用（実装済み＝NorvesLib アダプタが
         // handler が保持する immutable snapshot から解決する）。asset.reload は
-        // asset.reloadManifest 用（実装済み）。viewport.thumbnail は
+        // asset.reloadManifest 用（実装済み）。asset.edit は
+        // asset.getProperties / asset.setProperty / asset.save 用（実装済み）。viewport.thumbnail は
         // viewport.getThumbnail 用（実装済み、キャプチャ未到着時も cache/placeholder success）。
         // 決定的な撮影が利用可能な場合だけ viewport.capture を広告する。
         std::string capabilities =
@@ -1845,7 +1867,8 @@ namespace Game::Bridge
             R"({"name":"object.query"},)"
             R"({"name":"object.edit"},)"
             R"({"name":"asset.read"},)"
-            R"({"name":"asset.reload"})";
+            R"({"name":"asset.reload"},)"
+            R"({"name":"asset.edit"})";
         if (BridgeCaptureProtocol::IsCaptureAvailable(MakeEngineDeterministicFrameSource()))
         {
             capabilities += R"(,{"name":"viewport.capture"})";
@@ -2947,6 +2970,44 @@ namespace Game::Bridge
         return OkLiteral(out);
     }
 
+
+    BridgeAssetEditService& NorvesLibBridgeAdapter::GetAssetEditService()
+    {
+        if (!m_AssetEditService)
+        {
+#if defined(NORVES_SOURCE_ASSET_DIR)
+            const Container::String assetRoot(NORVES_SOURCE_ASSET_DIR);
+#else
+            const Container::String assetRoot;
+#endif
+            m_AssetEditService = Container::MakeUnique<BridgeAssetEditService>(assetRoot);
+        }
+        return *m_AssetEditService;
+    }
+
+    AdapterResult
+    NorvesLibBridgeAdapter::assetGetProperties(const JsonValue& params)
+    {
+        const auto paramsJson = params.dump();
+        return ToAssetEditResult(GetAssetEditService().GetProperties(
+            Container::String(paramsJson.c_str())));
+    }
+
+    AdapterResult
+    NorvesLibBridgeAdapter::assetSetProperty(const JsonValue& params)
+    {
+        const auto paramsJson = params.dump();
+        return ToAssetEditResult(GetAssetEditService().SetProperty(
+            Container::String(paramsJson.c_str())));
+    }
+
+    AdapterResult
+    NorvesLibBridgeAdapter::assetSave(const JsonValue& params)
+    {
+        const auto paramsJson = params.dump();
+        return ToAssetEditResult(GetAssetEditService().Save(
+            Container::String(paramsJson.c_str())));
+    }
 
     AdapterResult
     NorvesLibBridgeAdapter::assetResolve(const JsonValue& params)

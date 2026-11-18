@@ -139,6 +139,12 @@ namespace NorvesLib::Modules::Gameplay::Enemy
         m_BoundWorld = world;
         m_BoundOwner = owner ? owner->GetEntityHandle() : Core::EntityHandle{};
         m_BoundModule = world ? GameplayModule::FindBoundModule(*world) : nullptr;
+        if (m_BoundModule)
+        {
+            // 入り直しやセーブからのやり直しで同じ Id の敵が生成されたとき、
+            // 完了済みのまま倒せなくならないよう受け付け直す。
+            m_BoundModule->GetDefeatGate().Rearm(GetEnemyId());
+        }
         if (m_bHasDefinition)
         {
             const uint64_t seed = m_BoundModule ? m_BoundModule->GetRunSeed() : 0;
@@ -675,7 +681,7 @@ namespace NorvesLib::Modules::Gameplay::Enemy
     void EnemyComponent::BeginDefeatGate(GameplayModule& module, Core::EntityHandle owner)
     {
         const auto enemyId = GetEnemyId();
-        module.GetDefeatGate().BeginDefeat(enemyId);
+        module.GetDefeatGate().BeginDefeat(enemyId, m_Definition.bCountsForProgression);
         m_DefeatHold = module.GetDefeatGate().AddHold(enemyId, owner);
         if (!m_DefeatHold.IsValid())
         {

@@ -1,0 +1,33 @@
+﻿{
+  "format": "norves.vanish",
+  "version": 1,
+  "name": "ShishaVanish_Light",
+  "effect": "Assets/Effects/ShishaVanish_Light.vfx.json",
+  "duration": 5.0,
+  "dissolve": {
+    "edgeEmissiveNits": 9000.0,
+    "threshold": [
+      {"time": 0.0, "value": 0.0},
+      {"time": 0.2, "value": 0.0},
+      {"time": 1.0, "value": 0.25},
+      {"time": 2.1, "value": 0.7},
+      {"time": 3.0, "value": 1.0}
+    ]
+  },
+  "emitters": [
+    {
+      "emitter": "Glow",
+      "keys": [
+        {"time": 0.0, "enabled": false, "rate": 0.0},
+        {"time": 0.2, "enabled": true, "rate": 300.0},
+        {"time": 1.6, "enabled": true, "rate": 1000.0},
+        {"time": 2.99, "enabled": true, "rate": 0.0},
+        {"time": 3.0, "enabled": false, "rate": 0.0}
+      ]
+    }
+  ],
+  "bursts": [
+    {"time": 2.45, "emitter": "GlowBurst", "count": 96, "velocity": [0.0, 0.2, 0.0]},
+    {"time": 2.85, "emitter": "GlowBurst", "count": 128, "velocity": [0.0, 0.2, 0.0]}
+  ]
+}

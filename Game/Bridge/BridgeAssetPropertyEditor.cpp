@@ -324,7 +324,8 @@ namespace Game::Bridge
             BridgeAssetProperty property;
             property.Path = path;
             property.TypeName = TypeName(schema.Type);
-            property.Unit = schema.Unit;
+            property.Unit = schema.Unit != nullptr ? schema.Unit : "";
+            property.Description = schema.Description != nullptr ? schema.Description : "";
             property.Min = schema.Min;
             property.Max = schema.Max;
             if (!ValueToJson(schema, value, property.ValueJson))

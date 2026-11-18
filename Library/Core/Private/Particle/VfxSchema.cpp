@@ -1,5 +1,7 @@
 ﻿#include "Particle/VfxSchema.h"
 
+#include "Rendering/GpuParticle/GpuSkinEmitter.h"
+
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -55,7 +57,17 @@ namespace NorvesLib::Core::Particle
         constexpr const char* kRandomStreamNames[] = {"Sequential", "Counter"};
         constexpr const char* kTimeChannelNames[] = {"Particle", "Unscaled"};
         constexpr const char* kWrapPolicyNames[] = {"Die", "WrapInCameraBox"};
-        constexpr const char* kSpawnShapeNames[] = {"Point", "Sphere", "Cone", "Box", "CameraBox"};
+        constexpr const char* kSpawnShapeNames[] = {"Point", "Sphere", "Cone", "Box", "CameraBox", "SkinSurface", "Bone"};
+        constexpr const char* kSkinAcceptNames[] = {"Uniform", "DissolveEdge", "BoneMask"};
+        static_assert(static_cast<uint32_t>(Rendering::GpuSkinAcceptMode::Uniform) == 0u);
+        static_assert(static_cast<uint32_t>(Rendering::GpuSkinAcceptMode::DissolveEdge) == 1u);
+        static_assert(static_cast<uint32_t>(Rendering::GpuSkinAcceptMode::BoneMask) == 2u);
+        constexpr const char* kBoneRoleNames[] = {
+            "hips", "spine1", "spine2", "spine3", "neck", "head",
+            "L_shoulder", "L_arm", "L_forearm", "L_hand", "R_shoulder", "R_arm",
+            "R_forearm", "R_hand", "L_upleg", "L_leg", "L_foot", "L_toe",
+            "R_upleg", "R_leg", "R_foot", "R_toe"};
+        static_assert(CountOf(kBoneRoleNames) == Rendering::kGpuSkinHumanoidRoleCount);
         constexpr const char* kCurveTargetNames[] = {"Size", "Color", "Opacity", "Stretch"};
         constexpr const char* kCollisionResponseNames[] = {
             "Kill", "Stick", "Bounce", "SpawnChild", "ReturnToCameraBoxTop"};
@@ -101,7 +113,8 @@ namespace NorvesLib::Core::Particle
             VectorParameter("Max", VfxValueType::Vector3, -1e5, 1e5, "space/s", 0.0f, 0.0f, 0.0f, 0.0f, "初速度の上限")
         };
         constexpr VfxParameterSchema kInitLifetimeParameters[] = {
-            VectorParameter("Lifetime", VfxValueType::Float, 0.001, 3600.0, "s", 1.0f, 0.0f, 0.0f, 0.0f, "粒の寿命")
+            VectorParameter("Lifetime", VfxValueType::Float, 0.001, 3600.0, "s", 1.0f, 0.0f, 0.0f, 0.0f, "粒の寿命"),
+            VectorParameter("LifetimeMax", VfxValueType::Float, 0.0, 3600.0, "s", 0.0f, 0.0f, 0.0f, 0.0f, "粒の寿命の上限。0 は Lifetime と同じ")
         };
         constexpr VfxParameterSchema kInitColorParameters[] = {
             VectorParameter("Color", VfxValueType::Color, 0.0, 64.0, "linear_rgba", 1.0f, 1.0f, 1.0f, 1.0f, "粒の初期色")
@@ -135,7 +148,13 @@ namespace NorvesLib::Core::Particle
             VectorParameter("ConeLength", VfxValueType::Float, 0.0, 1e5, "space", 1.0f, 0.0f, 0.0f, 0.0f, "円錐の長さ（頂点から +Y）"),
             VectorParameter("BoxHalfExtents", VfxValueType::Vector3, 0.0, 1e5, "space", 1.0f, 1.0f, 1.0f, 0.0f, "箱の半径"),
             VectorParameter("CameraBoxHalfWidth", VfxValueType::Float, 0.0, 1e5, "space", 20.0f, 0.0f, 0.0f, 0.0f, "カメラの箱の水平の半幅"),
-            VectorParameter("CameraBoxHeight", VfxValueType::Float, 0.0, 1e5, "space", 20.0f, 0.0f, 0.0f, 0.0f, "カメラの箱の高さ（カメラを中心に上下へ半分ずつ）")
+            VectorParameter("CameraBoxHeight", VfxValueType::Float, 0.0, 1e5, "space", 20.0f, 0.0f, 0.0f, 0.0f, "カメラの箱の高さ（カメラを中心に上下へ半分ずつ）"),
+            EnumParameter("SkinAccept", kSkinAcceptNames, CountOf(kSkinAcceptNames),
+                static_cast<uint32_t>(Rendering::GpuSkinAcceptMode::Uniform), "スキンの表面の標本を受け入れる方式"),
+            VectorParameter("SkinNormalSpeed", VfxValueType::Float, -1e5, 1e5, "m/s", 0.0f, 0.0f, 0.0f, 0.0f, "表面の法線の向きの初速"),
+            VectorParameter("SkinVelocityInheritance", VfxValueType::Float, 0.0, 4.0, "", 0.0f, 0.0f, 0.0f, 0.0f, "体の速度を継承する係数"),
+            EnumParameter("BoneRole", kBoneRoleNames, CountOf(kBoneRoleNames), 0u, "humanoid_v1 の骨のロール"),
+            VectorParameter("BoneBindPosition", VfxValueType::Vector3, -1e6, 1e6, "m", 0.0f, 0.0f, 0.0f, 0.0f, "骨のバインド姿勢の位置（メッシュ空間）")
         };
         constexpr VfxParameterSchema kDragParameters[] = {
             VectorParameter("Coefficient", VfxValueType::Float, 0.0, 1000.0, "1/s", 1.0f, 0.0f, 0.0f, 0.0f, "速度に比例する抗力の係数")
@@ -210,7 +229,13 @@ namespace NorvesLib::Core::Particle
             VectorParameter("NearFadeDistance", VfxValueType::Float, 0.0, 100.0, "space", 0.5f, 0.0f, 0.0f, 0.0f, "近距離のフェード"),
             NameParameter("Texture", 0u, 63u, "", "テクスチャの資産名"),
             BoolParameter("DrawInSlotOrder", false, "スロットの順に描く（詰めずに描き、重なりの順を毎フレーム保つ）"),
-            UIntParameter("FlipbookFrames", 0u, 255u, "count", 0u, "手続きのフリップブックのコマ数（0 はなし。寿命をコマ数で区切って形を変える）")
+            UIntParameter("FlipbookFrames", 0u, 255u, "count", 0u, "手続きのフリップブックのコマ数（0 はなし。寿命をコマ数で区切って形を変える）"),
+            VectorParameter("SpinSpeedMin", VfxValueType::Float, -1e5, 1e5, "rad/s", 0.0f, 0.0f, 0.0f, 0.0f, "板の回転速度の下限"),
+            VectorParameter("SpinSpeedMax", VfxValueType::Float, -1e5, 1e5, "rad/s", 0.0f, 0.0f, 0.0f, 0.0f, "板の回転速度の上限"),
+            UIntParameter("PlateSides", 0u, 8u, "count", 0u, "板の辺の数。0 は四角の板、3 から 8 は多角形"),
+            VectorParameter("PlateJitter", VfxValueType::Float, 0.0, 0.5, "", 0.0f, 0.0f, 0.0f, 0.0f, "多角形の頂点の半径の揺らぎの割合"),
+            VectorParameter("MaxSize", VfxValueType::Float, 0.0, 1e5, "m", 0.0f, 0.0f, 0.0f, 0.0f, "粒の大きさの上限。0 は上限なし"),
+            VectorParameter("MaxScreenFraction", VfxValueType::Float, 0.0, 1.0, "", 0.0f, 0.0f, 0.0f, 0.0f, "画面の高さに対する粒の見かけの直径の上限。0 は上限なし")
         };
 
         constexpr VfxObjectSchema kEmitterSchema = {
@@ -639,6 +664,29 @@ namespace NorvesLib::Core::Particle
                 return Fail(outError, "min_greater_than_max", schema->Name, "Min");
             }
         }
+        if (module.Type == VfxModuleType::InitLifetime)
+        {
+            const float lifetimeMax = module.Values[1].Vector.x;
+            if (lifetimeMax != 0.0f && lifetimeMax < module.Values[0].Vector.x)
+            {
+                return Fail(outError, "max_less_than_min", schema->Name, "LifetimeMax");
+            }
+        }
+        if (module.Type == VfxModuleType::GpuSpriteRenderer)
+        {
+            const uint32_t spinMinIndex = static_cast<uint32_t>(FindVfxParameterIndex(*schema, "SpinSpeedMin"));
+            const uint32_t spinMaxIndex = static_cast<uint32_t>(FindVfxParameterIndex(*schema, "SpinSpeedMax"));
+            if (module.Values[spinMinIndex].Vector.x > module.Values[spinMaxIndex].Vector.x)
+            {
+                return Fail(outError, "min_greater_than_max", schema->Name, "SpinSpeedMin");
+            }
+            const uint32_t plateSidesIndex = static_cast<uint32_t>(FindVfxParameterIndex(*schema, "PlateSides"));
+            const uint32_t plateSides = module.Values[plateSidesIndex].UInt;
+            if (plateSides != 0u && plateSides < 3u)
+            {
+                return Fail(outError, "out_of_range", schema->Name, "PlateSides");
+            }
+        }
         if (module.Type == VfxModuleType::CurveOverLife)
         {
             const uint32_t keyCount = module.Values[1].UInt;
@@ -729,6 +777,16 @@ namespace NorvesLib::Core::Particle
                 if (bHasCameraBox && !bWorld)
                 {
                     return Fail(outError, "camera_box_requires_world_space", "InitShape", "Space");
+                }
+                const bool bSkinShape = module.Values[0].UInt == static_cast<uint32_t>(VfxSpawnShape::SkinSurface) ||
+                    module.Values[0].UInt == static_cast<uint32_t>(VfxSpawnShape::Bone);
+                if (bSkinShape && !bGpu)
+                {
+                    return Fail(outError, "requires_gpu_executor", "InitShape", "Executor");
+                }
+                if (bSkinShape && !bWorld)
+                {
+                    return Fail(outError, "skin_shape_requires_world_space", "InitShape", "Space");
                 }
             }
             if (module.Type == VfxModuleType::CurveOverLife)

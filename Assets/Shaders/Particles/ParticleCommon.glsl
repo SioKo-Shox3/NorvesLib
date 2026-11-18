@@ -138,7 +138,7 @@ struct GpuCollisionChildParams
     uint reserved1;
 };
 
-// std430 で 368 バイト。CPU と同じ順に 16 バイト行を並べる。
+// std430 で 400 バイト。CPU と同じ順に 16 バイト行を並べる。
 struct GpuEmitterParams
 {
     uvec4 poolCapacitySeedFlags;                  // 0: プール開始・容量・乱数種・モジュールの旗。
@@ -176,6 +176,8 @@ struct GpuEmitterParams
     uint skinAcceptMode;                        // 344: 標本を受け入れる方式。
     uint skinSourceIndex;                       // 348: このフレームの源の行。無しは kGpuSkinSourceNone。
     uvec4 skinBoneMask;                         // 352: 受け入れと骨の選択に使う 128 bit の組。
+    vec4 lifetimeMaxSpinSpeedMinMaxMaxSize;      // 368: 寿命の上限・回転速度の下限と上限・大きさの上限。
+    float maxScreenFraction; uint plateSides; float plateJitter; uint renderReserved; // 384: 見かけの直径の上限・辺の数・半径の揺らぎ・予約。
 };
 // キー数は Size・Color・Opacity・Stretch を下位から各 8 ビット（0 は曲線なし）。
 // 別バッファのキーは開始添字から同じ Target 順に連続して置く。

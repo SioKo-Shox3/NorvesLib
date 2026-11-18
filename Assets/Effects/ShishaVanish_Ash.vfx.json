@@ -1,0 +1,75 @@
+﻿{
+  "format": "norves.vfx",
+  "version": 1,
+  "name": "ShishaVanish_Ash",
+  "flipbooks": [],
+  "emitters": [
+    {
+      "name": "Ash",
+      "properties": {
+        "MaxParticles": 4096,
+        "Space": "World",
+        "Executor": "Gpu",
+        "RandomStream": "Counter",
+        "Capacity": 4096
+      },
+      "modules": [
+        {"type": "SpawnRate", "Rate": 0.0},
+        {"type": "InitShape", "Shape": "SkinSurface", "SkinAccept": "DissolveEdge", "SkinNormalSpeed": 0.08, "SkinVelocityInheritance": 0.0},
+        {"type": "InitVelocityBox", "Min": [-0.1, 0.18, -0.1], "Max": [0.1, 0.42, 0.1]},
+        {"type": "InitLifetime", "Lifetime": 2.0, "LifetimeMax": 4.0},
+        {"type": "InitColor", "Color": [0.32, 0.31, 0.30, 0.85]},
+        {"type": "InitSize", "Size": [0.006, 0.006]},
+        {"type": "Acceleration", "Acceleration": [0.0, -0.6, 0.0]},
+        {"type": "Drag", "Coefficient": 0.45},
+        {"type": "Turbulence", "Strength": 0.18, "Frequency": 1.5},
+        {"type": "WindInfluence", "Coupling": 0.3, "Scale": 0.4},
+        {"type": "CollisionPlane", "GroundY": 0.0, "Response": "Stick"},
+        {"type": "CurveOverLife", "Target": "Opacity", "KeyCount": 3, "Key0": [0.0, 1.0], "Key1": [0.7, 1.0], "Key2": [1.0, 0.0]},
+        {"type": "GpuSpriteRenderer", "Orientation": "Billboard", "Blend": "PremultipliedAlpha", "Pass": "PostTAA", "SoftDistance": 0.04, "Lighting": "AmbientTinted", "Texture": ""}
+      ]
+    },
+    {
+      "name": "AshCloud",
+      "properties": {
+        "MaxParticles": 64,
+        "Space": "World",
+        "Executor": "Gpu",
+        "RandomStream": "Counter",
+        "Capacity": 64
+      },
+      "modules": [
+        {"type": "InitShape", "Shape": "SkinSurface", "SkinAccept": "Uniform", "SkinNormalSpeed": 0.0, "SkinVelocityInheritance": 0.0},
+        {"type": "InitVelocityBox", "Min": [-0.05, 0.1, -0.05], "Max": [0.05, 0.25, 0.05]},
+        {"type": "InitLifetime", "Lifetime": 3.0, "LifetimeMax": 5.0},
+        {"type": "InitColor", "Color": [0.35, 0.34, 0.33, 0.15]},
+        {"type": "InitSize", "Size": [0.8, 0.8]},
+        {"type": "Acceleration", "Acceleration": [0.0, 0.0, 0.0]},
+        {"type": "Drag", "Coefficient": 0.2},
+        {"type": "CurveOverLife", "Target": "Opacity", "KeyCount": 4, "Key0": [0.0, 0.0], "Key1": [0.15, 1.0], "Key2": [0.7, 1.0], "Key3": [1.0, 0.0]},
+        {"type": "GpuSpriteRenderer", "Orientation": "Billboard", "Blend": "PremultipliedAlpha", "Pass": "PostTAA", "SoftDistance": 0.8, "Lighting": "AmbientTinted", "Texture": "", "MaxSize": 1.5, "MaxScreenFraction": 0.35}
+      ]
+    },
+    {
+      "name": "Debris",
+      "properties": {
+        "MaxParticles": 256,
+        "Space": "World",
+        "Executor": "Gpu",
+        "RandomStream": "Counter",
+        "Capacity": 256
+      },
+      "modules": [
+        {"type": "InitShape", "Shape": "SkinSurface", "SkinAccept": "Uniform", "SkinNormalSpeed": 0.15, "SkinVelocityInheritance": 0.0},
+        {"type": "InitVelocityBox", "Min": [-0.5, 0.25, -0.5], "Max": [0.5, 1.0, 0.5]},
+        {"type": "InitLifetime", "Lifetime": 3.0, "LifetimeMax": 4.0},
+        {"type": "InitColor", "Color": [0.18, 0.17, 0.16, 0.95]},
+        {"type": "InitSize", "Size": [0.04, 0.04]},
+        {"type": "Acceleration", "Acceleration": [0.0, -9.8, 0.0]},
+        {"type": "CollisionPlane", "GroundY": 0.0, "Response": "Stick"},
+        {"type": "CurveOverLife", "Target": "Opacity", "KeyCount": 3, "Key0": [0.0, 1.0], "Key1": [0.75, 1.0], "Key2": [1.0, 0.0]},
+        {"type": "GpuSpriteRenderer", "Orientation": "Billboard", "Blend": "PremultipliedAlpha", "Pass": "PostTAA", "SoftDistance": 0.02, "Lighting": "AmbientTinted", "Texture": "", "SpinSpeedMin": -8.0, "SpinSpeedMax": 8.0, "PlateSides": 6, "PlateJitter": 0.25}
+      ]
+    }
+  ]
+}

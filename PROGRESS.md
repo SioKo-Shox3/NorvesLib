@@ -12471,15 +12471,129 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: 荒野で MegaGeometry の木へ向かってカメラを前後させ、メッシュ↔インポスターの 0.25 秒のディザの帯に、格子状の抜け（1 フレームの穴）が出ないこと。
 - Next: ランナーの評価者の反証（GBuffer・ビジビリティバッファの経路・RenderThread へ渡す値 = 危険地帯）。遷移のスイープの確かめは G12-GR48-CHECK。
 - Notes: 既知の限界（前の節に加えて）: 遷移中に `UpdateMeshProxy` で段の数が減ると、出ていく側の写しが無効な段を指したまま最大 0.25 秒残ることがある。`Docs/Architecture/GpuLayoutRegistry.md` の `customData.w` の説明は遷移の値を入れる前のまま。Viewport の無い互換の経路（`PrepareDrawCommands()`）は時計を受け取らないので即座に切り替わる。
-- U1 層のインポスターの契約（型・セルの帯の判定・影の板の GLSL）と FramePacket・ViewRenderContext の運び口: 着地(直し 0 回)
-- U2 SceneView に層のインポスターの登録と、セルの帯・個体ごとの段の選択・Mega の抑制と遷移の値を足す: 着地(直し 0 回)
-- U4 太陽の VSM へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
-- U5 CSM（カスケード）へインポスターの板の影を、被覆で切り抜いて落とす: 着地(直し 0 回)
-- U3 層のインポスターの個体を ImpostorBatch と影の投影物の一覧にして FramePacket へ運び、全体を確かめる（最後）: 着地(直し 1 回)
-### G12-GR48-LAYER-SHADOW（2026-11-18、run 20261118-135807）
-- Done: GR47 の散布（`MegaGeometryScatterComponent` が 1 本ごとに出す `MegaGeometryProxy`）を配置の層とし、Entity を作らずにインポスターの段を足した。`SceneView::SetMegaMeshImpostor` で MegaMesh ごとにアトラスを登録すると、層の個体を 64 m の XZ のセル（`LAYER_IMPOSTOR_CELL_SIZE_METERS`）に分け、セルの最短・最長の距離で全部メッシュ／全部インポスター／混在を決め、混在のセルだけ個体ごとに MESH-LOD-SELECT の画面の大きさの式とヒステリシスで段を選ぶ。インポスターの段の個体は Mega を抑え、CROSSFADE の遷移の値（1/127 の丸め）のディザでつなぐ。可視の個体はアトラスの組ごとに `ImpostorBatch` へ束ねて `ImpostorGBufferPass` で描く。影は遷移させず、Mega の元が遷移の終わりまで落とし、インポスターは Mega を隠したときだけ落とす。影を落とす個体は `ImpostorShadowCaster`・`ImpostorShadowAtlas` の一覧にしてメインのビューから `FramePacket` へ写し、太陽の VSM は新しい記録の種類（インポスターの板）を被覆で切り抜く版で描き（クリップマップの範囲と予算の内を近い順。キャッシュの無効化と統計付き）、CSM は VSM が太陽の影を持たないときだけ専用のパイプライン（`impostor_shadow.vert/.frag`）でカスケードごとに描く。影の到達距離（`MegaMeshImpostorDesc::ShadowDistance`）の外の個体と、種で影を切った個体（`MegaGeometryProxy::bCastShadow`）は投影物にしない。インポスターは TLAS に入れない。
-- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行。試験のターゲットを外した形）が、着地と同じ中身の作業ツリーで EXIT_CODE=0、`Game.exe` のリンクまで通った（`.harness/runs/20261118-135807/verify-G12-GR48-LAYER-SHADOW-U3-build.txt`）。このタスクで触ったシェーダー（`vsm_draw_alphaclip.vert`・`vsm_draw.vert`・`impostor_shadow.vert`・`impostor_shadow.frag`、`Common/ImpostorShadowCard.glsl` を include する入口）は `glslc` で全部終了コード 0。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致し、新規ファイルは BOM 付き・CRLF。verify の ctest の行と done-when (3) の試験（GR47 の層の試験のケース・`ImpostorShadowVulkanTest`）は人の決まり（試験を作らない・回さない）で作らず回していない。
-- 人が見るときの見どころ: 散布の MegaMesh に `SetMegaMeshImpostor` でアトラスを登録した場面で、低い太陽のもと、遠景の木・岩がインポスターに替わる距離の前後へカメラを動かし、(a) 替わる帯にディザの抜け・ポップが無いこと、(b) 地面の影が遷移の間に二重・欠けにならないこと、(c) 影の形が被覆どおりに切り抜かれ（板の四角い影にならない）、影の到達距離の外の個体は影を落とさないこと。
-- Next: ランナーの評価者の反証（GBuffer・VSM・CSM・RenderThread へ渡す値 = 危険地帯）。距離のスイープの確かめは G12-GR48-CHECK。
-- Notes: 採った判断: (1) 段はメッシュ（Mega）とインポスターの 2 つ。(2) 「チャンクの距離の帯」は SceneView が層の個体を 64 m のセルに分けて判定する形にした（散布のチャンクとは独立）。(3) 登録の無いメッシュの個体は今までどおり Mega で描くので、既定の見た目は変わらない。(4) VSM の影の板の塊の境界は中心 ± HalfSize の箱にし、CSM の深度の範囲（`PlanShadowFrame`）にも投影物の境界を足した。既知の限界: 描画のフレームを飛ばしたとき `RenderedObjectHistory` は層のインポスターの前のフレームの中心を補正しない（静的な散布は前後の World が同じなので速度は 0）。登録を解いたフレームは一覧から直ちに外れ、Mega の復帰は次のパケットなので 1 フレーム個体が欠けることがある。複数の Viewport では影の一覧はメインの最初の Viewport のものだけを使う。描画の結果は確かめていない（アプリの起動・撮影は回さない決まり）。
-- 要起票: 散布の種（`ScatterSystem`・`MegaGeometryScatterComponent`）から焼いたインポスターのアトラスを `SceneView::SetMegaMeshImpostor` へ登録する呼び出し元がどこにも無く（定義だけ）、ゲームの場面では層の個体がインポスターに替わらない。種とアトラスの紐づけと登録の経路（このタスクの paths の外の Scatter・Component・資産）は一覧のどのタスクにも無い。
+
+### GAME-GR137-ASSET-EDIT-WIRE を統合ブランチの上で閉じ直す（2026-11-18、run 20261118-113224 の反復 2）
+
+- Done: 統合ブランチ feature/scene-launcher（決定的な撮影 `viewport.capture` の項目）を取り込んだ。`NorvesLibBridgeAdapter.{h,cpp}` の衝突は両側を残す形で解いた（`BridgeAssetEditProtocol.h` と `BridgeCaptureProtocol.h` の両方を include。`getCapabilities` は `asset.reload`・`asset.edit` まで固定で並べ、撮影が利用可能なときだけ `viewport.capture` を足して閉じる）。資産の編集の実装（`assetGetProperties`・`assetSetProperty`・`assetSave`、`ENGINE_ASSET_EDIT_REJECTED` と reason、`previousValue`）は変えていない。
+- 確かめ: verify の 1 行目をこのマシンで回して終了コード 0。取り込み後の版（cd019d53）を SDK 入りの構成（`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp`）で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0、`NorvesLibBridgeAdapter.cpp` をコンパイルして Game.exe をリンク、error の行 0（`.harness/runs/20261118-113224/GAME-GR137-ASSET-EDIT-WIRE-U3-sdk-build-verify.txt`）。この枠の `build` は SDK なしの構成のまま。ctest の行と `BridgeAssetPropertyEditTest` は試験を作らない・回さない決まりで作っていない・回していない。
+- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。
+- Notes（人が見るときの見どころ）: SDK 入りの Game に NorvesEditor をつなぎ、能力一覧に `asset.edit` があることと、`Vfx/FootSplash.vfx.json` で一覧→設定→保存→一覧の値が一致すること、`asset.setProperty` の `previousValue`、型違い・範囲外・未知の場所・未知の資産の拒否（reason つき・値は変わらない）を見る。撮影・起動の確かめは回さない決まり。
+- U1 SDK に依らない資産の編集の変換と状態(BridgeAssetEditProtocol)を作る: 着地(直し 1 回)
+- U2 NorvesLibBridgeAdapter に asset.getProperties・setProperty・save をつなぎ、asset.edit を広告する: 着地(直し 0 回)
+## GAME-GR137-ASSET-EDIT-WIRE NorvesLibBridgeAdapter に資産のプロパティの一覧・設定・保存をつなぎ、能力 asset.edit を広告する（2026-11-18、run 20261118-080412 の反復 1〜2、完了）
+- Done: `Game/Bridge/BridgeAssetEditProtocol.{h,cpp}` に SDK の型を使わない `BridgeAssetEditService` を足した。params の JSON 文字列を受け、asset.getProperties・asset.setProperty・asset.save の結果の JSON か拒否（method・reason・path・英語の固定文の message）を返す。logicalPath ごとに文書を開いて保持し（開く処理は線に出さない）、未保存の編集は次の一覧に出る。setProperty は設定前の値を `previousValue` に必ず入れ、拒否のときは値を変えない。`BridgeAssetProperty` に `Description` を足し、VfxSchema の説明を一覧の `description` に出す。
+- Done: `NorvesLibBridgeAdapter` に `assetGetProperties`・`assetSetProperty`・`assetSave` を override し、`params.dump()` をサービスへ渡して、成功は result、拒否は `ENGINE_ASSET_EDIT_REJECTED` と `data {method, reason, path?}` で返す。サービスは最初の asset.* の呼び出しで `NORVES_SOURCE_ASSET_DIR`（`<repo>/Assets`）を根に作る。`bridge.getCapabilities` の末尾に `asset.edit` を足した（既存の能力の並びは変えていない）。
+- 確かめ: このマシンの SDK（`C:/Users/oreor/Documents/NorvesEditor`、7537f47 を含む）の `adapter.hpp` に `assetGetProperties` があること（終了コード 0）。`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp` で構成した Debug で `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`NorvesLibBridgeAdapter.cpp` のコンパイルと `Game.exe` のリンクあり、error の行 0）。証拠は `.harness/runs/20261118-080412/GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`。
+- Next: ランナーの評価者の反証（Bridge のプロトコルの境界）。人が見るときは、SDK 入りの Game に NorvesEditor をつなぎ、`Vfx/FootSplash.vfx.json` で一覧 → 設定 → 保存 → 一覧で値が一致すること、`previousValue` が設定前の値であること、型違い・範囲外・未知の場所・未知の資産をそれぞれの reason で拒否して前の値を保つことを見る。
+- Notes: verify の 1 行目は別マシンのパス（`C:/Users/KINGkawamura/...`。このマシンには無い）を見ているので、同じ中身をこのマシンのパスで確かめた（上の確かめ）。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `BridgeAssetPropertyEditTest` は作っていない。verify のビルドの行は試験のターゲットを外した `--target Game` で回した。アプリは起動していない。
+- Notes: 判断: logicalPath は Game の資産の根（`NORVES_SOURCE_ASSET_DIR`）からの相対の道（例 `Vfx/FootSplash.vfx.json`）。必須の欄の欠落・型違いも `ENGINE_ASSET_EDIT_REJECTED` で返す（logicalPath → unknown_asset、path → unknown_property、value → type_mismatch）。この枠の `build` は SDK なしの構成のまま置いている。
+### GAME-GR137-ASSET-EDIT-WIRE を閉じる（2026-11-18、run 20261118-080412 の反復 4）
+- Done: 判断役の判断（選択肢 1）どおり、verify の 1 行目を `C:/Users/KINGkawamura/...` を直に指す形から `Join-Path $env:USERPROFILE 'Documents/NorvesEditor/...'` で引く形に書き換え、項目を done にした。確かめる中身（SDK の `adapter.hpp` に `assetGetProperties` があること）は変えていない。実装は反復 1〜2 で着地したまま（54f4651f 以降 `Game`・`Library` の変更なし）。
+- 確かめ: 書き換えた行を cmd から回して終了コード 0、同じ形で無い文字列を探すと終了コード 1（判定が効いている）。証拠は `.harness/runs/20261118-080412/verify-GAME-GR137-ASSET-EDIT-WIRE-iter4-line1.txt`。このマシンの `adapter.hpp` の 230・243・255 行目に 3 つの仮想関数がある。ビルドの行の証拠は反復 2 の `GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`（SDK 入りの Debug で `--target Game` 終了コード 0、error の行 0）。
+- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
+- Notes: 要起票: `GAME-GR137-CAPTURE-WIRE` の verify の 1 行目（TASKS.md 8246 行付近）も `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を直に指しており、このマシンでは PathNotFound で終了コード 1 になる（この項目の反復 2 の再検証と同じ落ち方）。着手前に同じ形（`Join-Path $env:USERPROFILE ...`）に直す。
+- U1 SDK に依らない資産の編集の変換と状態(BridgeAssetEditProtocol)を作る: 着地(直し 1 回)
+- U2 NorvesLibBridgeAdapter に asset.getProperties・setProperty・save をつなぎ、asset.edit を広告する: 着地(直し 0 回)
+## GAME-GR137-ASSET-EDIT-WIRE NorvesLibBridgeAdapter に資産のプロパティの一覧・設定・保存をつなぎ、能力 asset.edit を広告する（2026-11-18、run 20261118-080412 の反復 1〜2、完了）
+- Done: `Game/Bridge/BridgeAssetEditProtocol.{h,cpp}` に SDK の型を使わない `BridgeAssetEditService` を足した。params の JSON 文字列を受け、asset.getProperties・asset.setProperty・asset.save の結果の JSON か拒否（method・reason・path・英語の固定文の message）を返す。logicalPath ごとに文書を開いて保持し（開く処理は線に出さない）、未保存の編集は次の一覧に出る。setProperty は設定前の値を `previousValue` に必ず入れ、拒否のときは値を変えない。`BridgeAssetProperty` に `Description` を足し、VfxSchema の説明を一覧の `description` に出す。
+- Done: `NorvesLibBridgeAdapter` に `assetGetProperties`・`assetSetProperty`・`assetSave` を override し、`params.dump()` をサービスへ渡して、成功は result、拒否は `ENGINE_ASSET_EDIT_REJECTED` と `data {method, reason, path?}` で返す。サービスは最初の asset.* の呼び出しで `NORVES_SOURCE_ASSET_DIR`（`<repo>/Assets`）を根に作る。`bridge.getCapabilities` の末尾に `asset.edit` を足した（既存の能力の並びは変えていない）。
+- 確かめ: このマシンの SDK（`C:/Users/oreor/Documents/NorvesEditor`、7537f47 を含む）の `adapter.hpp` に `assetGetProperties` があること（終了コード 0）。`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp` で構成した Debug で `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`NorvesLibBridgeAdapter.cpp` のコンパイルと `Game.exe` のリンクあり、error の行 0）。証拠は `.harness/runs/20261118-080412/GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`。
+- Next: ランナーの評価者の反証（Bridge のプロトコルの境界）。人が見るときは、SDK 入りの Game に NorvesEditor をつなぎ、`Vfx/FootSplash.vfx.json` で一覧 → 設定 → 保存 → 一覧で値が一致すること、`previousValue` が設定前の値であること、型違い・範囲外・未知の場所・未知の資産をそれぞれの reason で拒否して前の値を保つことを見る。
+- Notes: verify の 1 行目は別マシンのパス（`C:/Users/KINGkawamura/...`。このマシンには無い）を見ているので、同じ中身をこのマシンのパスで確かめた（上の確かめ）。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `BridgeAssetPropertyEditTest` は作っていない。verify のビルドの行は試験のターゲットを外した `--target Game` で回した。アプリは起動していない。
+- Notes: 判断: logicalPath は Game の資産の根（`NORVES_SOURCE_ASSET_DIR`）からの相対の道（例 `Vfx/FootSplash.vfx.json`）。必須の欄の欠落・型違いも `ENGINE_ASSET_EDIT_REJECTED` で返す（logicalPath → unknown_asset、path → unknown_property、value → type_mismatch）。この枠の `build` は SDK なしの構成のまま置いている。
+### GAME-GR137-ASSET-EDIT-WIRE を閉じる（2026-11-18、run 20261118-080412 の反復 4）
+- Done: 判断役の判断（選択肢 1）どおり、verify の 1 行目を `C:/Users/KINGkawamura/...` を直に指す形から `Join-Path $env:USERPROFILE 'Documents/NorvesEditor/...'` で引く形に書き換え、項目を done にした。確かめる中身（SDK の `adapter.hpp` に `assetGetProperties` があること）は変えていない。実装は反復 1〜2 で着地したまま（54f4651f 以降 `Game`・`Library` の変更なし）。
+- 確かめ: 書き換えた行を cmd から回して終了コード 0、同じ形で無い文字列を探すと終了コード 1（判定が効いている）。証拠は `.harness/runs/20261118-080412/verify-GAME-GR137-ASSET-EDIT-WIRE-iter4-line1.txt`。このマシンの `adapter.hpp` の 230・243・255 行目に 3 つの仮想関数がある。ビルドの行の証拠は反復 2 の `GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`（SDK 入りの Debug で `--target Game` 終了コード 0、error の行 0）。
+- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
+- Notes: 要起票: `GAME-GR137-CAPTURE-WIRE` の verify の 1 行目（TASKS.md 8246 行付近）も `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を直に指しており、このマシンでは PathNotFound で終了コード 1 になる（この項目の反復 2 の再検証と同じ落ち方）。着手前に同じ形（`Join-Path $env:USERPROFILE ...`）に直す。
+- U1 SDK に依らない資産の編集の変換と状態(BridgeAssetEditProtocol)を作る: 着地(直し 1 回)
+- U2 NorvesLibBridgeAdapter に asset.getProperties・setProperty・save をつなぎ、asset.edit を広告する: 着地(直し 0 回)
+## GAME-GR137-ASSET-EDIT-WIRE NorvesLibBridgeAdapter に資産のプロパティの一覧・設定・保存をつなぎ、能力 asset.edit を広告する（2026-11-18、run 20261118-080412 の反復 1〜2、完了）
+- Done: `Game/Bridge/BridgeAssetEditProtocol.{h,cpp}` に SDK の型を使わない `BridgeAssetEditService` を足した。params の JSON 文字列を受け、asset.getProperties・asset.setProperty・asset.save の結果の JSON か拒否（method・reason・path・英語の固定文の message）を返す。logicalPath ごとに文書を開いて保持し（開く処理は線に出さない）、未保存の編集は次の一覧に出る。setProperty は設定前の値を `previousValue` に必ず入れ、拒否のときは値を変えない。`BridgeAssetProperty` に `Description` を足し、VfxSchema の説明を一覧の `description` に出す。
+- Done: `NorvesLibBridgeAdapter` に `assetGetProperties`・`assetSetProperty`・`assetSave` を override し、`params.dump()` をサービスへ渡して、成功は result、拒否は `ENGINE_ASSET_EDIT_REJECTED` と `data {method, reason, path?}` で返す。サービスは最初の asset.* の呼び出しで `NORVES_SOURCE_ASSET_DIR`（`<repo>/Assets`）を根に作る。`bridge.getCapabilities` の末尾に `asset.edit` を足した（既存の能力の並びは変えていない）。
+- 確かめ: このマシンの SDK（`C:/Users/oreor/Documents/NorvesEditor`、7537f47 を含む）の `adapter.hpp` に `assetGetProperties` があること（終了コード 0）。`-DNORVES_BRIDGE_SDK_DIR=C:/Users/oreor/Documents/NorvesEditor/bridge/cpp` で構成した Debug で `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0（`NorvesLibBridgeAdapter.cpp` のコンパイルと `Game.exe` のリンクあり、error の行 0）。証拠は `.harness/runs/20261118-080412/GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`。
+- Next: ランナーの評価者の反証（Bridge のプロトコルの境界）。人が見るときは、SDK 入りの Game に NorvesEditor をつなぎ、`Vfx/FootSplash.vfx.json` で一覧 → 設定 → 保存 → 一覧で値が一致すること、`previousValue` が設定前の値であること、型違い・範囲外・未知の場所・未知の資産をそれぞれの reason で拒否して前の値を保つことを見る。
+- Notes: verify の 1 行目は別マシンのパス（`C:/Users/KINGkawamura/...`。このマシンには無い）を見ているので、同じ中身をこのマシンのパスで確かめた（上の確かめ）。
+- Notes: 試験は作らない決まり（絶対規則 11）なので `BridgeAssetPropertyEditTest` は作っていない。verify のビルドの行は試験のターゲットを外した `--target Game` で回した。アプリは起動していない。
+- Notes: 判断: logicalPath は Game の資産の根（`NORVES_SOURCE_ASSET_DIR`）からの相対の道（例 `Vfx/FootSplash.vfx.json`）。必須の欄の欠落・型違いも `ENGINE_ASSET_EDIT_REJECTED` で返す（logicalPath → unknown_asset、path → unknown_property、value → type_mismatch）。この枠の `build` は SDK なしの構成のまま置いている。
+### GAME-GR137-ASSET-EDIT-WIRE を閉じる（2026-11-18、run 20261118-080412 の反復 4）
+- Done: 判断役の判断（選択肢 1）どおり、verify の 1 行目を `C:/Users/KINGkawamura/...` を直に指す形から `Join-Path $env:USERPROFILE 'Documents/NorvesEditor/...'` で引く形に書き換え、項目を done にした。確かめる中身（SDK の `adapter.hpp` に `assetGetProperties` があること）は変えていない。実装は反復 1〜2 で着地したまま（54f4651f 以降 `Game`・`Library` の変更なし）。
+- 確かめ: 書き換えた行を cmd から回して終了コード 0、同じ形で無い文字列を探すと終了コード 1（判定が効いている）。証拠は `.harness/runs/20261118-080412/verify-GAME-GR137-ASSET-EDIT-WIRE-iter4-line1.txt`。このマシンの `adapter.hpp` の 230・243・255 行目に 3 つの仮想関数がある。ビルドの行の証拠は反復 2 の `GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`（SDK 入りの Debug で `--target Game` 終了コード 0、error の行 0）。
+- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
+- Notes: 要起票: `GAME-GR137-CAPTURE-WIRE` の verify の 1 行目（TASKS.md 8246 行付近）も `C:/Users/KINGkawamura/Documents/NorvesEditor/...` を直に指しており、このマシンでは PathNotFound で終了コード 1 になる（この項目の反復 2 の再検証と同じ落ち方）。着手前に同じ形（`Join-Path $env:USERPROFILE ...`）に直す。
+### GAME-GR137-ASSET-EDIT-WIRE を統合ブランチへ戻す（2026-11-18、run 20261118-113224 の反復 1）
+- Done: 実装は変えていない（`afc92c72`・`256b6334` で着地した `BridgeAssetEditProtocol.{h,cpp}` と `NorvesLibBridgeAdapter` の 3 メソッドと能力 `asset.edit` の広告のまま）。統合ブランチでは項目が todo のままで実装が未統合だったので、確かめ直して done に戻した。
+- 確かめ: verify の 1 行目をこのマシンで回して終了コード 0（`.harness/runs/20261118-113224/GAME-GR137-ASSET-EDIT-WIRE-verify1.txt`）。ビルドの行は試験のターゲットを外した `cmake --build build --config Debug --target Game -- /m:1` で終了コード 0、error の行 0（`GAME-GR137-ASSET-EDIT-WIRE-build.txt`）。この枠の `build` は SDK なしの構成なので、アダプタの新しい経路のコンパイルの証拠は run 20261118-080412 の SDK 入りの Debug のビルド（`GAME-GR137-ASSET-EDIT-WIRE-U2-verify.txt`、終了コード 0）のまま。ctest の行は試験を回さない決まりで回していない。
+- Next: ランナーの再検証と評価者の反証（Bridge のプロトコルの境界）。人が見るときの見どころは反復 1〜2 の節のとおり。
+
+## G12-GR93-EDIT-VIEW ImGui の配置の画面でマーカーを置き・選び・動かし・保存し、持ち場・点・痕跡をデバッグ描画で見る（2026-11-18、run 20261118-113228）
+- Done: `Library/Modules/Gameplay` の `LevelEditOperations`（`Gameplay/Level/LevelEditOperations.h`）: 光線 → 地面の当たり（物理の光線。当たらなければ高さ場を 1 m 刻みと二分 16 回）、種類（持ち場・寝床・ファストトラベル点・見どころ・動物の出現点・痕跡・痕跡の点）を指定した配置（地面 + GroundOffset、吸着の設定で合わせ直す）、Key の重複の拒否と自動の採番（`<種類>_001` から最小の空き番号）、光線での選択（ObjectId で保持）、移動と子の痕跡の点の再吸着、削除、全マーカーの再吸着、Key での検索（領域の外の参照）、マーカーのルートだけを一時ファイル → 置換で保存（SceneSerializer::SaveToFile と同じ壊れない置換）、読み込み（文書を解析できてから既存のマーカーを入れ替える）。持ち場には球の EncounterZone（半径 10 m、センサー無効）を付ける。作ったルートと消す Entity を `ILevelEditEntityOwner` で持ち主へ知らせる。
+- Done: `Game/Gameplay/Level/LevelMarkerDebugDraw`: 持ち場の球・箱・円柱、寝床・ファストトラベル点・見どころ・出現点の印、痕跡の Catmull-Rom のスプラインを、カメラに近い順に、距離（既定 300 m）と、キューの残り・設定の上限（既定 32768 頂点）の小さい方に収めて `DebugDrawQueue` へ描く（`kMaxDebugLineVertices` を超えない）。選択中は白。
+- Done: `Game/Gameplay/Level/LevelEditView`（`IImGuiView`、窓「配置の編集」）: `--imgui` のときだけ `GameApplicationHandler::OnPostInitialize` で `RegisterImGuiView`、`OnPreShutdown` で解除。今のゲームモードの段へ小さな SubRoutine を積んで GameModeContext を借り、ボタンの命令はモードの Tick（PreSimulation）で実行する。置いた・読み込んだルートは `GameModeScope::TrackObject`（モードを出ると消える）、消す前は部分木ごと `Untrack`（`--load-scene` で読んだルートを消しても、モードの終わりに解放済みのポインタを触らない）。保存先の既定は `Assets/Levels/Sample/Gameplay.scene.json`。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた版。`LevelEditOperations.cpp`・`LevelMarkerDebugDraw.cpp`・`LevelEditView.cpp` のコンパイルと `Game.exe` まで）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: ランナーの評価者の反証（危険地帯: Object の寿命。エディタの生成・破棄とゲームモードの追跡）。見本の `Gameplay.scene.json` を作って撮影で確かめるのは G12-GR93-EDIT-CHECK。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when (3) の `LevelEditOperationsTest`・`BridgeAssetPropertyEditTest` のケースと `Test/` の CMake は作っていない。verify の ctest の行は回していない。
+- Notes: 人が見るときの見どころ: `--scene=sandbox --imgui` で窓「配置の編集」を開き、種類を選んで「画面の中心に置く」→ 地面にマーカーの印が出る。痕跡を置いて選んだまま「痕跡の点」を何個か置くと紫のスプライン。「保存」→「読み込み」で同じ配置に戻る。窓の統計の頂点数が 65536 を超えないこと。
+- Notes: 判断: Gameplay.scene.json にはマーカー（LevelMarkerComponent を持つルートとその部分木）だけを保存する（World 全体の SaveToFile は地形なども含むため使わない）。読み込みはマーカーを入れ替える（ファイルを開けない・解析できないときは何も変えない）。痕跡の点にも Key（`trailpoint_NNN`）を付け、吸着は親の痕跡の設定に従う。
+- Notes: 既知の限界: 光線は画面の中心だけ（マウスの位置では置かない）。持ち場の形・半径を編集する欄は無い（球 10 m で置く。箱・円柱は読み込んだ文書の値で描く）。再吸着（ReSnapAll）は物理の光線に頼るので、コライダーの無い高さ場では合わない（配置の光線は高さ場にも当たる）。描画のために毎フレーム World の木をたどる（`--imgui` のときだけ）。
+- U4 退避した配置の編集の操作を当て直し、読み込みの事前解析と Entity の持ち主への通知を足す: 着地(直し 0 回)
+- U5 退避したマーカーのデバッグ描画を当て直す: 着地(直し 0 回)
+- U3 ImGui の配置の画面と --imgui のときだけの登録: 着地(直し 0 回)
+
+## G10-GR60-VANISH-EFFECT ディゾルブ・表面のエミッタ・単発の放出・灰雲と破片を時間の割り付けで束ねる消滅の効果（2026-11-18、run 20261118-113220）
+- Done: 消滅の効果 `VanishEffect`（`Library/Core/Public/Particle/VanishEffect.h`）。開始からの時刻でディゾルブの閾値のカーブ・エミッタごとの有効と生成率・時刻ごとの単発の放出を割り付け、World の時間のチャンネル（ヒットストップで 0）の dt で進める（dt ≤ 0 なら進まない）。外から呼べる口は `SetDissolveThreshold`（`SkinnedMeshComponent::SetDissolveThreshold` へ）・`SetEmitterEnabled`（有効と生成率の上書き）・`EmitBurst`（`VfxEffectSystem::RaiseGpuBurst` = GR57 の単発の放出の列の前の口）の 3 つ。単発の放出は「前の時刻 < 放出の時刻 ≤ 今の時刻」で 1 回ずつ出すので、刻みの幅によらない。
+- Done: 時間の割り付けの定義 `norves.vanish`（`VanishEffectDefinition.h`。長さ・閾値のキー・縁の発光の輝度・エミッタごとの有効と生成率のキー・単発の放出の列・参照する VFX の定義）と読み込み `LoadVanishEffectFile`。必須の欠落・未知のキー・負の時間・時刻の逆順・存在しないエミッタの参照を「<ファイル>: <キーの道>: <理由>」で拒否する。粒の定義は GR136 の VFX の定義（`VfxSchema.cpp`）に載せ、時間の割り付けだけ小さい JSON を足した。
+- Done: VFX の定義の書式に InitShape の SkinSurface（5）・Bone（6）とスキンの引数、InitLifetime の `LifetimeMax`（寿命の幅）、GpuSpriteRenderer の自転の速さ・板の多角形（辺の数・歪み）・大きさの上限（m）・画面の被覆の上限（画面の高さの割合）を足した（焼いた形式は版 4 で、旧版は既定値で読む。`GpuEmitterParams` は 400 B）。効果のシステムにエミッタごとの有効・生成率の上書きとスキンの源の結び付け（`SetInstanceSkinSource`）。粒のシェーダーで寿命の幅・板の自転と多角形の切り抜き・大きさと被覆の上限を描く。
+- Done: データ `Assets/Effects/ShishaVanish_Ash.{vfx,vanish}.json`（6 秒。灰 Ash: 低彩度・寿命 2〜4 秒・上昇と弱い重力・地面で止まって薄れる / 灰雲 AshCloud: 大きく薄いソフトの粒を数十個・大きさと被覆の上限 / 破片 Debris: 多角形の板・自転・落下・地面で止まる。縁の発光 2500 nit）と `ShishaVanish_Light.{vfx,vanish}.json`（5 秒。光 Glow・GlowBurst: 加算・短い寿命・上昇だけ・地面に当たらない。縁の発光 9000 nit）。値はすべて仮。
+- Done: 表面の標本の表（SURF）が無いスキンメッシュでも、SkinSurface のエミッタが頂点を一様に引いて粒を出す（表のあるメッシュは今と同じ式・同じ乱数の番号）。
+- Done: シ者の確かめの場面 `dissolve`（`Game/GameModes/ShishaShowcase/ShishaShowcaseDissolveScene.cpp`）と起動引数 `--shisha-vanish-set=ash|light`（既定 ash。開発ビルドだけで、重複・ほかの値・`--shisha-showcase` なしはエラー）。代役にディゾルブの材質（定義の縁の発光の輝度）を当て、準備から 1 秒（仮）待って効果を最初から最後まで 1 回流し、`SHISHA_SHOWCASE scene=dissolve stage=start|threshold50|end set=<セット> particles=<数>` を出す。終わった後は残った粒と消えた代役をそのまま置く。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた先頭で、`GpuParticleSimulationPass.cpp`・`ShishaShowcaseDissolveScene.cpp` のコンパイルと `Game.exe` のリンクまで）。`ParticleSpawn.comp` の `glslc --target-env=vulkan1.3` 終了コード 0。変えたファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- Next: ランナーの評価者の反証（危険地帯: RenderThread のパーティクル・アセットの読み込み）。起動しての確かめは G10-GR60-VANISH-CHECK。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (4) `VfxEffectSystemTest` への追加はしていない（`Docs/Testing.md` の 3 点も書かない）。ctest・撮影・GPU の計測は回さない決まり。
+- Notes: 人が見るときの見どころ: `Game.exe --shisha-showcase=dissolve --shisha-vanish-set=ash`（と `light`）。準備から約 1 秒で消滅が始まり、ログに `SHISHA_SHOWCASE scene=dissolve stage=start|threshold50|end` が出る。灰: 縁の帯から灰が上がって地面に積もる・灰雲・多角形の破片の板が回って落ちる。光: 縁の発光が強く、加算の光の粒が上がるだけ。
+- Notes: 判断: 選定課題 G10-S4（消え方の表現）はタスクの notes どおり灰と光の 2 セットを両方持つ。崩壊（C）は同じ枠で破片の量の値を上げれば作れる。
+- Notes: 判断: シ者の場面の代役は生の glTF（`ValidU8Float.gltf`）で SURF の表が無いので、表の無いスキンメッシュでは頂点を一様に引く代わりの道を足した（頂点の密度に比例し、面積には比例しない）。起動引数は既存の `--shisha-*` と同じく `Game/GameApplicationHandler.*` で受ける（paths の外だが、起動引数の置き場がそこにしか無い）。
+- Notes: 既知の限界: 撃破の流れ（G8 の `OnDefeatStarted`・`DefeatBloodPresenter`）への結線はしていない（確かめの場面だけ）。灰の風は GR57 の粒が受ける風の入力に任せる。
+- U4 消滅の効果の定義（norves.vanish）と、ファイルとキーの分かるエラーで拒否する読み込みを作る: 着地(直し 0 回)
+- U1 VFX 定義の書式にスキンの形・寿命の幅・板の自転と多角形・大きさと画面の被覆の上限を足し、GPU の放出の記述に欄を足す: 着地(直し 1 回)
+- U2 効果のシステムに、エミッタごとの有効・生成率の上書きとスキンの源の結び付けを足し、新しい欄を GPU の記述へ詰める: 着地(直し 0 回)
+- U3 粒のシェーダーで寿命の幅・板の自転と多角形の切り抜き・大きさと画面の被覆の上限を描き、スキンの形の単発の放出を表面から出す: 着地(直し 0 回)
+- U6 灰と光の 2 セットのデータ（VFX 定義と消滅の割り付け）を置く: 着地(直し 0 回)
+- U5 消滅の効果の本体 VanishEffect（時間の割り付けを World の dt で進め、3 つの口を呼ぶ）: 着地(直し 0 回)
+- U7 シ者の確かめの場面 dissolve と --shisha-vanish-set=ash|light: 着地(直し 0 回)
+- U9 表面の標本の表が無いスキンメッシュでも SkinSurface のエミッタが頂点から粒を出すようにする（統合した先頭で Game のビルドまで確かめる）: 着地(直し 0 回)
+
+- U1 毛の照明の GLSL ライブラリ FurShading.glsl を作り、流れの角の符号化・復号をそこへ移す: 着地(直し 0 回)
+- U2 照明の定数に Fur の Kajiya-Kay・透過・SSAO の重みを足し、UBO を広げる: 着地(直し 0 回)
+- U4 SSR で Fur の画素を飛ばす: 着地(直し 0 回)
+- U3 照明の 3 つの口の Fur の分岐を FurShading.glsl へつなぎ、SSAO を Fur で弱める: 着地(直し 0 回)
+- U5 流れの角の符号化・復号の C++ の参照を置く: 着地(直し 0 回)
+- U6 FurRendering.md に照明の節を書き、全体のビルドと GLSL の確かめを通す: 着地(直し 0 回)
+### G6-GR34-FUR-LIGHTING Fur の画素をラップの拡散・Kajiya-Kay の 2 ローブ・逆光の透過で照らし、SSAO を弱めて SSR から外す（2026-11-18、run 20261118-130153）
+- Done: 新規 `Assets/Shaders/Common/FurShading.glsl` に流れの角の基底・符号化・復号（`FurFlowBasis`・`FurEncodeFlowAngle`・`FurDecodeFlowTangent`。`FurStrand.glsl` から同じ式のまま移し、FurStrand.glsl は include する）、照明の定数の読み出し、粗さから Kajiya-Kay の指数（α = r²、`2/α² − 2` を [1, 2048]）、濡れの口 `FurApplyWetLobes`（今は恒等）、`EvaluateFurDirect`（拡散 = ラップ (N·L + w)/(1 + w) × 材質 AO、鏡面 = T を法線の向きへずらした T1・T2 の 2 ローブで 1 つめは色なし・2 つめは毛色、逆光の透過 = pow(saturate(V·−L), p) × (1 − AO) × 毛色 × 光 × 強さ × 影）を置いた。`Common/ShadingModels.glsl` の 3 つの口の Fur の分岐は、面の補正で P1 と書き込み法線から T を復元して環境光の粗さを下限まで上げ、光源ごとの口で `EvaluateFurDirect` を呼ぶ（G5 の最初の式を置き換えた）。`lighting.frag` は SSAO を Fur の画素だけ `mix(1, ssao, furShadingParams.w)` で掛け、Fur でない画素は前のまま `ao *= ssao`。`ssr.frag` は `Common/GBufferEncoding.glsl` の `GBufferDecodeNormal` で ID を読み、Fur の画素はシーンの色をそのまま返す。照明の定数 `ShadingModelLightingConstants` に Fur の 8 つの欄（ずらし 2・強さ 2・2 つめの指数の倍率・透過の指数・透過の強さ・SSAO の割合。既定はすべて仮）を足し、`shadingModelParams[1]` と末尾の新しい `furShadingParams`（offset 1200）へ詰めて照明の UBO を 1216 バイトにした（`GpuLayoutRegistry.md` を更新）。C++ の参照 `Library/Core/Private/Rendering/FurGBufferEncoding.h/.cpp` に GLSL と同じ式の基底・符号化・復号を置き、Core の CMakeLists に登録した。`Docs/Architecture/FurRendering.md` に照明の節（式・定数の表・SSAO と SSR の扱い）と既知の限界を書いた。
+- 証拠: `.harness/runs/20261118-130153/verify-G6-GR34-FUR-LIGHTING-U6.txt`（HEAD b3bbb644 で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0・エラー 0 で Game.exe まで。`lighting.frag`・`ssr.frag`・`skinned_fur_gbuffer.frag`・`.vert` を BOM を外した写しから glslc にかけて 4 本とも終了コード 0・`GLSL_CHECK OK`。シェーダーは実行時コンパイルなのでビルドでは GLSL の誤りが出ないため別に確かめた）。試験は作らない・回さない決まりなので、done-when の試験（`FurGBufferPackingTest`・`ShadingModelContractTest` の走査・`RenderingFurLightingVulkanTest`）は作っておらず、verify の ctest の行は回していない。撮影・計測の確かめは回さない決まり（Game.exe は起動していない）。
+- Next: ランナーの評価者の反証（危険地帯: ライティング・GBuffer・照明の UBO の Public API）。撮影での目視は G6-GR34-FUR-CHECK、毛のシーンは G6-GR34-COAT-SCENE、濡れの応答は G6-GR35-WET-LOOK。人が見るときの見どころ: 今はどのシーンにも Fur の材質が無く、Fur でない画素の照明・SSAO・SSR の式は前のままなので、Rendering3DTest（天球・地面・球・岩）とランチャーの各シーンの見た目は変わらない。毛のシーンができたら、逆光で毛の縁が明るくなるか、流れに沿ったハイライトの帯が 2 本出て 2 本目に毛色が付くか、SSAO の on/off で毛の暗さの荒れが少ないか、SSR を on にしても毛の画素に反射が乗らないかを見る。
+- Notes: 判断: 毛の断片シェーダー（`skinned_fur_gbuffer.frag`）は paths の外なので、粗さは今のまま材質の一つの値（`furShellParams.w`）を書き、照明はその粗さから指数を決める。SSAO の割合の既定は 0.3、ずらしは ±0.1、強さは 0.05、2 つめの指数の倍率は 0.5、透過の指数 8・強さ 1（すべて仮。`LightingPass::SetShadingModelLightingConstants` で差し替える）。毛の AO は殻の自己遮蔽なので直接光の拡散にも掛ける（ほかの材質は直接光に AO を掛けない）。
+- Notes: 要起票: 毛の断片シェーダー `skinned_fur_gbuffer.frag` が GBuffer の粗さを材質の一つの値で書き、領域の表（`FurMaterialRegion::lobes`）から書いていない。G6-GR34-FUR-LIGHTING の done-when が前提にする「Fur の FS が領域の表から粗さを書く」を受け持つタスクが TASKS.md に無く、領域ごとのハイライトの違いが出ない。
+
+- U1 シーンの読み込みを「読み・解析」「スキーマ照合」「ルート 1 つずつの生成」の 3 段に分ける: 着地(直し 2 回)
+- U2 payload の種類 `scene` とそのハンドラーを足す: 着地(直し 0 回)
+- Done（2026-11-18、run 20261118-124726 の反復 1）: `SceneSerializer` のシーン読み込みを 3 段に分けた。(a) ワーカーで呼べる `ReadDocumentFromFile`・`ReadDocumentFromAsset`（読みと JSON の構造の解析。World・ClassRegistry・TypeRegistry に触れない）、(b) GameThread の `BeginSpawn`（版 1・2 の移行と物理量の検証、`ReconcileWithSchema` 相当の照合、一時の ResourceRegistry を持つ `SceneSpawnJob` を作る）、(c) `SpawnNextRoot`（ルートを 1 つだけ生成し、最後のルートの後に EntityRefId を張り替える）と `CancelSpawn`（完了前に生成したルートを World から消す）。`LoadIntoWorld`・`LoadIntoWorldFromAsset` は (a)→(b)→(c) を順に回す形にし、統計・戻り値・ルートの順・ログの文言を変えていない。フレームをまたぐので、生成物は生ポインタでなく Entity の ObjectId と Component の ComponentId で控え、張り替えのときに World から引き直す。
+- Done（同）: セルの payload の種類 `scene`（`kScenePayloadKind`）と `ScenePayloadHandler`（`WorldPayloadHandlers`）を足した。Prepare（ワーカー）で `ReadDocumentFromAsset` し、準備済みの文書を排他つきの表に置く。CommitStep の最初の歩で `BeginSpawn`、以後の歩で `SetRootsPerStep`（既定 1）ぶん `SpawnNextRoot` を進める。セルが生成したルートの ObjectId を持ち（シーンのルートは `LoadIntoWorld` と同じく World のルートのまま）、休眠はルートの `SetActive`、解放は生成の途中なら `CancelSpawn`、済んでいればルートの `RemoveEntity` を予算ごとに行う。GameModeScope の `TrackStreaming` の Cleanup（StopAndJoin）でルートが消え、Component の資産の束縛も外れる。
+- Notes: `TryParseJson` は版 1・2 の移行と物理量の検証で ClassRegistry・TypeRegistry を引くので、ワーカーでは構造の解析（`ParseSceneDocumentStructure`）だけを行い、移行と検証（`FinalizeSceneDocument`）は `BeginSpawn` の頭で GameThread に回した。`TryParseJson` 自体の振る舞いは変えていない。資産パスの検証の `Identity` は排他つきの IdentityPool なのでワーカーから作ってよい。
+- Notes: done-when の `StreamingScenePayloadTest` は絶対規則 11 に従って作っていない。`SceneSerializerTest`・`SceneFileRoundTripTest`・`StreamingPayloadTest`・`StreamingCellStateMachineTest` はこのブランチに無く回していない。確かめは `cmake --build build --config Debug --target Game -- /m:1` の終了コード 0（`.harness/runs/20261118-124726/G12-GR40-SCENE-PAYLOAD-U2-verify.txt`）。
+- Next: Game のどのモードも `ScenePayloadHandler` をまだ登録していない。セルのマニフェストに `{"kind": "scene", "logicalPath": ...}` を書くモードが登録するときに、World と AssetSystem をハンドラーより長く生かし、`TrackStreaming` でモードの終わりにセルを外す。
+
+- U1 DefeatGate に受け付け直し(Rearm)と進行に数えるかの引数を足し、GameplayModule は数える撃破だけを進行へ流す: 着地(直し 0 回)
+- U2 EnemyDefinition に countsForProgression(既定 true)を足して読み込む: 着地(直し 0 回)
+- U3 EnemyComponent が BeginPlay で自分の Id を受け付け直し、撃破の開始で定義の countsForProgression を渡す: 着地(直し 0 回)
+
+## 2026-11-18 G8-GR17-ENEMY-COMPONENT-P1（run 20261118-144514 の反復 1、完了）
+- Done: `DefeatGate::Rearm(enemyId)` を足した。完了済みの Id に受け付け直しの印を付け、次の `BeginDefeat` でその項目を退役させて新しい項目を末尾に足す（保留の添字を動かさず、通知中に呼ばれても同じ `Update` では完了しない）ので、`OnDefeatCompleted` がもう 1 回だけ出る。受け付け直していない完了済みの Id への `BeginDefeat` と、保留中の Id への `Rearm` は無視して `GetIgnoredBeginCount` を増やす。初めての Id・不正な Id への `Rearm` は何もしない。`BeginDefeat(enemyId, bCountsForProgression = true)` にし、数える撃破の完了だけを出す `OnProgressionDefeatCompleted` を `OnDefeatCompleted` より先に配る。GameplayModule は `ProgressionState::MarkDefeated` をこの新しい通知へ付け替えたので、数えない撃破は `OnDefeatCompleted`・領域の `MarkCleared` には届くが、進行の診断の数も警告も増やさない（数える撃破で進行の定義に無い Id は今と同じく警告と診断の数）。`ProgressionState` は変えていない（同じ Id を二重に記録せず、`OnFinalUnlocked` は 1 回だけ）。`EnemyDefinition` に `countsForProgression`（既定 true。真偽値でなければファイルとキーのパス付きで拒否）を足し、`EnemyComponent` は BeginPlay で自分の EnemyId を `Rearm` し、撃破の開始で定義の値を `BeginDefeat` へ渡す。
+- 証拠: `.harness/runs/20261118-144514/verify-G8-GR17-ENEMY-COMPONENT-P1-U3.txt`（`cmake --build build --config Debug --target Game -- /m:1`。タスクの verify のビルドの行から試験のターゲットを外した形。Game.exe を生成して BuildExitCode=0・エラー 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。
+- 試験: done-when (3) の試験のケースと verify の ctest の行は、人の決まり（試験を作らない・回さない。試験は TEST-REMOVE-1114 で消してある）により作らず回していない。
+- 人が見るときの見どころ: シ者のいるシーン（戦闘の垂直スライス）で敵を倒し、ランチャーへ戻って同じシーンへ入り直したとき、同じ敵をもう一度倒せて撃破の完了（消える・領域が Cleared になる）まで進むこと。
+- Next: ランナーの評価者の反証（Object の寿命・撃破の通知の順）。
+- Notes: 既知の限界: 前の敵の撃破が保留中（保留の解消を待つ間）に同じ Id の敵が生成されると、その `Rearm` は決まりどおり無視されるので、前の撃破が完了した後に新しい敵を倒しても撃破ゲートに受け付けられない。シーンの入り直しでは前の World の破棄で保留が外れるが、完了は次の `DefeatGate::Update` なので、その前に新しい敵の BeginPlay が走る順だとこの経路に入る。退役した項目は消さずに残す（1 回の入り直しにつき Id 1 つ分）。

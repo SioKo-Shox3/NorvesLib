@@ -590,4 +590,180 @@ namespace NorvesLib::Core::Streaming
         const auto it = m_States.find(PayloadKey(context));
         return it == m_States.end() ? StreamingPayloadBytes{} : it->second.ResidentBytes;
     }
+
+    ScenePayloadHandler::ScenePayloadHandler(World& world, const Asset::AssetSystem& assetSystem)
+        : m_World(world), m_AssetSystem(assetSystem)
+    {
+    }
+
+    void ScenePayloadHandler::SetRootsPerStep(uint32_t count)
+    {
+        m_RootsPerStep = count == 0 ? 1 : count;
+    }
+
+    uint32_t ScenePayloadHandler::GetRootsPerStep() const
+    {
+        return m_RootsPerStep;
+    }
+
+    const Container::VariableArray<uint64_t>* ScenePayloadHandler::FindCellRoots(StreamingCellId cell, uint32_t payloadIndex) const
+    {
+        const auto it = m_States.find(PayloadKey(cell, payloadIndex));
+        return it == m_States.end() ? nullptr : &it->second.RootIds;
+    }
+
+    const char* ScenePayloadHandler::GetKind() const
+    {
+        return kScenePayloadKind;
+    }
+
+    EStreamingPrepareResult ScenePayloadHandler::Prepare(const StreamingPayloadContext& context, const StreamingCancelToken& cancel)
+    {
+        if (cancel.IsCancelled())
+        {
+            return EStreamingPrepareResult::Cancelled;
+        }
+        Scene::SceneDocument document;
+        if (context.Desc == nullptr ||
+            !Scene::SceneSerializer::ReadDocumentFromAsset(m_AssetSystem, Container::AnsiStringView(context.Desc->LogicalPath), document))
+        {
+            return EStreamingPrepareResult::Failed;
+        }
+        if (cancel.IsCancelled())
+        {
+            return EStreamingPrepareResult::Cancelled;
+        }
+        Thread::ScopedLock lock(m_PreparedMutex);
+        m_Prepared[PayloadKey(context)] = std::move(document);
+        return EStreamingPrepareResult::Success;
+    }
+
+    EStreamingStepResult ScenePayloadHandler::CommitStep(
+        const StreamingPayloadContext& context, StreamingStepCursor& cursor, uint64_t& outCommittedBytes)
+    {
+        outCommittedBytes = 0;
+        const auto key = PayloadKey(context);
+        if (cursor.Step == 0)
+        {
+            if (m_States.find(key) != m_States.end())
+            {
+                return FailPayload(GetKind(), context, "シーンの状態が既にあります");
+            }
+            if (context.Desc == nullptr)
+            {
+                return FailPayload(GetKind(), context, "ペイロードの記述がありません");
+            }
+            Scene::SceneDocument document;
+            {
+                Thread::ScopedLock lock(m_PreparedMutex);
+                const auto it = m_Prepared.find(key);
+                if (it == m_Prepared.end())
+                {
+                    return FailPayload(GetKind(), context, "準備済みのシーンがありません");
+                }
+                document = std::move(it->second);
+                m_Prepared.erase(it);
+            }
+            PayloadState state;
+            if (!Scene::SceneSerializer::BeginSpawn(std::move(document), Container::String(context.Desc->LogicalPath), state.Job))
+            {
+                return FailPayload(GetKind(), context, "シーンの照合に失敗しました");
+            }
+            m_States.try_emplace(key, std::move(state));
+            ++cursor.Step;
+            return EStreamingStepResult::InProgress;
+        }
+        const auto it = m_States.find(key);
+        if (it == m_States.end())
+        {
+            return FailPayload(GetKind(), context, "シーンの状態がありません");
+        }
+        auto& state = it->second;
+        for (uint32_t count = 0; count < m_RootsPerStep; ++count)
+        {
+            Container::VariableArray<Entity*> roots;
+            const auto result = Scene::SceneSerializer::SpawnNextRoot(m_World, state.Job, &roots);
+            for (Entity* root : roots)
+            {
+                state.RootIds.push_back(root->GetObjectId());
+            }
+            if (result == Scene::ESceneSpawnStepResult::Done)
+            {
+                state.Job = Scene::SceneSpawnJob{};
+                return EStreamingStepResult::Done;
+            }
+        }
+        ++cursor.Step;
+        return EStreamingStepResult::InProgress;
+    }
+
+    bool ScenePayloadHandler::IsPayloadReady(const StreamingPayloadContext& context) const
+    {
+        const auto it = m_States.find(PayloadKey(context));
+        return it != m_States.end() && !it->second.Job.IsValid();
+    }
+
+    void ScenePayloadHandler::SetDormant(const StreamingPayloadContext& context, bool bDormant)
+    {
+        if (const auto* roots = FindCellRoots(context.Cell, context.PayloadIndex))
+        {
+            for (uint64_t id : *roots)
+            {
+                if (Entity* root = m_World.FindEntityByObjectId(id))
+                {
+                    root->SetActive(!bDormant);
+                }
+            }
+        }
+    }
+
+    EStreamingStepResult ScenePayloadHandler::UnloadStep(const StreamingPayloadContext& context, StreamingStepCursor& cursor)
+    {
+        ++cursor.Step;
+        const auto it = m_States.find(PayloadKey(context));
+        if (it == m_States.end())
+        {
+            return EStreamingStepResult::Done;
+        }
+        auto& state = it->second;
+        if (state.Job.IsValid())
+        {
+            Scene::SceneSerializer::CancelSpawn(m_World, state.Job);
+            state.RootIds.clear();
+            m_States.erase(it);
+            return EStreamingStepResult::Done;
+        }
+        for (uint32_t count = 0; count < m_RootsPerStep && state.RemovedCount < state.RootIds.size(); ++count)
+        {
+            if (Entity* root = m_World.FindEntityByObjectId(state.RootIds[state.RemovedCount++]))
+            {
+                m_World.RemoveEntity(root);
+            }
+        }
+        if (state.RemovedCount < state.RootIds.size())
+        {
+            return EStreamingStepResult::InProgress;
+        }
+        m_States.erase(it);
+        return EStreamingStepResult::Done;
+    }
+
+    void ScenePayloadHandler::DiscardPrepared(const StreamingPayloadContext& context)
+    {
+        const auto key = PayloadKey(context);
+        {
+            Thread::ScopedLock lock(m_PreparedMutex);
+            m_Prepared.erase(key);
+        }
+        const auto it = m_States.find(key);
+        if (it != m_States.end() && !it->second.Job.IsValid() && !it->second.Job.IsFinished() && it->second.RootIds.empty())
+        {
+            m_States.erase(it);
+        }
+    }
+
+    StreamingPayloadBytes ScenePayloadHandler::GetResidentBytes(const StreamingPayloadContext&) const
+    {
+        return StreamingPayloadBytes{};
+    }
 } // namespace NorvesLib::Core::Streaming
