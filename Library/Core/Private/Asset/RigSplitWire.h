@@ -2,6 +2,7 @@
 // 分離role専用の有限wire外枠。受入済みClipBank codecの意味とbytesは変更しない。
 #include "Animation/RigV1Types.h"
 #include "Asset/SkinnedMeshLodTables.h"
+#include "Asset/SurfaceSampleTable.h"
 #include "Resource/SkeletalSubMesh.h"
 namespace NorvesLib::Core::Skeletal::SplitWire
 {
@@ -60,5 +61,12 @@ namespace NorvesLib::Core::Skeletal::SplitWire
     RigV1Status ValidateSkinLodTables(const SkinLodTablesV1& tables, Container::Span<const uint32_t> allIndices,
                                      Container::Span<const SkeletalSubMesh> subMeshes, uint64_t vertexCount,
                                      uint32_t jointCount);
+    // 空でない表の件数と、各記録の頂点番号・重心座標・予約ビットを検査する。
+    RigV1Status ValidateSurfaceSampleTable(Container::Span<const SurfaceSampleRecord> samples, uint32_t vertexCount);
+    // 外枠で解決済みの SURF を読み、成功時だけ out を置換する。節が無ければ空にする。
+    RigV1Status ReadSurfaceSampleTable(View bytes, const Section& surface, uint32_t vertexCount,
+                                       Container::VariableArray<SurfaceSampleRecord>& out);
+    // 呼出側で頂点数に対する検査を済ませた後、SURF の bytes を作る。
+    RigV1Status WriteSurfaceSampleTable(Container::Span<const SurfaceSampleRecord> samples, Bytes& out);
     uint64_t RootIdentityHash();
 } // namespace NorvesLib::Core::Skeletal::SplitWire

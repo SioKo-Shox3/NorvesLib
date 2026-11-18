@@ -379,6 +379,22 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool SkinnedMeshGpuStore::TryGetSurfaceSource(SkinnedMeshHandle handle, SkinnedSurfaceGpuSource& out) const
+    {
+        out = {};
+        const auto entryIt = m_Entries.find(handle);
+        if (entryIt == m_Entries.end())
+        {
+            return false;
+        }
+        const Entry& entry = entryIt->second;
+        out.VertexBuffer = entry.VertexBuffer;
+        out.SurfaceSampleBuffer = entry.SurfaceSampleBuffer;
+        out.VertexCount = entry.VertexCount;
+        out.SurfaceSampleCount = entry.SurfaceSampleCount;
+        return true;
+    }
+
     void SkinnedMeshGpuStore::SetChunkBuilderForTesting(MeshIndexChunkBuilder builder)
     {
         m_ChunkBuilder = builder;
@@ -442,19 +458,56 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
         indexBuffer->Update(indices.data(), indexDesc.Size, 0);
+
+        const auto& surfaceSamples = assetLease->GetSurfaceSamples();
+        RHI::BufferPtr surfaceSampleBuffer;
+        uint64_t surfaceSampleBytes = 0;
+        if (!surfaceSamples.empty())
+        {
+            RHI::BufferDesc surfaceDesc;
+            surfaceDesc.Size = static_cast<uint64_t>(surfaceSamples.size()) * sizeof(Skeletal::SurfaceSampleRecord);
+            surfaceDesc.Usage = RHI::ResourceUsage::StorageBuffer |
+                                RHI::ResourceUsage::ShaderRead |
+                                RHI::ResourceUsage::BufferDeviceAddress;
+            surfaceDesc.CPUAccessible = false;
+            surfaceDesc.DebugName = "SkinnedSurfaceSamples";
+            try
+            {
+                surfaceSampleBuffer = m_Device->CreateBuffer(surfaceDesc);
+                if (surfaceSampleBuffer)
+                {
+                    surfaceSampleBuffer->Update(surfaceSamples.data(), surfaceDesc.Size, 0);
+                    surfaceSampleBytes = surfaceDesc.Size;
+                }
+            }
+            catch (...)
+            {
+                surfaceSampleBuffer.reset();
+            }
+            if (!surfaceSampleBuffer && !m_bLoggedSurfaceFailure)
+            {
+                m_bLoggedSurfaceFailure = true;
+                NORVES_LOG_WARNING("SkinnedMeshGpuStore",
+                                   "表面の標本のバッファを作成または転送できません。表なしでメッシュの描画を続けます");
+            }
+        }
         if (!m_bLoggedMeshMemory)
         {
             m_bLoggedMeshMemory = true;
-            NORVES_LOG_INFO("SkinnedMeshGpuStore", "SKINNED_MESH_MEMORY vb=%s ib=%s",
+            NORVES_LOG_INFO("SkinnedMeshGpuStore", "SKINNED_MESH_MEMORY vb=%s ib=%s surface_bytes=%llu",
                             vertexDesc.CPUAccessible ? "HostVisible" : "DeviceLocal",
-                            indexDesc.CPUAccessible ? "HostVisible" : "DeviceLocal");
+                            indexDesc.CPUAccessible ? "HostVisible" : "DeviceLocal",
+                            static_cast<unsigned long long>(surfaceSampleBytes));
         }
 
         Entry entry;
         entry.Handle = handle;
         entry.VertexBuffer = vertexBuffer;
         entry.IndexBuffer = indexBuffer;
+        entry.SurfaceSampleBuffer = surfaceSampleBuffer;
         entry.IndexCount = static_cast<uint32_t>(indices.size());
+        entry.SurfaceSampleCount = surfaceSampleBuffer ? static_cast<uint32_t>(surfaceSamples.size()) : 0;
+        entry.VertexCount = static_cast<uint32_t>(vertices.size());
         // 区切りの位置を与えないので失敗しないが、戻り値は必ず確かめる。
         // 失敗しても GBuffer・影の経路は頂点とインデックスだけで描けるので、メッシュは登録して塊だけを持たない
         // （登録しないと毎フレームやり直してエラーを出し、既定の GBuffer の経路からもメッシュが消える）。

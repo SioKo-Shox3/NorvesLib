@@ -51,8 +51,9 @@ namespace NorvesLib::Core::Skeletal
                                       W::Four('I', 'N', 'D', 'X'), W::Four('I', 'B', 'M', 'S'),
                                       W::Four('M', 'N', 'G', 'T'), W::Four('S', 'U', 'B', 'M'),
                                       W::Four('M', 'S', 'L', 'T'), W::Four('M', 'A', 'T', 'S'),
-                                      W::Four('L', 'O', 'D', 'S'), W::Four('P', 'A', 'R', 'T')};
-        constexpr uint32_t Records[] = {1, 24, 64, 64, 4, 64, 64, 64, 32, 128, 16, 528};
+                                      W::Four('L', 'O', 'D', 'S'), W::Four('P', 'A', 'R', 'T'),
+                                      W::Four('S', 'U', 'R', 'F')};
+        constexpr uint32_t Records[] = {1, 24, 64, 64, 4, 64, 64, 64, 32, 128, 16, 528, SurfaceSampleRecordBytes};
         bool MatrixValid(const C::FixedArray<float, 16>& v)
         {
             // glTF affineのみ。GPU用column列を行ベクトルとして読む既存規約と同じ。
@@ -205,6 +206,15 @@ namespace NorvesLib::Core::Skeletal
             {
                 return RigV1Status::InvalidInput;
             }
+            if (!d.SurfaceSamples.empty())
+            {
+                const auto surfaceStatus = W::ValidateSurfaceSampleTable(
+                    {d.SurfaceSamples.data(), d.SurfaceSamples.size()}, uint32_t(d.Vertices.size()));
+                if (surfaceStatus != RigV1Status::Success)
+                {
+                    return surfaceStatus;
+                }
+            }
             if (d.LodTables.IsEmpty())
             {
                 if (!d.LodIndices.empty())
@@ -231,29 +241,46 @@ namespace NorvesLib::Core::Skeletal
                 return status;
             }
             const bool bHasTables = !d.LodTables.IsEmpty();
-            const size_t sectionCount = bHasTables ? 12 : 10;
+            const bool bHasSurface = !d.SurfaceSamples.empty();
+            size_t sectionIndices[13];
+            size_t sectionCount = 0;
+            for (size_t i = 0; i < 10; ++i)
+            {
+                sectionIndices[sectionCount++] = i;
+            }
+            if (bHasTables)
+            {
+                sectionIndices[sectionCount++] = 10;
+                sectionIndices[sectionCount++] = 11;
+            }
+            if (bHasSurface)
+            {
+                sectionIndices[sectionCount++] = 12;
+            }
             const uint64_t sizes[] = {
                 stringBytes, d.Topology.Joints.size() * 24, 64, d.Vertices.size() * 64,
                 (d.Indices.size() + d.LodIndices.size()) * 4, d.InverseBindMatrices.size() * 64, 64,
                 d.SubMeshes.size() * 64, d.Slots.size() * 32, d.Materials.size() * 128,
-                d.LodTables.Lods.size() * 16, d.LodTables.Parts.size() * 528};
-            // 表が無い場合は従来の 10 節のディレクトリと見積もりを保つ。
-            uint64_t total = bHasTables ? 640 : 576;
+                d.LodTables.Lods.size() * 16, d.LodTables.Parts.size() * 528,
+                d.SurfaceSamples.size() * SurfaceSampleRecordBytes};
+            // SURF が無い場合は従来どおり 10 節または 12 節の見積もりを保つ。
+            uint64_t total = 256 + 32 * sectionCount;
             for (size_t i = 0; i < sectionCount; ++i)
             {
-                total = ((total + 15) & ~uint64_t{15}) + sizes[i];
+                total = ((total + 15) & ~uint64_t{15}) + sizes[sectionIndices[i]];
             }
             if (total > limits.MaxWireBytes)
             {
                 return RigV1Status::LimitExceeded;
             }
-            W::OutputSection sections[12];
+            W::OutputSection sections[13];
             for (size_t i = 0; i < sectionCount; ++i)
             {
-                sections[i].Code = Codes[i];
-                sections[i].Record = Records[i];
-                sections[i].Required = i < 10;
-                sections[i].Data.reserve(size_t(sizes[i]));
+                const size_t index = sectionIndices[i];
+                sections[i].Code = Codes[index];
+                sections[i].Record = Records[index];
+                sections[i].Required = index < 10;
+                sections[i].Data.reserve(size_t(sizes[index]));
             }
             W::WriteTopology(d.Topology, sections[0].Data, sections[1].Data);
             auto& ref = sections[2].Data;
@@ -357,6 +384,15 @@ namespace NorvesLib::Core::Skeletal
                 if (tableStatus != RigV1Status::Success)
                 {
                     return tableStatus;
+                }
+            }
+            if (bHasSurface)
+            {
+                const auto surfaceStatus = W::WriteSurfaceSampleTable(
+                    {d.SurfaceSamples.data(), d.SurfaceSamples.size()}, sections[sectionCount - 1].Data);
+                if (surfaceStatus != RigV1Status::Success)
+                {
+                    return surfaceStatus;
                 }
             }
             return W::WriteEnvelope(2, d.Topology.SkeletonId, {sections, sectionCount}, out, limits, d.Profile);
@@ -587,6 +623,40 @@ namespace NorvesLib::Core::Skeletal
             return false;
         }
     }
+    bool AttachSkinMeshSurfaceSamplesV1(const SkinMeshV1& source, C::VariableArray<SurfaceSampleRecord> samples,
+                                        SkinMeshV1& out, RigV1Report& report, const RigV1Limits& limits,
+                                        RigImportProfile profile)
+    {
+        report = {};
+        try
+        {
+            const auto* original = source.GetData();
+            if (!original || original->Profile != profile)
+            {
+                return false;
+            }
+            report.Status = W::ValidateSurfaceSampleTable({samples.data(), samples.size()},
+                                                          uint32_t(original->Vertices.size()));
+            if (report.Status != RigV1Status::Success)
+            {
+                return false;
+            }
+            SkinMeshV1Data data = *original;
+            data.SurfaceSamples = std::move(samples);
+            W::Bytes bytes;
+            report.Status = Encode(data, bytes, limits);
+            if (report.Status != RigV1Status::Success)
+            {
+                return false;
+            }
+            return ParseSkinMeshV1(W::ViewOf(bytes), out, report, limits, profile);
+        }
+        catch (...)
+        {
+            report.Status = RigV1Status::Exception;
+            return false;
+        }
+    }
     bool WriteSkinMeshV1(const SkinMeshV1& mesh, W::Bytes& out, RigV1Report& report, const RigV1Limits& limits,
                          RigImportProfile profile)
     {
@@ -643,14 +713,14 @@ namespace NorvesLib::Core::Skeletal
                 report.Status = status;
                 return false;
             };
-            W::Section s[12];
-            for (size_t i = 0; i < 12; ++i)
+            W::Section s[13];
+            for (size_t i = 0; i < 13; ++i)
             {
                 s[i].Code = Codes[i];
                 s[i].Record = Records[i];
                 s[i].Required = i < 10;
             }
-            report.Status = W::ReadEnvelope(bytes, 2, {s, 12}, limits, profile);
+            report.Status = W::ReadEnvelope(bytes, 2, {s, 13}, limits, profile);
             if (report.Status != RigV1Status::Success)
             {
                 return false;
@@ -742,6 +812,11 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
             report.Status = W::ReadSkinLodTables(bytes, s[10], s[11], d->LodTables);
+            if (report.Status != RigV1Status::Success)
+            {
+                return false;
+            }
+            report.Status = W::ReadSurfaceSampleTable(bytes, s[12], s[3].Count, d->SurfaceSamples);
             if (report.Status != RigV1Status::Success)
             {
                 return false;

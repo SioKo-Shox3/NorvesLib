@@ -66,6 +66,21 @@ INDXは `[LOD0の全部位][LOD1の全部位]…` の順で、各LODの中はサ
 
 読み取り時はさらに2節の有無、件数、予約byte、未使用枠と関節数を検査し、成功時だけ所有表を置き換える。
 
+## role2 の任意節 SURF（GR60）
+
+`SURF` は flags=0 の任意節で、表があるときだけ `MATS` の後、LOD 表があれば `PART` の後に置く。数値はリトルエンディアン。記録は 16 バイト、件数は 1〜1048576 件。
+
+- offset 0 の u32: 頂点番号 v0 を bit 0〜20、v1 の下位 11 bit を bit 21〜31 に格納する。
+- offset 4 の u32: v1 の上位 10 bit を bit 0〜9、頂点番号 v2 を bit 10〜30 に格納する。bit 31 は予約で 0。
+- offset 8 の u32: 重心座標 b1 を bit 0〜15、b2 を bit 16〜31 に unorm16 で格納する。b0 = 1 − b1 − b2。
+- offset 12 の u32: アルベドの RGBA8。R が最下位バイトで、基本色テクスチャと同じ sRGB の符号化のままとする。
+
+3 頂点の番号がそれぞれ `VERT` の件数未満であり、整数の b1 + b2 が 65535 以下で、予約 bit が 0 で、件数が範囲内であることを検査する。
+
+各記録は LOD0 の三角形から、面積に比例して決定的に選んだ点を表す。位置はバインド姿勢・メッシュ空間で `p = b0·P[v0] + b1·P[v1] + b2·P[v2]`。アルベドは基本色テクスチャの UV 位置の texel に基本色の係数を bake したものと同じ RGBA8 値である。
+
+表の無い資産と、表面標本を頼まない cook の出力は従来とバイト一致する。旧いローダは `SURF` を未知の任意節として読み飛ばす。
+
 ## Resource と姿勢
 
 SkeletonResource/SkinnedMeshResourceにはvalidated値をLoad前に設定する専用入口を用意する。split modeに入った後は旧setterを拒否し、Unload後もlegacyへ戻さない。新Sampler枝だけがSkeletonのrest/FKとMeshのIBM/Mを読む。旧0.x/B1枝はそのまま残す。
@@ -106,7 +121,7 @@ Bank順→内部clip順を維持し、全名重複は拒否。全bankのrest比�
 
 loopは端点の姿勢差からの候補で、明示Loop/Onceを優先する。移動とyawは作者rest・階層・ROOTを合成し、+Y上/+Z前のモデル空間を固定間隔で標本化した要約。既定30Hz、最大4096標本。接地判定や移動の適用はしない。姿勢距離の長さは明示値、未指定ならrest joint位置の対角（退化時1m）で正規化する。fps補正は作者fpsとsource fpsの両方が必須で、キー時刻を `timeScale * authoredFps / sourceFps` 倍する。fpsを推測しない。
 
-role2の任意節LODS（LOD）・PART（部位）は上記の書式を使う。後続の任意節名を予約する: SOCK（ソケット）、MARK（イベント/位相）、CMPR（圧縮）、SURF（表面標本）。CLIPとROOTは既存の必須節名であり再利用しない。未実装の任意節は従来通り読み飛ばし、必須節は拒否する。
+role2の任意節LODS（LOD）・PART（部位）・SURF（表面標本、GR60で実装）は上記の書式を使う。後続の任意節名を予約する: SOCK（ソケット）、MARK（イベント/位相）、CMPR（圧縮）。CLIPとROOTは既存の必須節名であり再利用しない。未実装の任意節は従来通り読み飛ばし、必須節は拒否する。
 
 ## 明示ファイルCLI
 
