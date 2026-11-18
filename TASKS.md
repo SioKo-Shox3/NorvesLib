@@ -7975,7 +7975,7 @@
 - notes: 要件 `#### GR93` の受け入れ確認の「実機」「実データの検証」（ロードマップ 2641・2642 行）。見本の `Gameplay.scene.json` は G12-GR93-EDIT-VIEW の保存で作ってよい。`validate_level.py` の引数の名前と地形のソースの指定は G12-GR93-VALIDATE で決めた形に合わせて直してよい。撮影を開いて目で確かめる。違ったら G12-GR93-EDIT-VIEW・G12-GR93-VALIDATE の paths の範囲で直す。
 
 ## G12-GR48-CROSSFADE: メッシュの LOD の間とメッシュ↔インポスターの切り替えを、相補の画面ドアのディザでつなぎ、ポッピングを出さない
-- status: doing
+- status: done
 - after: G12-GR48-IMPOSTOR-GBUFFER, G5-GR27-MASKED-GBUFFER, G5-GR27-MASKED-SHADOW
 - gr: GR48
 - needs-gr: GR27
