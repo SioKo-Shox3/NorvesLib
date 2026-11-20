@@ -10921,3 +10921,14 @@ TASK にした理由（判断の根拠）:
 - paths: Library/Core/Public/Scatter/ScatterSystem.h, Library/Core/Private/Scatter/ScatterSystem.cpp, Library/Core/Public/Rendering/LayerImpostorAsset.h, Library/Core/Private/Rendering/LayerImpostorAsset.cpp, Library/Core/CMakeLists.txt, Game/GameModes/Grassland/GrasslandScatter.cpp, TASKS.md, PROGRESS.md
 - from: G12-GR48-CHECK
 - notes: 判断の根拠は 2 つ。(a) 計画の文書 `Docs/Plans/GameFeatureRequirements.md` の GR48 の構成要素(4876 行)に「配置層（GR47）との連携（InstanceGroupDesc の LOD 鎖とインポスター参照）」があるのに、一覧のどのタスクにも入っていない。(b) G12-GR48-LAYER-SHADOW の done-when (1) は「GR47 の配置の層の個体の最後の段を `ImpostorBatch` として描く」ことを求めている。ところが `SetMegaMeshImpostor` の呼び出し元は Library・Game のどこにも無く(定義は `SceneView.cpp:645` だけ)、`ScatterSpeciesBinding` を作るのは `GrasslandScatter.cpp` の 2 か所だけで、そこにもインポスターの欄が無い。このため、ゲームの場面では層の個体が一度もインポスターにならない。NVSCT の種の記録(96 バイトの固定長)の形式は変えず、実行時の binding で結ぶ。焼いたアトラスの置き場と、種の名前・メッシュとの対応の決め方(メッシュの論理パスの隣の `.impostor.json` など)は、この paths の中で決めて記録する。実の AI の木を焼いて置く作業・距離のスイープ・撮影は G12-GR48-CHECK のまま(回さない決まり)。危険地帯(RenderThread へ渡す値・資源の寿命)に当たるので、評価者を通す。
+
+## G6-GR35-WET-CHECK-P1: 合成のファントムの材質 `phantom.furmat.json` に、濡れの応答の出発点の値を入れる
+- status: todo
+- after: G6-GR91-FUR-MATERIAL-ASSET
+- weight: light
+- effort: medium
+- done-when: `Assets/Materials/Fur/phantom.furmat.json` の濡れの 8 欄に `Docs/Architecture/FurRendering.md` の表(85〜94 行)どおりの値が入っている。値は WetDarken 0.38・WetDesaturate 0.3・WetRoughness 0.3・WetGloss 1.0・WetLengthCollapse 0.3・WetThicken 0.5・WetClump 0.6・WetSag 0.3 で、JSON のキー名は `FurMaterialJson` の書式に従う。エンジンの既定(`FurTypes.h` の `FurParams` の濡れの欄はすべて 0)は変えない。`AssetCook --asset-set Assets/AssetSets/FurMaterials.json` が、FurParams の範囲の検査を含めてエラーなしで終わる。`FurRendering.md` 96 行の「`G6-GR91-FUR-MATERIAL-ASSET` が置くときに値を入れる」という書き方を、入れ済みの今の状態に直す。根拠: この表は設計の文書が「ファントムの材質に入れる」と決めた値だが、G6-GR91-FUR-MATERIAL-ASSET の done-when にも、ほかのどのタスクにも入っていない。`FurParams` の既定が全部 0 なので、値を入れないと `--fur-debug` のファントムでは濡れ度を動かしても見た目が何も変わらず、G6-GR35-WET-LOOK の結果を人がゲームで確かめられない
+- verify: `cmake --build build --config Debug --target AssetCook Game -- /m:1`
+- verify: `build/Tools/AssetCook/Debug/AssetCook.exe --asset-set Assets/AssetSets/FurMaterials.json --runtime-root build/Verify/G6-GR35-WET-CHECK-P1 --source-root . --manifest build/Verify/G6-GR35-WET-CHECK-P1/manifest.json`
+- paths: Assets/Materials/Fur/phantom.furmat.json, Docs/Architecture/FurRendering.md, TASKS.md, PROGRESS.md
+- from: G6-GR35-WET-CHECK
