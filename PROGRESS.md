@@ -12688,3 +12688,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 StringTable(言語ごとの文字列表・切り替えの通知・文字集合の収集): 着地(直し 0 回)
 - U2 最初の日本語の文字列表と文字のスタイル表(データだけ): 着地(直し 0 回)
 - U3 Engine::Engine に StringTable を持たせ、起動時に日本語の表を読む: 着地(直し 0 回)
+- U4 ITextMetrics と TextLayout の本体(折り返し・禁則・揃え・行間・省略・基準線): 着地(直し 0 回)
