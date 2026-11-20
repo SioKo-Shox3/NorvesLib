@@ -14,6 +14,7 @@
 #include "Scatter/ScatterSystem.h"
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
+#include "Scene/SurfaceRegistry.h"
 #include "Input/InputSystem.h"
 #include "Input/IInputDevice.h"
 #include "Input/HapticsService.h"
@@ -453,6 +454,22 @@ namespace NorvesLib::Core::Engine
             return m_SceneQuery;
         }
 
+        /**
+         * @brief 表面の語彙の登録簿を取得
+         */
+        Scene::SurfaceRegistry &GetSurfaceRegistry()
+        {
+            return m_SurfaceRegistry;
+        }
+
+        /**
+         * @brief 表面の語彙の登録簿を取得（const版）
+         */
+        const Scene::SurfaceRegistry &GetSurfaceRegistry() const
+        {
+            return m_SurfaceRegistry;
+        }
+
         // ========== 入力システム ==========
 
         /**
@@ -587,6 +604,8 @@ namespace NorvesLib::Core::Engine
 
         // シーン空間検索（GEngine配下で実体保持）
         Scene::SceneQuery m_SceneQuery;
+        // 表面の語彙の登録簿（GEngine 配下で実体保持）
+        Scene::SurfaceRegistry m_SurfaceRegistry;
 
         // 入力システム（GEngine配下で実体保持）
         Input::InputSystem m_InputSystem;

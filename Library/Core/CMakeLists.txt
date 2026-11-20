@@ -254,6 +254,7 @@ set(PRIVATE_SOURCES
     Private/Scene/SceneQuery.cpp
     Private/Scene/LevelSnap.cpp
     Private/Scene/PhysicsLayerTable.cpp
+    Private/Scene/SurfaceRegistry.cpp
     Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
     Private/Scene/MapTransform.cpp
@@ -748,7 +749,10 @@ set(PUBLIC_HEADERS
     Public/Scene/LevelSnap.h
     Public/Scene/RenderTransformHistory.h
     Public/Scene/PhysicsQueryTypes.h
+    Public/Scene/SurfaceTypes.h
+    Public/Scene/PhysicsHandles.h
     Public/Scene/PhysicsLayerTable.h
+    Public/Scene/SurfaceRegistry.h
     Public/Scene/SceneSerializer.h
     Public/Scene/MapTransform.h
     Public/Scene/MapCapturePlan.h
