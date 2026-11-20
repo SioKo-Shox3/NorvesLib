@@ -12678,13 +12678,16 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 
 ## G13-GR115-PHYSICS-SURFACE（2026-11-21、run 20261121-061935）
 - Done: `PhysicsShapeProxy` に `Surface`（`Scene::SurfaceId`）と `bHasSurface` を足し、`Raycast`・`Overlap*`・`ExecuteQuery` / `ExecuteBatch` の全種（RaycastClosest・RaycastAll・Overlap・Sweep）と旧入口の結果の `Surface`、`PhysicsContactEvent` の `SelfSurface` / `OtherSurface` へ写す。`GetColliderSurface` を公開スナップショットの proxy から実装（明示なしは `NoHit`、`Default` の明示は `Success`）。
-- Done: `StaticColliderDesc` の表面を `Scene::SurfaceId Surface` + `bHasSurface`（登録簿の添字。地形の層の番号は入れない）にし、detached の proxy へ写す。payload の `"surface"` は表面の名前の文字列で、GameThread の登録のたびに登録簿で解決する。
+- Done: `StaticColliderDesc` の表面を `Scene::SurfaceId Surface` + `bHasSurface`（登録簿の添字。地形の層の番号は入れない）にし、detached の proxy へ写す。payload の `"surface"` は文字列なら登録簿の表面の名前、整数（0〜255）なら従来の地形の層の番号（結果の `uint8_t SurfaceId` にだけ写す）として読む。
 - Done: `ColliderComponent` に `PROPERTY(Core::Container::String, SurfaceName)` と `SetSurface(name)` / `GetSurface()`。名前は登録（`Initialize`）時と、登録簿の `GetRevision()` が変わった後の最初の `StepFixed` / `RefreshDynamicSnapshot` で `SurfaceId` に解決し、`BuildBroadphase` で proxy へ写す。未知の名前は `FindByName` の警告 1 回で `Default`、読み込みは止めない。形状はこれまでどおり保存しない。
 - Done: `Docs/Architecture/SurfaceContract.md` の「物理の結果」と `Docs/Architecture/PhysicsQueries.md` の「コライダーの表面（GR115）」を今の形に直した。
 - 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0（行末は `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。試験のターゲットのビルドと ctest は回していない。done-when (3) の `PhysicsSurfaceTagTest` は試験を作らない決まりで作っておらず、`Docs/Testing.md` も変えていない。
 - 人が見るときの見どころ: シーンの JSON のコライダーに `"SurfaceName"` を書いて読み込み、保存し直しても名前が残ること。登録簿に無い名前は警告ログ 1 回で読み込みが続くこと。問い合わせの結果の表面を使う消費者（足音など）はまだ無いので、画面には出ない。
 - Next: ランナーの評価者の反証（危険地帯: 物理の公開型・コライダーの寿命）。地形・草の表面は G13-GR115-GROUND-CONTACT、取り込みの材質からの継承は GR81。
 - Notes: `SetSurface` はほかの setter と同じく未登録なら `NotRegistered`（登録前は PROPERTY に入れておけば `Initialize` で解決される）。名前の形が不正なら `InvalidArgument` で旧値を保つ。未知の名前は名前を保ったまま `bHasSurface` = true・`Surface` = `Default` にする。
-- Notes: 再初期化（`ResetTransientState`）で登録簿の改訂の記録を `UINT64_MAX` にし、最初の歩で全コライダーを解決し直す。静的なコライダーの表面は登録のたびに解決し、登録簿の読み直しでは解決し直さない（同じ名前の添字は読み直しで保たれる）。
+- Notes: 再初期化（`ResetTransientState`）で登録簿の改訂の記録を `UINT64_MAX` にし、最初の歩で全コライダーを解決し直す。静的なコライダーの表面の名前は物理モジュールのチャンクが持ち、チャンクの適用時と登録簿の改訂のたびに同じ `ColliderHandle` のまま解決し直す。
 - U3 静的コライダーの表面の名前をモジュールが保持して登録簿の改訂で同じハンドルのまま解決し直し、v1 の数値の surface を従来の層番号として読み、OverlapEnd に今の表面を載せる: 着地(直し 0 回)
 - U4 ColliderComponent の SurfaceName を編集で書き換えたときに表面を解決し直し、文書を今の形に直す: 着地(直し 0 回)
+- Done: 差し戻しの直し。静的コライダーの表面の名前を `StaticColliderDesc::SurfaceName` で受けて物理モジュールが保持し、`RefreshColliderSurfaces` の改訂の変化で同じハンドルのまま解決し直す。`norves.static-colliders.v1` の数値の `"surface"`（例 `"surface":3`）を従来の層番号として読み、既存のファイルの読み込みを失敗させない。`OverlapEnd` は今のステップに proxy がある側は今の表面、取り除かれた側は最後に重なっていたときの表面を載せる。`ColliderComponent::OnPropertyApplied` で `SurfaceName` の適用（シーン編集など）のときに登録済みなら名前を解決し直し、次の公開から結果に出す。名前の形の判定は `PhysicsSurfaceName.h` にまとめた。
+- 確かめ（差し戻しの直しの後）: 全部が載った状態で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0、error の行 0（`ColliderComponent.cpp`・`PhysicsModule.cpp` を再コンパイルして `Game.exe` を生成）。2 通りの numstat は一致。試験のターゲットのビルドと ctest は回していない（試験を作らない・回さない決まり）。
+- 人が見るときの見どころ（追加）: シーン編集でコライダーの `SurfaceName` を書き換えると、次の物理の公開から問い合わせの表面が変わること。静的コライダーの JSON に `"surface":3` のような数値があっても読み込みが通ること。
