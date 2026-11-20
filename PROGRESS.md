@@ -12659,3 +12659,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 SoundSystem に 3D の経路(位置の追従・係数の適用・ε の省略)を足す: 着地(直し 0 回)
 - U5 受入れの記録・AudioFlow・TickStages に 3D 定位とリスナーを書く: 着地(直し 0 回)
 - U4 リスナー(seam・AudioListenerComponent・選定と MainCamera の読み取り)を足す: 着地(直し 1 回)
+- U6 音のモジュールと AudioComponent をつなぐ(Engine の保持・リスナーの解決・エミッタの追従): 着地(直し 0 回)
