@@ -12654,3 +12654,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証(危険地帯: GBuffer の契約・照明)。撮影での確かめは G6-GR35-WET-CHECK。人が見るときの見どころ: 今はどのシーンにも Fur の材質が無いので、Rendering3DTest(天球・地面・球・岩)とランチャーの各シーンの見た目は変わらない。Fur の毛の殻が入ったシーンでは、濡れ度 W を上げると毛が暗く・彩度が下がり・短く太く束になって垂れ、材質の WetGloss > 0 のときだけハイライトが鋭く強くなる(WetGloss = 0 の材質ではつやは変わらない)。
 - Notes: 上の Notes の「kGloss は照明の全体の値(1.0、仮)」の判断と「要起票: 材質ごとの濡れのつや `FurParams::WetGloss` を照明へ届ける作業」は、この直しで材質から画素ごとに届くようになったので置き換わった(起票しない)。
 - Notes: 判断: lighting.frag の先頭に BOM が付いた(実行時のシェーダーのコンパイラは BOM を外して読む。`VulkanShaderCompiler.cpp:160`)。
+- U2 IAudioService に出力の左右の係数と周波数比を直接渡す口を足す: 着地(直し 0 回)

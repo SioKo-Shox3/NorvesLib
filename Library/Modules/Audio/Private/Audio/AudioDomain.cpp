@@ -214,6 +214,40 @@ namespace NorvesLib::Modules::Audio::Private
                     : AudioResult::BackendFailure;
             }
 
+            AudioResult SetVoiceOutputGains(VoiceHandle handle, float leftGain, float rightGain) override
+            {
+                const ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (!std::isfinite(leftGain) || leftGain < 0.0f || !std::isfinite(rightGain) || rightGain < 0.0f ||
+                    !CanSetVoiceParameters(record->State))
+                {
+                    return AudioResult::InvalidState;
+                }
+                return m_Backend->SetVoiceOutputGains(handle, leftGain, rightGain) == AudioResult::Success
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult SetVoiceFrequencyRatio(VoiceHandle handle, float ratio) override
+            {
+                const ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (!std::isfinite(ratio) || ratio <= 0.0f || !CanSetVoiceParameters(record->State))
+                {
+                    return AudioResult::InvalidState;
+                }
+                const float boundedRatio = std::clamp(ratio, kMinFrequencyRatio, record->MaxFrequencyRatio);
+                return m_Backend->SetVoiceFrequencyRatio(handle, boundedRatio) == AudioResult::Success
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
             AudioResult PauseVoice(VoiceHandle handle) override
             {
                 ActiveVoiceRecord* record = Resolve(handle);
