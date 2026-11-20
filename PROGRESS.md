@@ -12656,3 +12656,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: lighting.frag の先頭に BOM が付いた(実行時のシェーダーのコンパイラは BOM を外して読む。`VulkanShaderCompiler.cpp:160`)。
 - U11 Core に弧長でパラメータ化した折れ線 PolylinePath.h を足す(U1 の切り直し): 着地(直し 0 回)
 - U12 AI モジュールの静的ライブラリと共有の型・タイル・格子を置く(U2 の切り直し): 着地(直し 1 回)
+- U3 純関数のナビ格子の焼き NavGridBaker: 着地(直し 0 回)
