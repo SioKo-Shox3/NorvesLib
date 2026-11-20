@@ -12656,3 +12656,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: lighting.frag の先頭に BOM が付いた(実行時のシェーダーのコンパイラは BOM を外して読む。`VulkanShaderCompiler.cpp:160`)。
 - U2 IAudioService に出力の左右の係数と周波数比を直接渡す口を足す: 着地(直し 0 回)
 - U1 Core の距離の減衰の純関数と、音の AudioSpatial の純関数と型を足す: 着地(直し 0 回)
+- U3 SoundSystem に 3D の経路(位置の追従・係数の適用・ε の省略)を足す: 着地(直し 0 回)
