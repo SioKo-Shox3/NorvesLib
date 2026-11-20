@@ -108,6 +108,27 @@ float GBufferDecodeP1(vec4 emissiveSample)
     return emissiveSample.a;
 }
 
+// Fur の画素の Albedo.a に濡れのつや g = kGloss・w を符号化する。
+// g = 0 なら 1.0 ちょうど、最小値は 3/255 で空の判定（0.01）と重ならない。
+float GBufferEncodeFurWetGloss(float g)
+{
+    return 1.0 - clamp(g, 0.0, 1.0) * (252.0 / 255.0);
+}
+
+// Fur の画素の Albedo.a から濡れのつや g を復号する。
+float GBufferDecodeFurWetGloss(float albedoAlpha)
+{
+    return clamp((1.0 - albedoAlpha) * (255.0 / 252.0), 0.0, 1.0);
+}
+
+// 汎用の書き手が Fur の材質を書くとき、テクスチャの alpha が濡れのつやとして読まれないよう A をそろえる。
+// 空の印（0.01 未満）は保つ。
+float GBufferAlbedoAlphaForShadingModel(float albedoAlpha, uint shadingModelId)
+{
+    return (shadingModelId & GBUFFER_SHADING_MODEL_ID_MASK) == GBUFFER_SHADING_MODEL_FUR && albedoAlpha >= 0.01
+        ? 1.0 : albedoAlpha;
+}
+
 // MaterialTypes.h の ResolveShadingParam と同じ規約で、各成分を解決する。
 vec4 ResolveShadingParams(vec4 instanceParams, vec4 materialParams)
 {

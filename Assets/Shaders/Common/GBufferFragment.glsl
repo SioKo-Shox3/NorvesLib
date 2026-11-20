@@ -242,6 +242,7 @@ void main()
     // 残った画素が天球と判定されないよう、不透明として書く。
     outAlbedo.a = 1.0;
 #endif
+    outAlbedo.a = GBufferAlbedoAlphaForShadingModel(outAlbedo.a, id);
 
     const uint receiverFlags = mvp.vtFeedbackParams.w > 0.5 ? GBUFFER_RECEIVER_FLAG_DIFFUSE_ONLY : 0u;
     outNormal = GBufferEncodeNormal(normal, id, receiverFlags);
