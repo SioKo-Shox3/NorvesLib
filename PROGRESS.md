@@ -12687,3 +12687,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: `FontFaceCache` を GEngine に持たせる配線はしていない（`ApplicationProcessor.cpp` の既定のフォントは今の `Build(FontAtlasDesc{}, ...)` のまま、一時のキャッシュで読む）。`Faces` の 1 本でも読めないと焼き全体が失敗する。`Codepoints` を指定したときは代わりの字 '?'・U+25A1・U+FFFD を自動で足す（どの face にも無い字は焼かない）。
 - U1 StringTable(言語ごとの文字列表・切り替えの通知・文字集合の収集): 着地(直し 0 回)
 - U2 最初の日本語の文字列表と文字のスタイル表(データだけ): 着地(直し 0 回)
+- U3 Engine::Engine に StringTable を持たせ、起動時に日本語の表を読む: 着地(直し 0 回)
