@@ -12663,3 +12663,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 カメラの周りだけを描くナビのデバッグ描画: 着地(直し 0 回)
 - U8 ナビのサービス INavigationService と予算実行: 着地(直し 0 回)
 - U10 AI モジュールの設計文書: 着地(直し 0 回)
+- U9 AI モジュール本体と Game への登録(最後。タスクの verify): 着地(直し 0 回)
