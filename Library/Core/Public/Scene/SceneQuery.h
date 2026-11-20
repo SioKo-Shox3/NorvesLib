@@ -2,6 +2,7 @@
 
 #include "Math/GeometryTypes.h"
 #include "Scene/PhysicsQueryTypes.h"
+#include "Scene/SurfaceTypes.h"
 #include "Container/Containers.h"
 #include "Container/Span.h"
 #include "Ecs/EcsTypes.h"
@@ -58,6 +59,14 @@ namespace NorvesLib::Core::Scene
             return EPhysicsSceneQueryResult::Unavailable;
         }
 
+        // コライダーに明示した表面を引く。タグの無いコライダーは NoHit、未対応の provider は Unavailable。非 Success は outSurface を Default にする。
+        virtual EPhysicsSceneQueryResult GetColliderSurface(ColliderHandle collider, SurfaceId& outSurface) const
+        {
+            (void)collider;
+            outSurface = SurfaceId{};
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
         virtual EPhysicsSceneQueryResult Raycast(
             const Math::Ray& ray,
             float maxDistance,
@@ -75,6 +84,32 @@ namespace NorvesLib::Core::Scene
         virtual EPhysicsSceneQueryResult IsAlive(BodyHandle body, bool& outAlive) const = 0;
         virtual EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const = 0;
     };
+
+    /// 位置から得た表面の寄与。重みは負・非有限なら 0 とみなし、照会の側で和が 1 になるよう正規化する。
+    struct SurfaceContribution
+    {
+        bool bHasSurface = false;        // 表面の種別を返したか（false なら状態の欄だけを寄与する）
+        SurfaceId Primary;
+        SurfaceId Secondary;
+        float PrimaryWeight = 1.0f;
+        float SecondaryWeight = 0.0f;
+        float Wetness01 = 0.0f;
+        float PuddleDepthM = 0.0f;
+        float VegetationDensity01 = 0.0f;
+    };
+
+    /// 地形の層・草の場などから表面を返す口。寿命は登録した側が持ち、外す前に破棄しない（SceneQuery は借りるだけ）。
+    class ISurfaceProvider
+    {
+    public:
+        virtual ~ISurfaceProvider() = default;
+        /// Success は out に寄与を書いた。NoHit はこの位置に寄与なし。そのほかは失敗として飛ばされる。
+        virtual EPhysicsSceneQueryResult SampleSurface(const SurfaceQuery& query, SurfaceContribution& out) const = 0;
+    };
+
+    /// 登録の優先度の目安。大きいほど先に引く。
+    inline constexpr int32_t kTerrainSurfaceProviderPriority = 200;
+    inline constexpr int32_t kVegetationSurfaceProviderPriority = 100;
 
     /**
      * @brief Raycast の結果。
@@ -219,6 +254,16 @@ namespace NorvesLib::Core::Scene
 
         EPhysicsSceneQueryResult BindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
         EPhysicsSceneQueryResult UnbindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
+
+        /// 所有スレッドで表面の provider を借用登録する。優先度の高い順、同じ優先度は登録順に引く。
+        EPhysicsSceneQueryResult BindSurfaceProvider(ISurfaceProvider& provider, int32_t priority);
+        /// 所有スレッドで表面の provider を外す。登録した側は外すまで provider を破棄しないこと。
+        EPhysicsSceneQueryResult UnbindSurfaceProvider(ISurfaceProvider& provider);
+        /// 所有スレッドでコライダーの明示タグ、provider の順に表面を決め、状態は全 provider の最大を返す。
+        /// 種別が無ければ Default と NoHit。無効な入力・別スレッド・例外では出力を初期化し、例外は投げ直す。
+        /// provider の照会の中から登録を変えないこと。
+        EPhysicsSceneQueryResult QuerySurface(const SurfaceQuery& query, SurfaceSample& outSample) const;
+
         EPhysicsSceneQueryResult Raycast(
             const Math::Ray& ray,
             float maxDistance,
@@ -242,6 +287,13 @@ namespace NorvesLib::Core::Scene
 
     private:
         static constexpr uint32_t kNoNode = 0xFFFFFFFFu;
+
+        struct SurfaceProviderEntry
+        {
+            ISurfaceProvider* Provider = nullptr;
+            int32_t Priority = 0;
+            uint32_t Order = 0;
+        };
 
         struct Entry
         {
@@ -331,6 +383,9 @@ namespace NorvesLib::Core::Scene
         /// BVH に入れていない追加分。照会は BVH の後にこれを線形に見る
         Container::VariableArray<Entry> m_Pending;
         IPhysicsSceneQueryProvider* m_PhysicsProvider = nullptr;
+        /// 優先度の高い順、同じ優先度は登録順。
+        Container::VariableArray<SurfaceProviderEntry> m_SurfaceProviders;
+        uint32_t m_NextSurfaceProviderOrder = 0;
         /// 地面の高さ場への非所有参照。所有側が解除するまで有効であること。
         const Rendering::Terrain::TerrainSystem* m_TerrainSystem = nullptr;
         Thread::Thread::ThreadId m_OwnerThreadId;

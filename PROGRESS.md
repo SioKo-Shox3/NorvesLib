@@ -12655,14 +12655,43 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 上の Notes の「kGloss は照明の全体の値(1.0、仮)」の判断と「要起票: 材質ごとの濡れのつや `FurParams::WetGloss` を照明へ届ける作業」は、この直しで材質から画素ごとに届くようになったので置き換わった(起票しない)。
 - Notes: 判断: lighting.frag の先頭に BOM が付いた(実行時のシェーダーのコンパイラは BOM を外して読む。`VulkanShaderCompiler.cpp:160`)。
 
-- U1 プロファイルの値型・Sanitize・Lerp・重ね合わせ: 着地(直し 0 回)
-- U2 JSON の読み書き・ホットリロード・中立のプロファイル・CameraProxy への運搬: 着地(直し 0 回)
-### G14-GR61-PROFILE-DATA ポストプロセスのプロファイルの値型・補間・重ね合わせ・JSON とホットリロード・カメラの値での運搬（2026-11-18、run 20261118-181355）
-- Done: `Rendering/PostProcessProfile.h`・`PostProcessProfile.cpp` に値型 `PostProcessSettings`（`bValid` 既定 false。Grade・Lens・Look・`DitherStrength` 既定 1/255。保護色相は既定で無効）と `PostProcessProfile`（`Identity` の名前・設定・上書きマスク `PostProcessFields`）を足した。`Sanitize` は NaN・範囲外を欄ごとの既定へ戻して戻した欄のマスクを返し、`Lerp`・`LerpMasked` は Contrast・Saturation を対数、ExposureBias を EV で線形、色を線形 RGB、LUT を重みで補間する。
-- Done（同）: `PostProcessProfileMixer` は Base・Weather・Shot の順に重みつきで畳み込み、上書きマスクの欄だけを替える。`BlendTo`・`BlendOut` の遷移を `Advance(unscaledDt)` で進め（NaN・負の dt は 0）、出力は 1 つの `PostProcessSettings`。レイヤーが全部空なら `bValid=false`。ヒープ確保はしない。
-- Done（同）: `PostProcessProfileJson.cpp` に `postprocess.v1` の読み `ParsePostProcessProfileJson`（先頭の BOM を外す。壊れた JSON・根がオブジェクトでない・schema 違い・型違い・`overrideMask` の未知の名前は拒否して出力を変えない。未知のキーはドット区切りのパスで警告して捨てる。読んだ後に `Sanitize` し、戻した欄を警告）と書き `WritePostProcessProfileJson`（整形あり）を足した。LUT のパスは `IdentityPool` に入れてプロセスの寿命の文字列を借りる（GameThread が解放した文字列を RenderThread が読む形にしない）。
-- Done（同）: `PostProcessProfileSource` が `TextAssetReloadTracker` で変更を見て読み直す。読み直しが不正・読めないときは前の値を保って警告する（読めない間の警告は 1 回）。中立のプロファイル `Assets/PostProcess/neutral.ppprofile.json`（全欄が既定・上書きマスクは全部）を置いた。`CameraProxy` に `PostProcessSettings PostProcess`（値型、既定 `bValid=false`）を足し、コメントアウトの `PostProcessHandle` を消した。`CameraProxy` の大きさの検査・memcmp・位置で並べた初期化は Library・Game に無い。
-- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が EXIT=0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致（単位の作業ツリーの `.harness/unit-verify.txt`）。
-- Next: ランナーの評価者の反証（危険地帯: Public API の `CameraProxy`。FramePacket で値のまま写る）。描画での読み取りは G14-GR61-GRADE-PASS、毎フレームの重ね合わせの結線は G14-GR61-LAYERS。今は描画がこの値を読まないので、見た目は変わらない。
-- Notes: done-when (5) の `PostProcessProfileMixerTest`・`PostProcessProfileJsonTest` は絶対規則 11 に従って作っていない。既存の試験は回していない。読む→書く→読むの往復とホットリロードの実際の動きはゲームで確かめていない（描画が読むのは後の項目）。
-- Notes: 判断: LUT が片方だけのプロファイルどうしの補間は両方の枠を同じパスにして Blend=0。EaseIn=t²・EaseOut=t(2−t)。`SetSource` は不正なパスでも保持値を消して false。値の範囲はすべて仮。
+## G13-GR115-SURFACE-REGISTRY 表面の語彙と登録簿、SceneQuery の表面の照会、問い合わせの結果の表面の欄（2026-11-18、run 20261118-161937）
+- Done: 表面の語彙の型 `Library/Core/Public/Scene/SurfaceTypes.h`。強い型 `SurfaceId`（uint16 を包む。0 = Default。整数・`GroundSample::SurfaceId`（u8）・物理の結果の `uint8_t SurfaceId` から暗黙に変換しないことを static_assert で止める）・`SurfaceFlags`（Soft・Hard・Liquid・Vegetated・Wettable）・`SurfaceDesc`（安定名・parent・flags・audio・visual・physical）・`SurfaceQueryFlags`・`SurfaceQuery`・`SurfaceSample`。循環 include を避けるため `ColliderHandle`・`BodyHandle` を `Scene/PhysicsHandles.h` へそのまま移した。
+- Done: `PhysicsRaycastHit`・`PhysicsOverlapHit`・`PhysicsQueryHit` に `Scene::SurfaceId Surface`（既定 Default）。中身を入れるのは G13-GR115-PHYSICS-SURFACE。
+- Done: 登録簿 `SurfaceRegistry`（`Scene/SurfaceRegistry.h`・`Private/Scene/SurfaceRegistry.cpp`）。`LoadFromJson`・`LoadFromAssetFile` は全部を検査してから入れ替え、拒否（`ESurfaceRegistryError` の種別: 未知のキー・重複のキー・型・非有限・範囲・名前・重複名・未知の parent・循環・Default の parent・未知のフラグ・数の上限など）したら表・Revision・名前の添字を変えない。成功で `GetRevision()` が増える。`FindByName`（未知は Default と名前ごとに 1 回の警告）・`TryFindByName`・`GetDesc`・`GetName`・parent をたどる `ResolveFallback(id, predicate)`。
+- Done: `Engine::Engine` のメンバ `m_SurfaceRegistry` と `GetSurfaceRegistry()`（シングルトンにしない）。Game の `OnInitialize` でコリジョンレイヤーの読み込みの直後に `Data/Surfaces.json` を読み、読めなければ Default だけで続けて「表面の語彙を読めません。Default だけで続行します: …」の警告を出す。仮の語彙 8 個の `Assets/Data/Surfaces.json`（Default・Grass_Tall・Dirt_Mud・Rock・Concrete（parent Rock）・Metal・Water_Shallow・Wood。値は仮）。
+- Done: `SceneQuery` に `ISurfaceProvider`（`SampleSurface` が `SurfaceContribution` を返す）と優先度つきの `BindSurfaceProvider` / `UnbindSurfaceProvider`（`BindPhysicsProvider` と同じ持ち主のスレッドと重複の規則。目安は地形 200・草 100）、`QuerySurface`。解決の順はコライダーの明示タグ（`IPhysicsSceneQueryProvider::GetColliderSurface`。既定実装は Unavailable）> provider を優先度の高い順（同じ優先度は登録順）> Default。2 層の重みは和 1 に正規化し、Primary を重い方にする。濡れ・水たまり・草の密度は全 provider の最大。provider も物理も無ければ Default と NoHit で落ちない。
+- Done: 契約の文書 `Docs/Architecture/SurfaceContract.md`（型と番号の取り違えの注意、保存は名前、登録簿の形と拒否の種別、照会の順と重み、物理の結果の欄、後の段階）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた先頭 1154a647 と同じ中身で、`SurfaceRegistry.cpp`・`SceneQuery.cpp` のコンパイルと `Game.exe` のリンクまで。既存の物理の provider は既定実装のままビルドできた）。`Assets/Data/Surfaces.json` は `json.load` で version 1・8 個。変えた既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致、新規ファイルは UTF-8 + BOM + CRLF。
+- Next: ランナーの評価者の反証（危険地帯: Public API の SceneQuery・Engine）。コライダーの PROPERTY と物理の結果への受け渡しは G13-GR115-PHYSICS-SURFACE、地形・草・濡れの provider と消費者は G13-GR115-GROUND-CONTACT。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (4) `SurfaceRegistryTest`・`SceneQuerySurfaceTest` は作っていない（`Docs/Testing.md` の 3 点も書かない）。ctest は回さない決まり。
+- Notes: 人が見るときの見どころ: Game を起動したときのログに「表面の語彙を読めません」の警告が出ないこと（出れば Surfaces.json が拒否されている。理由が同じ行に出る）。見た目の変化は無い。
+- Notes: 判断: 選定課題 G13-S7 はタスクの notes どおり (A)（保存は名前、`SurfaceId` は読み込み順の添字で保存しない、地形の層の番号は地形の側に残す）。読み直しでは前にあった名前に前と同じ添字を使い、新しい名前は末尾に足す。ファイルから消えた名前は「引退」（添字と名前は残し、`FindByName` では未知、`GetDesc` は Default の記述）にして、消費者が持つ `SurfaceId` が別の表面を指さないようにした。
+- Notes: 判断: `1e999` のような桁あふれの数は JSON の解析が拒否するので `ParseError`（パーサーの説明を Detail に付ける）で拒否する。double では有限でも float に収まらない数は `NonFiniteNumber`。
+- Notes: 既知の限界: 警告済みの名前は `IdentityHash` の値で覚えるので、ハッシュが衝突した別の名前の警告は出ない。読み込みは GameThread で、引きと同時に走らせない前提（クラスのコメントに書いた）。
+- U1 表面の型（SurfaceTypes.h）と物理の結果の Surface 欄: 着地(直し 0 回)
+- U3 SceneQuery の表面の照会: 着地(直し 0 回)
+- U2 表面の登録簿 SurfaceRegistry: 着地(直し 1 回)
+- U4 Engine の持ち物・Game の起動での読み込み・語彙のデータ・契約の文書: 着地(直し 0 回)
+
+- U1 UTF-8 の読み書き(Utf8.h/.cpp)を足し、厳密な走査と TextComponent を同じ規則へ寄せる: 着地(直し 0 回)
+- U2 FontFaceCache と、コードポイントの表・フォールバックの face・BuildCpu/Upload を持つ FontAtlas: 着地(直し 1 回)
+
+## 2026-11-18 G15-GR69-UTF8-FONTATLAS（run 20261118-184115 の反復 1、完了）
+- Done: `Text/Utf8.h`（実装 `Private/Text/Utf8.cpp`）に `DecodeUtf8`（不正な先頭バイト・継続バイトの欠落・過長表現・サロゲート・0x10FFFF 超・途中切れは U+FFFD で 1 バイト前進）・`AppendUtf8`（4 バイトまで。符号化は `EncodeJsonUnicodeScalar<char>` を使う）・`IsValidUtf8`・`ForEachUtf8Codepoint` を足した。厳密な 1 文字の読み `Utf8Detail::TryDecodeUtf8Strict` を `TextDetail::ForEachUnicodeScalar` の 1 バイトの枝も使い、表は 1 つだけ。`TextComponent::BuildGlyphBoardProxies` はコードポイントごとに走査する（ASCII の基準線・字間・改行・空白・`\x7F` の '?' は今のまま）。
+- Done: `FontFaceCache`（論理パスごとにブロブを 1 回だけ読む。失敗は覚えない。Mutex で守る）を新設。`FontAtlasDesc` に `Codepoints`（空なら 0x20〜0x7E）・`Faces`（フォールバックの順。空なら `FontLogicalPath`）・`Padding`・`MaxAtlasSize` を足し、字形を整列したコードポイントの表（二分探索）にした。欠落は '?' → U+25A1 → U+FFFD の順。`Build` を `BuildCpu`（GPU に触らない）と `Upload` に分け、`Build` は両方を同期で呼ぶ包み（`FontFaceCache&` を受ける多重定義もある）。幅 0 は 64 から 2 倍ずつ試す自動、上限に収まらなければ false。既定の `FontAtlasDesc{}` は並び・詰め方・幅 512・画素の規則が前と同じ。
+- 証拠: `.harness/runs/20261118-184115/verify-G15-GR69-UTF8-FONTATLAS-U2.txt`（`cmake --build build --config Debug --target Game -- /m:1`。Game.exe を生成して終了コード 0・error の行 0、既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致、新規ファイルは UTF-8 + BOM + CRLF）。
+- 試験: done-when (4) の Utf8Test・FontAtlasTest・TextComponentBoardProxyTest の拡張と verify の ctest の行は、人の決まり（試験を作らない・回さない。対象の試験は TEST-REMOVE-1114 で消してある）により作らず回していない。`Docs/Testing.md` も触っていない。
+- 人が見るときの見どころ: 今のところ日本語を出す画面は無い。既定のフォント（ランチャーと各シーンの ASCII の文字）が前と同じ見た目で出ること。
+- Next: ランナーの評価者の反証（Public API の FontAtlas・TextComponent）。G15-GR69-STRINGTABLE-LAYOUT・G15-GR69-ASYNC-ATLAS が `BuildCpu`/`FontFaceCache` を使う。
+- Notes: 既知の限界: `FontFaceCache` を GEngine に持たせる配線はしていない（`ApplicationProcessor.cpp` の既定のフォントは今の `Build(FontAtlasDesc{}, ...)` のまま、一時のキャッシュで読む）。`Faces` の 1 本でも読めないと焼き全体が失敗する。`Codepoints` を指定したときは代わりの字 '?'・U+25A1・U+FFFD を自動で足す（どの face にも無い字は焼かない）。
+
+- U1 NVAUD v1 の定数・型と、v0 だけ・v1 だけ・両方を読むパーサ: 着地(直し 0 回)
+- U2 仕様書 Docs/Architecture/NVAUDv1.md: 着地(直し 0 回)
+### G16-GR95-NVAUD-V1-FORMAT NVAUD v1 の形式（2026-11-18、run 20261118-193250 の反復 2、完了）
+- Done: `CookedAudioFormat.h` に `CookedAudioFormatV1`（Magic `NVAUDv1 `・EntryType `Aud1`・VersionMajor 1・HeaderSize 104・manifest の format `nvaud.v1.pcm16`/`nvaud.v1.vorbis`）と `CookedAudioCodec`（PCM16・Vorbis・予約の Opus）・`CookedAudioCategory`（未指定・sfx・ambience・footstep・music・ui）を足した。v0 の定数は変えていない。`ParseCookedAudio` の本体を `ParseCookedAudioV0`（検査は無変更。v1 は BadMagic で拒否）へ移し、`ParseCookedAudioV1` を足し、`ParseCookedAudio` は先頭 8 バイトが v1 の magic のときだけ v1 へ、それ以外は v0 へ振り分ける。`CookedAudioData` に FormatVersion・Codec・TotalFrames・ループ・EncoderDelay・GainDb・Category を足し、Codec が PCM16 でないとき `GetPcmBytes()` は空、`GetEncodedBytes()` は payload を返す。v0 を読んだ結果は Codec PCM16・TotalFrames = FrameCount・ループ無し・GainDb 0・Category 未指定。仕様書 `Docs/Architecture/NVAUDv1.md`（v0 と v1 のバイトの配置の表・検査の順・状態の一覧・manifest の format と entry type・音の欄はヘッダを正本にすること）を足した。
+- 証拠: `.harness/runs/20261118-193250/verify-G16-GR95-NVAUD-V1-FORMAT-U1.txt`（`cmake --build build --config Debug --target AssetCook -- /m:1` と `--target Game` がともに Exit code 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）、`verify-G16-GR95-NVAUD-V1-FORMAT-U2.txt`（仕様書を足した後の AssetCook のビルドが終了コード 0、仕様書は BOM 付き・CRLF、表のオフセットと大きさがヘッダの `HeaderOffset` と一致）。
+- 試験: done-when (4) の `AudioCookedAssetV1Test` と、その前に書く `Docs/Testing.md` の 3 点、verify の ctest の行は、人の決まり（試験を作らない・回さない）により作らず回していない。
+- 人が見るときの見どころ: 形式とパーサだけなので画面の変化は無い。音の入ったシーンで、今の v0 の音がこれまでどおり鳴ること。
+- Next: ランナーの評価者の反証（Public な形式とアセットの読み込み = 危険地帯）。v1 を書き出す cook（G16-GR95-WAV-IMPORT・G16-GR74-VORBIS-COOK）と、clip 側の Codec の拒否と v1 の欄の受け取り（G16-GR74-SOUND-STREAM-WIRE）。
+- Notes: 採った判断: (1) v1 の状態に done-when の 3 つ（UnsupportedCodec・LoopRangeInvalid・FrameCountMismatch）のほか、Category が 5 を超える `UnsupportedCategory` と、GainDb が NaN・無限大の `InvalidGain` を足した（列挙の末尾に足したので v0 の状態の値は変わらない）。(2) Flags の未定義のビットは `ReservedFieldNonZero`。(3) PCM16 では EncoderDelay 0 必須（違えば FrameCountMismatch）、TotalFrames 0 も FrameCountMismatch。(4) v1 は payload がファイルの終わりでちょうど終わる（余りは PayloadOutOfRange）。v0 は前のまま FileSize の内側の余りを許す。既知の限界: Vorbis の payload は Ogg の中身・復号できるか・TotalFrames や EncoderDelay との整合を検査しない（成功は復号の成功を意味しない）。AssetCook のパッケージの検査（`CookOutputPackage.cpp`）は今も `nvaud.v0.pcm16` と `Aud0` の組だけを受け付ける。`AudioClipLoader` は Vorbis を BitsPerSample 0 のため UnsupportedFormat で拒否し、v1 の PCM16 はループ・ゲイン・カテゴリを使わずに読む。

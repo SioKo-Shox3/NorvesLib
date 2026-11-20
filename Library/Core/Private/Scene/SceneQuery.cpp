@@ -356,6 +356,145 @@ namespace NorvesLib::Core::Scene
         return EPhysicsSceneQueryResult::Success;
     }
 
+    EPhysicsSceneQueryResult SceneQuery::BindSurfaceProvider(ISurfaceProvider& provider, int32_t priority)
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        for (const SurfaceProviderEntry& entry : m_SurfaceProviders)
+        {
+            if (entry.Provider == &provider)
+            {
+                return EPhysicsSceneQueryResult::AlreadyBound;
+            }
+        }
+
+        auto position = m_SurfaceProviders.begin();
+        while (position != m_SurfaceProviders.end() && position->Priority >= priority)
+        {
+            ++position;
+        }
+        m_SurfaceProviders.insert(position, SurfaceProviderEntry{&provider, priority, m_NextSurfaceProviderOrder});
+        ++m_NextSurfaceProviderOrder;
+        return EPhysicsSceneQueryResult::Success;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::UnbindSurfaceProvider(ISurfaceProvider& provider)
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+        if (m_SurfaceProviders.empty())
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        for (auto position = m_SurfaceProviders.begin(); position != m_SurfaceProviders.end(); ++position)
+        {
+            if (position->Provider == &provider)
+            {
+                m_SurfaceProviders.erase(position);
+                return EPhysicsSceneQueryResult::Success;
+            }
+        }
+        return EPhysicsSceneQueryResult::ProviderMismatch;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::QuerySurface(const SurfaceQuery& query, SurfaceSample& outSample) const
+    {
+        outSample = SurfaceSample{};
+        if (!IsOwnerThread())
+        {
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+        if (!std::isfinite(query.Position.x) || !std::isfinite(query.Position.y) || !std::isfinite(query.Position.z)
+            || !std::isfinite(query.Normal.x) || !std::isfinite(query.Normal.y) || !std::isfinite(query.Normal.z)
+            || !std::isfinite(query.Radius) || query.Radius < 0.0f)
+        {
+            return EPhysicsSceneQueryResult::InvalidArgument;
+        }
+
+        try
+        {
+            bool bDecided = false;
+            if (!HasAnySurfaceQueryFlag(query.Flags, SurfaceQueryFlags::SkipCollider)
+                && query.Collider.IsValid() && m_PhysicsProvider != nullptr)
+            {
+                SurfaceId id;
+                if (m_PhysicsProvider->GetColliderSurface(query.Collider, id) == EPhysicsSceneQueryResult::Success)
+                {
+                    outSample.Primary = id;
+                    outSample.Secondary = SurfaceId{};
+                    outSample.SecondaryWeight = 0.0f;
+                    outSample.Collider = query.Collider;
+                    bDecided = true;
+                }
+            }
+
+            if (!HasAnySurfaceQueryFlag(query.Flags, SurfaceQueryFlags::SkipProviders))
+            {
+                for (const SurfaceProviderEntry& entry : m_SurfaceProviders)
+                {
+                    SurfaceContribution contribution;
+                    if (entry.Provider->SampleSurface(query, contribution) != EPhysicsSceneQueryResult::Success)
+                    {
+                        continue;
+                    }
+
+                    const float wetness = std::isfinite(contribution.Wetness01)
+                        ? std::clamp(contribution.Wetness01, 0.0f, 1.0f) : 0.0f;
+                    const float puddleDepth = std::isfinite(contribution.PuddleDepthM)
+                        ? std::max(contribution.PuddleDepthM, 0.0f) : 0.0f;
+                    const float vegetationDensity = std::isfinite(contribution.VegetationDensity01)
+                        ? std::clamp(contribution.VegetationDensity01, 0.0f, 1.0f) : 0.0f;
+                    outSample.Wetness01 = std::max(outSample.Wetness01, wetness);
+                    outSample.PuddleDepthM = std::max(outSample.PuddleDepthM, puddleDepth);
+                    outSample.VegetationDensity01 = std::max(outSample.VegetationDensity01, vegetationDensity);
+
+                    if (!bDecided && contribution.bHasSurface)
+                    {
+                        bDecided = true;
+                        SurfaceId primary = contribution.Primary;
+                        SurfaceId secondary = contribution.Secondary;
+                        // 有限の大きな重み同士でも、加算で非有限にならない精度で正規化する。
+                        double pw = std::isfinite(contribution.PrimaryWeight) && contribution.PrimaryWeight >= 0.0f
+                            ? static_cast<double>(contribution.PrimaryWeight) : 0.0;
+                        double sw = std::isfinite(contribution.SecondaryWeight) && contribution.SecondaryWeight >= 0.0f
+                            ? static_cast<double>(contribution.SecondaryWeight) : 0.0;
+                        if (secondary == primary)
+                        {
+                            pw += sw;
+                            sw = 0.0;
+                        }
+                        const double total = pw + sw;
+                        float secondaryWeight = total > 0.0 ? static_cast<float>(sw / total) : 0.0f;
+                        if (secondaryWeight > 0.5f)
+                        {
+                            std::swap(primary, secondary);
+                            secondaryWeight = 1.0f - secondaryWeight;
+                        }
+                        if (secondaryWeight == 0.0f)
+                        {
+                            secondary = SurfaceId{};
+                        }
+                        outSample.Primary = primary;
+                        outSample.Secondary = secondary;
+                        outSample.SecondaryWeight = secondaryWeight;
+                    }
+                }
+            }
+            return bDecided ? EPhysicsSceneQueryResult::Success : EPhysicsSceneQueryResult::NoHit;
+        }
+        catch (...)
+        {
+            outSample = SurfaceSample{};
+            throw;
+        }
+    }
+
     EPhysicsSceneQueryResult SceneQuery::RefreshDynamicSnapshot()
     {
         if (!IsOwnerThread())
