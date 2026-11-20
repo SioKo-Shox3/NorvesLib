@@ -2,6 +2,8 @@
     Public/Audio/AudioClipResource.h
     Public/Audio/AudioComponent.h
     Public/Audio/AudioGameModeOwner.h
+    Public/Audio/AudioListener.h
+    Public/Audio/AudioListenerComponent.h
     Public/Audio/AudioSpatial.h
     Public/Audio/AudioTypes.h
     Public/Audio/IAudioModule.h
@@ -21,6 +23,10 @@ add_library(NorvesAudioDomain STATIC
     Private/Audio/AudioDomain.cpp
     Private/Audio/AudioDomain.h
     Private/Audio/AudioServiceModule.cpp
+    Private/Audio/AudioListenerComponent.cpp
+    Private/Audio/AudioListenerResolver.cpp
+    Private/Audio/AudioListenerResolver.h
+    Private/Audio/AudioSpatialHost.h
     Private/Audio/AudioSpatial.cpp
     Private/Audio/SoundBank.h
     Private/Audio/SoundBank.cpp
@@ -72,6 +78,10 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
     Private/Audio/AudioDomain.h
     Private/Audio/AudioModule.cpp
     Private/Audio/AudioServiceModule.cpp
+    Private/Audio/AudioListenerComponent.cpp
+    Private/Audio/AudioListenerResolver.cpp
+    Private/Audio/AudioListenerResolver.h
+    Private/Audio/AudioSpatialHost.h
     Private/Audio/AudioSpatial.cpp
     Private/Audio/SoundBank.h
     Private/Audio/SoundBank.cpp
