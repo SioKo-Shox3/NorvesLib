@@ -12685,3 +12685,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: 今のところ日本語を出す画面は無い。既定のフォント（ランチャーと各シーンの ASCII の文字）が前と同じ見た目で出ること。
 - Next: ランナーの評価者の反証（Public API の FontAtlas・TextComponent）。G15-GR69-STRINGTABLE-LAYOUT・G15-GR69-ASYNC-ATLAS が `BuildCpu`/`FontFaceCache` を使う。
 - Notes: 既知の限界: `FontFaceCache` を GEngine に持たせる配線はしていない（`ApplicationProcessor.cpp` の既定のフォントは今の `Build(FontAtlasDesc{}, ...)` のまま、一時のキャッシュで読む）。`Faces` の 1 本でも読めないと焼き全体が失敗する。`Codepoints` を指定したときは代わりの字 '?'・U+25A1・U+FFFD を自動で足す（どの face にも無い字は焼かない）。
+- U1 StringTable(言語ごとの文字列表・切り替えの通知・文字集合の収集): 着地(直し 0 回)
