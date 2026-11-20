@@ -18,7 +18,8 @@ namespace NorvesLib::Modules::Audio
         uint64_t TotalFrames = 0;
     };
 
-    /// 音声をフレーム単位で復号する。同じインスタンスを複数のスレッドから同時に使わないこと。
+    /// 音声をフレーム単位で復号する。
+    /// 同じインスタンスを複数のスレッドから同時に使わないこと。別のインスタンスは別のスレッドで同時に使ってよい。
     class IAudioDecoder
     {
     public:
@@ -44,6 +45,8 @@ namespace NorvesLib::Modules::Audio
     };
 
     /// メモリ上の Ogg Vorbis を開く。開けない場合は空のポインタを返す。
+    /// 開く前に全ページの CRC、単一の論理ストリームの連番、最後のページだけが EOS を持ち入力末尾で終わることを検査する。
+    /// ページの破損、切り詰め、終端後の余分なバイトを検出すると空のポインタを返す。
     /// バイト列はコピーせずに借用するため、呼び出し側はデコーダを破棄するまで入力を有効に保つこと。
     [[nodiscard]] Core::Container::TUniquePtr<IAudioDecoder> CreateVorbisDecoder(Core::Container::Span<const uint8_t> oggBytes);
 } // namespace NorvesLib::Modules::Audio
