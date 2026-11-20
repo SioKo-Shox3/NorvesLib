@@ -12655,14 +12655,21 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 上の Notes の「kGloss は照明の全体の値(1.0、仮)」の判断と「要起票: 材質ごとの濡れのつや `FurParams::WetGloss` を照明へ届ける作業」は、この直しで材質から画素ごとに届くようになったので置き換わった(起票しない)。
 - Notes: 判断: lighting.frag の先頭に BOM が付いた(実行時のシェーダーのコンパイラは BOM を外して読む。`VulkanShaderCompiler.cpp:160`)。
 
-- U1 UTF-8 の読み書き(Utf8.h/.cpp)を足し、厳密な走査と TextComponent を同じ規則へ寄せる: 着地(直し 0 回)
-- U2 FontFaceCache と、コードポイントの表・フォールバックの face・BuildCpu/Upload を持つ FontAtlas: 着地(直し 1 回)
-
-## 2026-11-18 G15-GR69-UTF8-FONTATLAS（run 20261118-184115 の反復 1、完了）
-- Done: `Text/Utf8.h`（実装 `Private/Text/Utf8.cpp`）に `DecodeUtf8`（不正な先頭バイト・継続バイトの欠落・過長表現・サロゲート・0x10FFFF 超・途中切れは U+FFFD で 1 バイト前進）・`AppendUtf8`（4 バイトまで。符号化は `EncodeJsonUnicodeScalar<char>` を使う）・`IsValidUtf8`・`ForEachUtf8Codepoint` を足した。厳密な 1 文字の読み `Utf8Detail::TryDecodeUtf8Strict` を `TextDetail::ForEachUnicodeScalar` の 1 バイトの枝も使い、表は 1 つだけ。`TextComponent::BuildGlyphBoardProxies` はコードポイントごとに走査する（ASCII の基準線・字間・改行・空白・`\x7F` の '?' は今のまま）。
-- Done: `FontFaceCache`（論理パスごとにブロブを 1 回だけ読む。失敗は覚えない。Mutex で守る）を新設。`FontAtlasDesc` に `Codepoints`（空なら 0x20〜0x7E）・`Faces`（フォールバックの順。空なら `FontLogicalPath`）・`Padding`・`MaxAtlasSize` を足し、字形を整列したコードポイントの表（二分探索）にした。欠落は '?' → U+25A1 → U+FFFD の順。`Build` を `BuildCpu`（GPU に触らない）と `Upload` に分け、`Build` は両方を同期で呼ぶ包み（`FontFaceCache&` を受ける多重定義もある）。幅 0 は 64 から 2 倍ずつ試す自動、上限に収まらなければ false。既定の `FontAtlasDesc{}` は並び・詰め方・幅 512・画素の規則が前と同じ。
-- 証拠: `.harness/runs/20261118-184115/verify-G15-GR69-UTF8-FONTATLAS-U2.txt`（`cmake --build build --config Debug --target Game -- /m:1`。Game.exe を生成して終了コード 0・error の行 0、既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致、新規ファイルは UTF-8 + BOM + CRLF）。
-- 試験: done-when (4) の Utf8Test・FontAtlasTest・TextComponentBoardProxyTest の拡張と verify の ctest の行は、人の決まり（試験を作らない・回さない。対象の試験は TEST-REMOVE-1114 で消してある）により作らず回していない。`Docs/Testing.md` も触っていない。
-- 人が見るときの見どころ: 今のところ日本語を出す画面は無い。既定のフォント（ランチャーと各シーンの ASCII の文字）が前と同じ見た目で出ること。
-- Next: ランナーの評価者の反証（Public API の FontAtlas・TextComponent）。G15-GR69-STRINGTABLE-LAYOUT・G15-GR69-ASYNC-ATLAS が `BuildCpu`/`FontFaceCache` を使う。
-- Notes: 既知の限界: `FontFaceCache` を GEngine に持たせる配線はしていない（`ApplicationProcessor.cpp` の既定のフォントは今の `Build(FontAtlasDesc{}, ...)` のまま、一時のキャッシュで読む）。`Faces` の 1 本でも読めないと焼き全体が失敗する。`Codepoints` を指定したときは代わりの字 '?'・U+25A1・U+FFFD を自動で足す（どの face にも無い字は焼かない）。
+## G13-GR115-SURFACE-REGISTRY 表面の語彙と登録簿、SceneQuery の表面の照会、問い合わせの結果の表面の欄（2026-11-18、run 20261118-161937）
+- Done: 表面の語彙の型 `Library/Core/Public/Scene/SurfaceTypes.h`。強い型 `SurfaceId`（uint16 を包む。0 = Default。整数・`GroundSample::SurfaceId`（u8）・物理の結果の `uint8_t SurfaceId` から暗黙に変換しないことを static_assert で止める）・`SurfaceFlags`（Soft・Hard・Liquid・Vegetated・Wettable）・`SurfaceDesc`（安定名・parent・flags・audio・visual・physical）・`SurfaceQueryFlags`・`SurfaceQuery`・`SurfaceSample`。循環 include を避けるため `ColliderHandle`・`BodyHandle` を `Scene/PhysicsHandles.h` へそのまま移した。
+- Done: `PhysicsRaycastHit`・`PhysicsOverlapHit`・`PhysicsQueryHit` に `Scene::SurfaceId Surface`（既定 Default）。中身を入れるのは G13-GR115-PHYSICS-SURFACE。
+- Done: 登録簿 `SurfaceRegistry`（`Scene/SurfaceRegistry.h`・`Private/Scene/SurfaceRegistry.cpp`）。`LoadFromJson`・`LoadFromAssetFile` は全部を検査してから入れ替え、拒否（`ESurfaceRegistryError` の種別: 未知のキー・重複のキー・型・非有限・範囲・名前・重複名・未知の parent・循環・Default の parent・未知のフラグ・数の上限など）したら表・Revision・名前の添字を変えない。成功で `GetRevision()` が増える。`FindByName`（未知は Default と名前ごとに 1 回の警告）・`TryFindByName`・`GetDesc`・`GetName`・parent をたどる `ResolveFallback(id, predicate)`。
+- Done: `Engine::Engine` のメンバ `m_SurfaceRegistry` と `GetSurfaceRegistry()`（シングルトンにしない）。Game の `OnInitialize` でコリジョンレイヤーの読み込みの直後に `Data/Surfaces.json` を読み、読めなければ Default だけで続けて「表面の語彙を読めません。Default だけで続行します: …」の警告を出す。仮の語彙 8 個の `Assets/Data/Surfaces.json`（Default・Grass_Tall・Dirt_Mud・Rock・Concrete（parent Rock）・Metal・Water_Shallow・Wood。値は仮）。
+- Done: `SceneQuery` に `ISurfaceProvider`（`SampleSurface` が `SurfaceContribution` を返す）と優先度つきの `BindSurfaceProvider` / `UnbindSurfaceProvider`（`BindPhysicsProvider` と同じ持ち主のスレッドと重複の規則。目安は地形 200・草 100）、`QuerySurface`。解決の順はコライダーの明示タグ（`IPhysicsSceneQueryProvider::GetColliderSurface`。既定実装は Unavailable）> provider を優先度の高い順（同じ優先度は登録順）> Default。2 層の重みは和 1 に正規化し、Primary を重い方にする。濡れ・水たまり・草の密度は全 provider の最大。provider も物理も無ければ Default と NoHit で落ちない。
+- Done: 契約の文書 `Docs/Architecture/SurfaceContract.md`（型と番号の取り違えの注意、保存は名前、登録簿の形と拒否の種別、照会の順と重み、物理の結果の欄、後の段階）。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` 終了コード 0・error の行 0（全単位を載せた先頭 1154a647 と同じ中身で、`SurfaceRegistry.cpp`・`SceneQuery.cpp` のコンパイルと `Game.exe` のリンクまで。既存の物理の provider は既定実装のままビルドできた）。`Assets/Data/Surfaces.json` は `json.load` で version 1・8 個。変えた既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致、新規ファイルは UTF-8 + BOM + CRLF。
+- Next: ランナーの評価者の反証（危険地帯: Public API の SceneQuery・Engine）。コライダーの PROPERTY と物理の結果への受け渡しは G13-GR115-PHYSICS-SURFACE、地形・草・濡れの provider と消費者は G13-GR115-GROUND-CONTACT。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (4) `SurfaceRegistryTest`・`SceneQuerySurfaceTest` は作っていない（`Docs/Testing.md` の 3 点も書かない）。ctest は回さない決まり。
+- Notes: 人が見るときの見どころ: Game を起動したときのログに「表面の語彙を読めません」の警告が出ないこと（出れば Surfaces.json が拒否されている。理由が同じ行に出る）。見た目の変化は無い。
+- Notes: 判断: 選定課題 G13-S7 はタスクの notes どおり (A)（保存は名前、`SurfaceId` は読み込み順の添字で保存しない、地形の層の番号は地形の側に残す）。読み直しでは前にあった名前に前と同じ添字を使い、新しい名前は末尾に足す。ファイルから消えた名前は「引退」（添字と名前は残し、`FindByName` では未知、`GetDesc` は Default の記述）にして、消費者が持つ `SurfaceId` が別の表面を指さないようにした。
+- Notes: 判断: `1e999` のような桁あふれの数は JSON の解析が拒否するので `ParseError`（パーサーの説明を Detail に付ける）で拒否する。double では有限でも float に収まらない数は `NonFiniteNumber`。
+- Notes: 既知の限界: 警告済みの名前は `IdentityHash` の値で覚えるので、ハッシュが衝突した別の名前の警告は出ない。読み込みは GameThread で、引きと同時に走らせない前提（クラスのコメントに書いた）。
+- U1 表面の型（SurfaceTypes.h）と物理の結果の Surface 欄: 着地(直し 0 回)
+- U3 SceneQuery の表面の照会: 着地(直し 0 回)
+- U2 表面の登録簿 SurfaceRegistry: 着地(直し 1 回)
+- U4 Engine の持ち物・Game の起動での読み込み・語彙のデータ・契約の文書: 着地(直し 0 回)
