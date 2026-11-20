@@ -1,4 +1,4 @@
-#version 450
+﻿#version 450
 
 #include "Common/CloudShadowMaskSample.glsl"
 
@@ -1218,6 +1218,8 @@ void main()
         pale = MakePaleFlatInputs(params.paleFlatColorAndWrapMin, params.paleFlatShape,
                                   params.paleFlatAverageIrradiance);
         shadingSurface.id = normalData.shadingModelId;
+        shadingSurface.furWetGloss = shadingSurface.id == GBUFFER_SHADING_MODEL_FUR
+            ? GBufferDecodeFurWetGloss(albedoSample.a) : 0.0;
         shadingSurface.p0 = GBufferDecodeP0(texture(gbufferMaterial, fragUV));
         shadingSurface.p1 = GBufferDecodeP1(texture(gbufferEmissive, fragUV));
         shadingSurface.albedo = albedo;
