@@ -208,6 +208,7 @@ set(PRIVATE_SOURCES
     Private/Text/Utf8.cpp
     Private/Text/StringTable.cpp
     Private/Text/TextLayout.cpp
+    Private/Text/FontAtlasTextMetrics.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
     Private/Debug/DebugOutput.cpp
@@ -639,6 +640,7 @@ set(PUBLIC_HEADERS
     Public/Text/Utf8.h
     Public/Text/StringTable.h
     Public/Text/TextMetrics.h
+    Public/Text/FontAtlasTextMetrics.h
     Public/Text/TextLayout.h
     Public/Container/Containers.h
     Public/Container/PointerTypes.h
