@@ -2,6 +2,8 @@
 
 #include "Math/GeometryTypes.h"
 #include "Object/EntityHandle.h"
+#include "Scene/PhysicsHandles.h"
+#include "Scene/SurfaceTypes.h"
 #include <cstddef>
 #include <cstdint>
 
@@ -23,52 +25,6 @@ namespace NorvesLib::Core::Scene
         IterationLimit
     };
 
-    struct ColliderHandle
-    {
-        static constexpr uint32_t InvalidIndex = UINT32_MAX;
-
-        uint32_t Index = InvalidIndex;
-        uint32_t Generation = 0;
-
-        constexpr bool IsValid() const
-        {
-            return Index != InvalidIndex && Generation != 0;
-        }
-
-        constexpr bool operator==(const ColliderHandle& other) const
-        {
-            return Index == other.Index && Generation == other.Generation;
-        }
-
-        constexpr bool operator<(const ColliderHandle& other) const
-        {
-            return Index < other.Index || (Index == other.Index && Generation < other.Generation);
-        }
-    };
-
-    struct BodyHandle
-    {
-        static constexpr uint32_t InvalidIndex = UINT32_MAX;
-
-        uint32_t Index = InvalidIndex;
-        uint32_t Generation = 0;
-
-        constexpr bool IsValid() const
-        {
-            return Index != InvalidIndex && Generation != 0;
-        }
-
-        constexpr bool operator==(const BodyHandle& other) const
-        {
-            return Index == other.Index && Generation == other.Generation;
-        }
-
-        constexpr bool operator<(const BodyHandle& other) const
-        {
-            return Index < other.Index || (Index == other.Index && Generation < other.Generation);
-        }
-    };
-
     struct PhysicsRaycastHit
     {
         ColliderHandle Collider;
@@ -81,6 +37,8 @@ namespace NorvesLib::Core::Scene
         uint64_t UserData = 0;
         // 当たった表面の番号。地形は層の番号、ほかはコライダーに付けた番号。無ければ kInvalidPhysicsSurfaceId。
         uint8_t SurfaceId = kInvalidPhysicsSurfaceId;
+        // 登録簿の表面。コライダーに明示した表面を物理が入れる。無ければ Default。
+        ::NorvesLib::Core::Scene::SurfaceId Surface{};
     };
 
     struct PhysicsOverlapHit
@@ -93,6 +51,8 @@ namespace NorvesLib::Core::Scene
         uint64_t UserData = 0;
         // 当たった表面の番号。地形は層の番号、ほかはコライダーに付けた番号。無ければ kInvalidPhysicsSurfaceId。
         uint8_t SurfaceId = kInvalidPhysicsSurfaceId;
+        // 登録簿の表面。コライダーに明示した表面を物理が入れる。無ければ Default。
+        ::NorvesLib::Core::Scene::SurfaceId Surface{};
     };
 
     // レイヤーの名前と割当はゲーム側で管理する。エンジンは32ビットの集合だけを扱う。
@@ -203,6 +163,8 @@ namespace NorvesLib::Core::Scene
         bool bStartPenetrating = false;
         // 当たった表面の番号。地形は層の番号、ほかはコライダーに付けた番号。無ければ kInvalidPhysicsSurfaceId。
         uint8_t SurfaceId = kInvalidPhysicsSurfaceId;
+        // 登録簿の表面。コライダーに明示した表面を物理が入れる。無ければ Default。
+        ::NorvesLib::Core::Scene::SurfaceId Surface{};
     };
 
     struct PhysicsQueryBatchResult
