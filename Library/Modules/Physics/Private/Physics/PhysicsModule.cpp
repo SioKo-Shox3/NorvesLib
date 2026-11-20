@@ -97,9 +97,11 @@ namespace NorvesLib::Modules::Physics
         m_Engine = &engine;
         m_bBound = true;
         m_StaticColliderPayloadHandler.SetScatterSystem(&engine.GetScatterSystem());
+        m_StaticColliderPayloadHandler.SetSurfaceRegistry(&engine.GetSurfaceRegistry());
         engine.GetScatterSystem().SetColliderListener(&m_ScatterColliderBinding);
         if (!engine.GetStreamingSystem().RegisterHandler(&m_StaticColliderPayloadHandler))
         {
+            m_StaticColliderPayloadHandler.SetSurfaceRegistry(nullptr);
             LOG_WARNING("PHYSICS_STREAMING_HANDLER_SKIPPED マニフェストが既にあるか、同じ種類のハンドラが登録済みです");
         }
         engine.GetSceneQuery().SetTerrainSystem(&engine.GetTerrainSystem());
@@ -318,6 +320,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         engine.GetStreamingSystem().UnregisterHandler(&m_StaticColliderPayloadHandler);
+        m_StaticColliderPayloadHandler.SetSurfaceRegistry(nullptr);
         m_StaticColliderPayloadHandler.SetScatterSystem(nullptr);
         if (engine.GetScatterSystem().GetColliderListener() == &m_ScatterColliderBinding)
         {
@@ -468,6 +471,24 @@ namespace NorvesLib::Modules::Physics
         return m_PublishedBroadphase.AppendOverlapQuery(query,outHits);
     }
 
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::GetColliderSurface(
+        Core::Scene::ColliderHandle collider, Core::Scene::SurfaceId& outSurface) const
+    {
+        outSurface = Core::Scene::SurfaceId::Default();
+        const auto readiness = GetReadinessResult();
+        if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
+        {
+            return readiness;
+        }
+        const PhysicsShapeProxy* proxy = m_PublishedBroadphase.FindProxy(collider);
+        if (!proxy || !proxy->bHasSurface)
+        {
+            return Core::Scene::EPhysicsSceneQueryResult::NoHit;
+        }
+        outSurface = proxy->Surface;
+        return Core::Scene::EPhysicsSceneQueryResult::Success;
+    }
+
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::IsAlive(
         Core::Scene::ColliderHandle collider,
         bool& outAlive) const
@@ -540,7 +561,8 @@ namespace NorvesLib::Modules::Physics
         for (size_t index = 0; index < colliders.size(); ++index)
         {
             const StaticColliderDesc& desc = colliders[index];
-            if (desc.bTrigger)
+            if (desc.bTrigger || (desc.bHasSurface && m_Engine != nullptr
+                && desc.Surface.Value >= m_Engine->GetSurfaceRegistry().GetSurfaceCount()))
             {
                 return EPhysicsResult::InvalidArgument;
             }
@@ -584,7 +606,8 @@ namespace NorvesLib::Modules::Physics
             proxy.Layer = desc.Layer;
             proxy.Mask = desc.Mask;
             proxy.UserData = desc.UserData;
-            proxy.SurfaceId = desc.SurfaceId;
+            proxy.Surface = desc.bHasSurface ? desc.Surface : Core::Scene::SurfaceId::Default();
+            proxy.bHasSurface = desc.bHasSurface;
             proxy.bTrigger = false;
             proxy.Mobility = EPhysicsProxyMobility::Static;
             proxy.bStatic = true;
@@ -1409,7 +1432,8 @@ namespace NorvesLib::Modules::Physics
             if ((!firstCollider->bDetached && firstCollider->Component->m_bTrigger)
                 || (!secondCollider->bDetached && secondCollider->Component->m_bTrigger))
             {
-                m_CurrentTriggerPairs.push_back(TriggerPairState{candidate.First, candidate.Second, contact});
+                m_CurrentTriggerPairs.push_back(TriggerPairState{
+                    candidate.First, candidate.Second, contact, firstProxy->Surface, secondProxy->Surface});
                 continue;
             }
 
@@ -1471,7 +1495,9 @@ namespace NorvesLib::Modules::Physics
                     candidate.First,
                     candidate.Second,
                     contact,
-                    normalImpulse});
+                    normalImpulse,
+                    firstProxy->Surface,
+                    secondProxy->Surface});
             }
         }
     }
@@ -1496,7 +1522,9 @@ namespace NorvesLib::Modules::Physics
                     current.First,
                     current.Second,
                     current.Contact,
-                    0.0f});
+                    0.0f,
+                    current.FirstSurface,
+                    current.SecondSurface});
             }
         }
         for (const TriggerPairState& previous : m_PreviousTriggerPairs)
@@ -1519,7 +1547,9 @@ namespace NorvesLib::Modules::Physics
                     previous.First,
                     previous.Second,
                     contact,
-                    0.0f});
+                    0.0f,
+                    previous.FirstSurface,
+                    previous.SecondSurface});
             }
         }
         m_PreviousTriggerPairs = m_CurrentTriggerPairs;
@@ -1561,6 +1591,8 @@ namespace NorvesLib::Modules::Physics
                 receiver.OtherHandle = otherHandle;
                 receiver.Event.Self = selfHandle;
                 receiver.Event.Other = otherHandle;
+                receiver.Event.SelfSurface = receiverIndex == 0 ? pending.FirstSurface : pending.SecondSurface;
+                receiver.Event.OtherSurface = receiverIndex == 0 ? pending.SecondSurface : pending.FirstSurface;
                 receiver.Event.Contact = pending.Contact;
                 receiver.Event.NormalImpulse = pending.NormalImpulse;
                 if (receiverIndex != 0)

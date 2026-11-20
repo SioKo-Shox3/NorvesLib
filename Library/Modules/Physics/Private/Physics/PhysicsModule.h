@@ -93,6 +93,8 @@ namespace NorvesLib::Modules::Physics
             Core::Scene::ColliderHandle First;
             Core::Scene::ColliderHandle Second;
             Math::GeometryContact Contact;
+            Core::Scene::SurfaceId FirstSurface{};
+            Core::Scene::SurfaceId SecondSurface{};
         };
 
         enum class EPhysicsEventType : uint8_t
@@ -109,6 +111,8 @@ namespace NorvesLib::Modules::Physics
             Core::Scene::ColliderHandle Second;
             Math::GeometryContact Contact;
             float NormalImpulse = 0.0f;
+            Core::Scene::SurfaceId FirstSurface{};
+            Core::Scene::SurfaceId SecondSurface{};
         };
 
         friend class ColliderComponent;
@@ -203,6 +207,8 @@ namespace NorvesLib::Modules::Physics
         Core::Scene::EPhysicsSceneQueryResult OverlapCapsule(
             const Math::Capsule& capsule,
             Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const override;
+        Core::Scene::EPhysicsSceneQueryResult GetColliderSurface(Core::Scene::ColliderHandle collider,
+            Core::Scene::SurfaceId& outSurface) const override;
         Core::Scene::EPhysicsSceneQueryResult IsAlive(Core::Scene::ColliderHandle collider, bool& outAlive) const override;
         Core::Scene::EPhysicsSceneQueryResult IsAlive(Core::Scene::BodyHandle body, bool& outAlive) const override;
         Core::Scene::EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const override;

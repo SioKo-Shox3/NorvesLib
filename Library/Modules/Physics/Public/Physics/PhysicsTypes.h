@@ -71,8 +71,10 @@ namespace NorvesLib::Modules::Physics
         Core::Scene::PhysicsCollisionMask Layer = Core::Scene::DefaultPhysicsLayer;
         /// 衝突の対象にするレイヤーの集合。
         Core::Scene::PhysicsCollisionMask Mask = Core::Scene::AllPhysicsLayers;
-        /// 表面の番号。G5-GR38 と同じ番号の空間を使う。
-        uint8_t SurfaceId = Core::Scene::kInvalidPhysicsSurfaceId;
+        /// 登録簿の表面の添字。地形の層の番号は入れない。bHasSurface が false なら使わない。
+        Core::Scene::SurfaceId Surface{};
+        /// Surface を明示したか。
+        bool bHasSurface = false;
         /// 呼び手が設定する任意のデータ。
         uint64_t UserData = 0;
         /// detached はトリガーを持てないため、true は登録時に拒否する。
@@ -98,5 +100,9 @@ namespace NorvesLib::Modules::Physics
         Core::Scene::ColliderHandle Other;
         Math::GeometryContact Contact;
         float NormalImpulse = 0.0f;
+        /// 受け手側のコライダーの表面。明示が無ければ Default。
+        Core::Scene::SurfaceId SelfSurface{};
+        /// 相手側のコライダーの表面。明示が無ければ Default。
+        Core::Scene::SurfaceId OtherSurface{};
     };
 } // namespace NorvesLib::Modules::Physics
