@@ -12687,3 +12687,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: `SetSurface` はほかの setter と同じく未登録なら `NotRegistered`（登録前は PROPERTY に入れておけば `Initialize` で解決される）。名前の形が不正なら `InvalidArgument` で旧値を保つ。未知の名前は名前を保ったまま `bHasSurface` = true・`Surface` = `Default` にする。
 - Notes: 再初期化（`ResetTransientState`）で登録簿の改訂の記録を `UINT64_MAX` にし、最初の歩で全コライダーを解決し直す。静的なコライダーの表面は登録のたびに解決し、登録簿の読み直しでは解決し直さない（同じ名前の添字は読み直しで保たれる）。
 - U3 静的コライダーの表面の名前をモジュールが保持して登録簿の改訂で同じハンドルのまま解決し直し、v1 の数値の surface を従来の層番号として読み、OverlapEnd に今の表面を載せる: 着地(直し 0 回)
+- U4 ColliderComponent の SurfaceName を編集で書き換えたときに表面を解決し直し、文書を今の形に直す: 着地(直し 0 回)

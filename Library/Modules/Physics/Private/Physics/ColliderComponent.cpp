@@ -341,6 +341,19 @@ namespace NorvesLib::Modules::Physics
             : EPhysicsResult::NotRegistered;
     }
 
+    void ColliderComponent::OnPropertyApplied(const Core::ClassProperty& property)
+    {
+        Core::Component::Component::OnPropertyApplied(property);
+        if (&property == s_PropertyPtr_SurfaceName)
+        {
+            PhysicsModule* module = FindRegisteredPhysicsModule();
+            if (module && module->ValidateCollider(*this) == EPhysicsResult::Success)
+            {
+                module->ResolveColliderSurface(*this);
+            }
+        }
+    }
+
     void ColliderComponent::Finalize()
     {
         if (m_ColliderHandle.IsValid())

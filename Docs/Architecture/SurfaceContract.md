@@ -75,11 +75,13 @@ provider が返す 2 層の重みは、負または非有限の値を 0 とし�
 
 コライダーに明示した表面は、`PhysicsRaycastHit`、`PhysicsOverlapHit`、`PhysicsQueryHit` の `Surface` に入る。`RaycastClosest`、`RaycastAll`、`OverlapSphere`、`OverlapBox`、`OverlapCapsule`、`SweepSphere`、`SweepCapsule` と旧入口で共通とする。`PhysicsContactEvent` の `SelfSurface` は通知先、`OtherSurface` は相手のコライダーの表面を表す。いずれも明示なしなら `Default` を返す。
 
-`ColliderComponent` は `SurfaceName` を `PROPERTY` として持ち、シーンには名前を保存する。`Initialize` 時の登録で名前を登録簿の `SurfaceId` に解決する。登録後は `SetSurface` で名前を設定し、`GetSurface` ですぐに解決済みの値を読める。空の名前は明示を外す。名前の形式が不正なら `SetSurface` は `InvalidArgument` を返し、旧値を保つ。未知の名前は保持し、`FindByName` が `Default` を返す。ログ有効時の警告は登録簿の読み直しまで名前ごとに 1 回だけ出る。
+`ColliderComponent` は `SurfaceName` を `PROPERTY` として持ち、シーンには名前を保存する。`Initialize` で登録するときに名前を解決する。登録後は `SetSurface` で名前を設定したときと、シーン編集などで `SurfaceName` を適用したとき（`OnPropertyApplied`）に解決し直す。`GetSurface` はその時点で新しい値を返す。空の名前は明示を外す。名前の形式が不正なら `SetSurface` は `InvalidArgument` を返し、旧値を保つ。未知の名前は保持し、`FindByName` が `Default` を返す。ログ有効時の警告は登録簿の読み直しまで名前ごとに 1 回だけ出る。
 
-登録簿の `GetRevision()` が変わると、次の物理の 1 歩または明示のスナップショット更新のうち、先に行う方で名前を解決し直す。結果・接触イベントには次の公開から反映する。`GetColliderSurface` は公開スナップショットを参照する。明示なしなら `NoHit` を返し、`SceneQuery::QuerySurface` は provider へ進む。`Default` を明示した場合は `Success` を返す。
+登録簿の `GetRevision()` が変わると、次の `StepFixed` または `RefreshDynamicSnapshot` のうち、先に実行された方で名前を解決し直す。物理クエリは次のスナップショットの公開から新しい表面を返す。`GetColliderSurface` は公開スナップショットを参照する。明示なしなら `NoHit` を返し、`SceneQuery::QuerySurface` は provider へ進む。`Default` を明示した場合は `Success` を返す。
 
-Entity を持たない静的コライダーは、`StaticColliderDesc::Surface` に登録簿の添字を、`bHasSurface` に明示の有無を渡す。payload の `"surface"` は表面の名前の文字列で、GameThread で登録するたびに解決する。従来の `uint8_t SurfaceId` は地形の層の番号を扱い、登録簿の添字とは別に保持する。
+Entity を持たない静的コライダーでは、物理モジュールが `StaticColliderDesc::SurfaceName` の名前を保持し、チャンクの適用時に解決する。登録簿の改訂を検出したときも、同じ `ColliderHandle` のまま解決し直す。名前が空なら `Surface` に登録簿の添字、`bHasSurface` に明示の有無を渡す。`norves.static-colliders.v1` の `"surface"` は、文字列なら登録簿の名前、整数（0〜255）なら従来の地形の層番号を指定する。層番号は結果の `uint8_t SurfaceId` にだけ写す。
+
+`Hit` と `OverlapBegin` は今のステップの proxy の表面を返す。`OverlapEnd` は両側を個別に扱い、その側の proxy が今のステップにもあれば現在の表面を、なければ最後に重なっていたときの表面を返す。
 
 ## 後の段階
 

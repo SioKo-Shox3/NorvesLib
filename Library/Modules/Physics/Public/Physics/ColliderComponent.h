@@ -63,6 +63,7 @@ namespace NorvesLib::Modules::Physics
 
         void Initialize() override;
         void Finalize() override;
+        void OnPropertyApplied(const Core::ClassProperty& property) override;
 
         /// 登録簿の表面の名前。空なら表面を明示しない。保存・読み込みの対象。
         PROPERTY(Core::Container::String, SurfaceName)
