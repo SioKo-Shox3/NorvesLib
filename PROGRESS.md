@@ -12665,3 +12665,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: (a) stb は総フレームを最後のページの granule から求めるので、終端のページを含む末尾を失った入力でも、直前の有効なページまでの短い総フレームで正常に開いて終端まで復号できることがある（切り詰めを失敗として見分けられない場合がある）。cook の検証は payload のハッシュの照合と組み合わせる前提。(b) 壊れた入力でシークの内部の条件が崩れると、Debug では `HasFailed` を返す前に stb の `assert` で止まりうる（`stb_vorbis.c` の seek の箇所）。ランタイムが開くのは検証済みの payload だけ。
 - U3 stb_vorbis の CRC 表を定数にし、シークの assert を実行時の検査にする: 着地(直し 1 回)
 - U4 CreateVorbisDecoder が開く前に Ogg のページの並びを全部検査し、切り詰め・破損・後ろのごみを拒む: 着地(直し 0 回)
+- Done(差し戻しの直し): `stb_vorbis.c` の CRC 表を事前計算の `static const` の表にし、デコーダを開くたびの `crc32_init()` の書き込みを無くした（別のインスタンスを別のスレッドで同時に使える）。`stb_vorbis_seek_frame64`・`stb_vorbis_seek64` の `assert` と無視していた復号の成否を実行時の検査にし、崩れたら `VORBIS_seek_failed` で 0 を返す（ラッパの `SeekToFrame` が false を返す）。`UPSTREAM.json` のサイズ・sha256 と当てた修正の記録、`StbVorbis.md` を更新した。
+- Done(差し戻しの直し): `CreateVorbisDecoder` が stb に渡す前に入力全体の Ogg のページを 1 回なぞって検査する（`OggS`・版 0・既知のフラグだけ・区切りの表と本体が入力に収まる・CRC・先頭だけが BOS・単一の serial・連番・EOS は最後のページだけで入力の末尾ちょうどで終わり granule が未設定でない）。通らない入力は開かず空を返し、開いた後も stb の総フレームが EOS の granule と一致しなければ空を返す。`AudioDecoder.h` の注記（並行利用・検査の内容）と `StbVorbis.md` の運用上の前提を直した。
+- 確かめ: `cmake --build build --config Debug --target NorvesAudioDecode -- /m:1` と `cmake --build build --config Debug -- /m:1`（試験のターゲットを外した verify のビルドの行）がどちらも終了コード 0・エラーの行なしで `Game.exe` のリンクまで通った（CRC の `static_assert` 2 件を含む）。numstat は 2 通りで一致、3 ファイルとも BOM + CRLF のまま。
+- Notes: 上の既知の限界 (a)（末尾を失った入力が短い総フレームで開く）と (b)（壊れた入力へのシークが Debug の `assert` で止まる・Release で失敗を返さない）は、この直しで解消した。
+- Next: ランナーの評価者の反証（危険地帯）。cook からの全フレームの復号の検証は G16-GR74-VORBIS-COOK。呼び出し元がまだ無いので、ゲームの見た目・音に変化は無い。
