@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "styles": {
+    "body": {
+      "faces": ["Fonts/Inter-Regular.ttf", "Fonts/NotoSansJP.ttf"],
+      "basePx": 24,
+      "charsetPrefixes": [""]
+    },
+    "caption": {
+      "faces": ["Fonts/Inter-Regular.ttf", "Fonts/NotoSansJP.ttf"],
+      "basePx": 18,
+      "charsetPrefixes": [""]
+    },
+    "heading": {
+      "faces": ["Fonts/Inter-Regular.ttf", "Fonts/NotoSansJP.ttf"],
+      "basePx": 32,
+      "charsetPrefixes": [
+        "pause.title",
+        "settings.title",
+        "save.title",
+        "credits.title",
+        "map.title",
+        "travel.title",
+        "confirm.quit.title"
+      ]
+    },
+    "title": {
+      "faces": ["Fonts/Inter-Regular.ttf", "Fonts/NotoSansJP.ttf"],
+      "basePx": 56,
+      "charsetPrefixes": ["title.main"]
+    }
+  }
+}
