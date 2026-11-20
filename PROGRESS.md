@@ -12660,3 +12660,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 格子の問い合わせ(通行・最寄り・視線・コスト)と視線での平滑化: 着地(直し 0 回)
 - U5 整数コストの A* NavPathfinder(予算で分けて進める): 着地(直し 0 回)
 - U6 エージェントのプロファイルの集合と NavProfiles.json: 着地(直し 0 回)
+- U7 カメラの周りだけを描くナビのデバッグ描画: 着地(直し 0 回)
