@@ -91,10 +91,8 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 
 ## 現在の再生範囲
 
-GR72 の 2D 経路では、位置を次のように扱う。
-
-実際の再生は 2D のみで、Entity の位置への追従はまだない。
-`PlayAt` の位置は dedupe の判定に使われるが、空間再生には使われない。
+`PlayGlobal` と、`Spatialization` が `None`(既定)の `AudioComponent` は 2D で鳴り、位置を使わない。
+`PlayAt` の位置は dedupe の判定に使い、3D の条件を満たすとき(次の節)は定位にも使う。3D の音源は持ち主の Entity の位置に毎 Tick 追従する。
 
 ## GR73 の 3D 再生
 

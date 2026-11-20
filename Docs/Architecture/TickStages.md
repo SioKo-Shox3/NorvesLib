@@ -117,7 +117,7 @@ Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテ�
 
 - 最終のカメラの確定点は `PostLateTick` の Module `LateTick` の後に呼ばれる Handler の `OnLateUpdate`。現在の Game カメラの最終 proxy は `GameApplicationHandler::OnLateUpdate` の slot から確定する。ロードマップの「`IModule::LateTick` を最終のカメラの確定点」とする記述は採らない。
 - G14 CameraDirector の配置は未決の G14-S3 に残す。どこに所有しても候補・intent の評価と最終 commit を分け、当フレームの最終結果は Game の `OnLateUpdate` の確定境界で一度だけ反映する。Module の `LateTick` で準備しても、描画同期後の通常 Module Tick から別の camera を上書きする方式にはしない。
-- G16 listener は最終 commit 後の同じフレームの camera snapshot を読む。現在の順序なら、その後の通常 Module Tick か将来追加する明示的な確定通知が候補となる。Module の `LateTick` を最終カメラの読み取り点にしない。停止中の listener / Audio 方針は GR119 / GR73 で定め、現在の `AudioServiceModule` に listener 連携があるとは扱わない。
+- G16 listener は最終 commit 後の同じフレームの camera snapshot を読む。現在の順序なら、その後の通常 Module Tick か将来追加する明示的な確定通知が候補となる。Module の `LateTick` を最終カメラの読み取り点にしない。停止中の listener / Audio の方針は GR119 で定める。
 - GR73 では、音のリスナーは Handler の `OnLateUpdate` 後に動く通常の Module の `TickAll` で、同じフレームの最終カメラを読む。
 - Game 専用の camera slot は `Delegate` と weak binding を使う。`OnUpdate` で前フレームの残件を破棄し、同一フレームで複数回予約した場合は最後を採用する。`OnLateUpdate` の呼び出しは pending を先に空にし、callback 内の新予約は同じ呼び出しでは実行しない。
 - 現在の camera snapshot は ID から live な Entity / Component を解決し、`UpdateRenderTransforms` → SpringArm の再更新 → `UpdateWorldTransforms` → proxy 生成の順で確定する。これにより Module Late 後の child pivot と SpringArm が更新した child camera を反映する。

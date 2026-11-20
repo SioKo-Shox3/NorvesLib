@@ -12660,3 +12660,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 受入れの記録・AudioFlow・TickStages に 3D 定位とリスナーを書く: 着地(直し 0 回)
 - U4 リスナー(seam・AudioListenerComponent・選定と MainCamera の読み取り)を足す: 着地(直し 1 回)
 - U6 音のモジュールと AudioComponent をつなぐ(Engine の保持・リスナーの解決・エミッタの追従): 着地(直し 0 回)
+- U7 文書に残った「リスナー連携が無い」「再生は 2D のみ」の古い記述を GR73 に合わせる: 着地(直し 0 回)
