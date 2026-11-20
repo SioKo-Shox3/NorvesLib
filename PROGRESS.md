@@ -12668,3 +12668,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: Entity モードのリスナーの向きは `CameraComponent::BuildCameraProxy` と同じ規約（前 = 回転 × +Z）にした。リスナーが無い・カメラが無効のときの基底だけ CameraProxy の既定（前 −Z）。
 - Notes: 判断: 距離の滑らかさの閾値（隣接の差 ≤ 0.05）は、InverseClamped の既定 Min = 1 m では 1.0〜1.1 m で約 0.093 下がるので、GR73Acceptance.md で標本を Min = 2 m に固定した。
 - Notes: 判断: 3D の voice は作成時の周波数比の上限に 12 半音を足して（ドップラーの最大 2.0）作り、ステレオの clip を選んだ 3D の再生は既存の voice を奪う前に Rejected にする（奪う判定を clip の検査の後へ移した。2D の再生の結果は前と同じ）。背後の高域の係数は値として持つだけで、フィルタへの適用は G16-GR73-ACOUSTICS-AI-WIRE。
+- BLOCKED(反復 2): ランナーの再検証で verify の 3 行目 `Scripts/Test-M9World.ps1 -ContractOnly` が「スクリプトが存在しない」で落ちた。スクリプトは c9226a9b(試験だけが使うスクリプトの削除)で消えていて、指揮役は verify 行を書き換えられず、作り直すと試験を作ることになる。実装と Game のビルド(EXIT=0)は前回のまま。判断待ちは blocked/G16-GR73-SPATIAL-LISTENER.md(推奨: その verify 行を消して done に戻す)。同じ行は todo の音のタスクにも残っている。
