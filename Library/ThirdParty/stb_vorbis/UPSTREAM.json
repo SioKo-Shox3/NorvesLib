@@ -1,0 +1,39 @@
+{
+  "name": "stb_vorbis",
+  "version": "1.24",
+  "upstream": {
+    "repository": "https://github.com/nothings/stb",
+    "commit": "9f755b604db3492df2cbeb39bf84b81e3e3932e3",
+    "commitDate": "2026-11-12T17:33:26Z",
+    "retrievedBy": "指定コミットの stb_vorbis.c と LICENSE を原本からコピーし、SHA-256 を照合"
+  },
+  "license": {
+    "spdx": "MIT OR Unlicense",
+    "source": "LICENSE / stb_vorbis.c",
+    "excluded": "stb のほかのヘッダと tests は取り込まない"
+  },
+  "usage": "NorvesAudioDecode だけがリンクする（Core・Game に直接含めない）",
+  "files": [
+    {
+      "path": "stb_vorbis.c",
+      "size": 198016,
+      "sha256": "F8DC26F5C3BC2205F7A0478DED251992FCEC1F09FF74184CD20B11863EF82694"
+    },
+    {
+      "path": "LICENSE",
+      "size": 2588,
+      "sha256": "EB36E45C704DD0B59730115523E089B051852625B4DB0A6FE76C991900AF20E7"
+    }
+  ],
+  "patches": [
+    {
+      "id": "GHSL-2023-172",
+      "cve": "CVE-2023-45682",
+      "file": "stb_vorbis.c",
+      "description": "負の復号結果を疎な codebook の sorted_values の添字に使わない。",
+      "source": "https://github.com/nothings/stb/pull/1560",
+      "upstreamSize": 198004,
+      "upstreamSha256": "B52CF518355F7B2D181F18B97B812F361FFEB26299D935C8CF29E842401D60A6"
+    }
+  ]
+}

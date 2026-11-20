@@ -1,4 +1,10 @@
-﻿set(AUDIO_PUBLIC_HEADERS
+﻿# stb_vorbis の独立した静的ターゲットを登録する。
+if(NOT TARGET NorvesThirdParty_StbVorbis)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb_vorbis
+        ${CMAKE_BINARY_DIR}/ThirdParty/stb_vorbis)
+endif()
+
+set(AUDIO_PUBLIC_HEADERS
     Public/Audio/AudioClipResource.h
     Public/Audio/AudioComponent.h
     Public/Audio/AudioGameModeOwner.h
