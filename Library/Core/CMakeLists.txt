@@ -205,6 +205,7 @@ set(PRIVATE_SOURCES
     Private/Text/Base64.h
     Private/Text/Base64.cpp
     Private/Text/JsonWriter.cpp
+    Private/Text/Utf8.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
     Private/Debug/DebugOutput.cpp
@@ -493,6 +494,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfBufferJson.cpp
     Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
+    Private/Resource/FontFaceCache.cpp
     Private/Resource/ModelAssetLoader.cpp
     Private/Resource/SkeletalAssetLoader.cpp
     Private/Resource/SkeletalAssetPublication.cpp
@@ -632,6 +634,7 @@ set(PUBLIC_HEADERS
     Public/Text/IdentityPool.h
     Public/Text/JsonDocument.h
     Public/Text/JsonWriter.h
+    Public/Text/Utf8.h
     Public/Container/Containers.h
     Public/Container/PointerTypes.h
     Public/Container/VariableArray.h
@@ -972,6 +975,7 @@ set(PUBLIC_HEADERS
     Public/Resource/SkeletalMaterialBindings.h
     Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h
+    Public/Resource/FontFaceCache.h
     # Component
     Public/Component/Component.h
     Public/Component/WorldFieldInteractorComponent.h
