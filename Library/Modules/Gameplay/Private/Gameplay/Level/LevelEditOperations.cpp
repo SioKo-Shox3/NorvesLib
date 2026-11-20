@@ -1,4 +1,4 @@
-﻿// レベルマーカーの編集と、マーカーのルートだけのシーン保存・読み込みを実装する。
+﻿// レベルマーカーと地形マスクの編集・保存・読み込みを実装する。
 #include "Gameplay/Level/LevelEditOperations.h"
 
 #include "Gameplay/Level/AnimalSpawnPointComponent.h"
@@ -22,6 +22,8 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <new>
+#include <stdexcept>
 #include <utility>
 #include <Windows.h>
 
@@ -215,6 +217,70 @@ namespace NorvesLib::Modules::Gameplay::Level
             }
             NORVES_LOG_ERROR("LevelEdit", "%s", message);
             return false;
+        }
+
+        bool IsPaintMaskDirectoryValid(const String& directory)
+        {
+            return !directory.empty() && std::strlen(directory.c_str()) == directory.size();
+        }
+
+        String MakePaintMaskPath(const String& directory, ELevelPaintLayer layer)
+        {
+            String path = directory;
+            if (path.back() != '/' && path.back() != '\\')
+            {
+                path += "/";
+            }
+            return path + GetLevelPaintLayerFileStem(layer) + ".png";
+        }
+
+        bool PaintMaskFileError(String* pOutError, const String& path, const String& error)
+        {
+            const String message = String("マスク PNG '") + path + "': " + error;
+            return SaveError(pOutError, message.c_str());
+        }
+
+        // ファイルの不在だけを基準値へ戻す。アクセス拒否や不正なパスは読み込み失敗とする。
+        bool ReadPaintMaskFile(LevelPaintMask& mask, const String& path, bool& bOutLoaded, String* pOutError)
+        {
+            bOutLoaded = false;
+            if (path.size() > static_cast<size_t>((std::numeric_limits<int>::max)()) ||
+                std::strlen(path.c_str()) != path.size())
+            {
+                return PaintMaskFileError(pOutError, path, "パスが長すぎるか、不正な文字を含んでいます。");
+            }
+            const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1, nullptr, 0);
+            if (count <= 0)
+            {
+                return PaintMaskFileError(pOutError, path, "パスを UTF-8 として読み取れませんでした。");
+            }
+            Core::Container::VariableArray<wchar_t> widePath(static_cast<size_t>(count));
+            if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1, widePath.data(), count) != count)
+            {
+                return PaintMaskFileError(pOutError, path, "パスの変換に失敗しました。");
+            }
+            const DWORD attributes = GetFileAttributesW(widePath.data());
+            if (attributes == INVALID_FILE_ATTRIBUTES)
+            {
+                const DWORD error = GetLastError();
+                if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+                {
+                    return mask.SetValues(mask.GetBaseline());
+                }
+                return PaintMaskFileError(pOutError, path, "ファイルの有無を確認できませんでした。");
+            }
+            Core::Container::VariableArray<uint8_t> values;
+            String error;
+            if (!LoadLevelPaintMaskPng(path, mask.GetLayout(), values, &error))
+            {
+                return PaintMaskFileError(pOutError, path, error);
+            }
+            if (!mask.SetValues(Core::Container::Span<const uint8_t>(values)))
+            {
+                return PaintMaskFileError(pOutError, path, "標本数が配置と合いません。");
+            }
+            bOutLoaded = true;
+            return true;
         }
     } // namespace
 
@@ -745,5 +811,248 @@ namespace NorvesLib::Modules::Gameplay::Level
         }
         world.UpdateWorldTransforms();
         return bLoaded;
+    }
+
+    bool LevelEditOperations::BindPaintMasks(const LevelPaintMaskLayout& layout, const String& masksDirectory,
+        String* pOutError)
+    {
+        if (pOutError != nullptr)
+        {
+            pOutError->clear();
+        }
+        if (!layout.IsValid())
+        {
+            return SaveError(pOutError, "マスクの配置が無効です。");
+        }
+        if (!IsPaintMaskDirectoryValid(masksDirectory))
+        {
+            return SaveError(pOutError, "マスクの置き場が空か、不正な文字を含んでいます。");
+        }
+        try
+        {
+            String directory = masksDirectory;
+            LevelPaintMask masks[kLevelPaintLayerCount];
+            bool bLoaded[kLevelPaintLayerCount] = {};
+            for (uint32_t index = 0; index < kLevelPaintLayerCount; ++index)
+            {
+                const auto layer = static_cast<ELevelPaintLayer>(index);
+                const uint8_t baseline = layer == ELevelPaintLayer::GrassDensity
+                    ? kGrassDensityBaselineValue : kDrynessBaselineValue;
+                if (!masks[index].Initialize(layout, baseline))
+                {
+                    return SaveError(pOutError, "マスクの初期化に失敗しました。");
+                }
+                if (!ReadPaintMaskFile(masks[index], MakePaintMaskPath(directory, layer), bLoaded[index], pOutError))
+                {
+                    return false;
+                }
+            }
+            // 全層の読み込みが成功してから、確保を伴わない移動で一括反映する。
+            for (uint32_t index = 0; index < kLevelPaintLayerCount; ++index)
+            {
+                m_PaintMasks[index] = std::move(masks[index]);
+                m_bPaintMaskLoadedFromFile[index] = bLoaded[index];
+            }
+            m_PaintMaskDirectory = std::move(directory);
+            return true;
+        }
+        catch (const std::bad_alloc&)
+        {
+            return SaveError(pOutError, "マスクを配置へ合わせるためのメモリを確保できませんでした。");
+        }
+        catch (const std::length_error&)
+        {
+            return SaveError(pOutError, "マスクの配列またはパスが長すぎます。");
+        }
+    }
+
+    void LevelEditOperations::UnbindPaintMasks()
+    {
+        for (uint32_t index = 0; index < kLevelPaintLayerCount; ++index)
+        {
+            m_PaintMasks[index].Reset();
+            m_bPaintMaskLoadedFromFile[index] = false;
+        }
+        m_PaintMaskDirectory.clear();
+    }
+
+    bool LevelEditOperations::HasPaintMasks() const
+    {
+        return m_PaintMasks[0].IsValid();
+    }
+
+    const LevelPaintMaskLayout& LevelEditOperations::GetPaintMaskLayout() const
+    {
+        return m_PaintMasks[0].GetLayout();
+    }
+
+    const String& LevelEditOperations::GetPaintMaskDirectory() const
+    {
+        return m_PaintMaskDirectory;
+    }
+
+    const LevelPaintMask* LevelEditOperations::GetPaintMask(ELevelPaintLayer layer) const
+    {
+        const uint32_t index = static_cast<uint32_t>(layer);
+        return index < kLevelPaintLayerCount && HasPaintMasks() ? &m_PaintMasks[index] : nullptr;
+    }
+
+    bool LevelEditOperations::WasPaintMaskLoadedFromFile(ELevelPaintLayer layer) const
+    {
+        const uint32_t index = static_cast<uint32_t>(layer);
+        return index < kLevelPaintLayerCount && HasPaintMasks() && m_bPaintMaskLoadedFromFile[index];
+    }
+
+    uint32_t LevelEditOperations::PaintMask(ELevelPaintLayer layer, const Math::Vector3& groundPoint,
+        const LevelPaintBrush& brush)
+    {
+        const uint32_t index = static_cast<uint32_t>(layer);
+        return index < kLevelPaintLayerCount && HasPaintMasks()
+            ? m_PaintMasks[index].Paint(groundPoint.x, groundPoint.z, brush) : 0;
+    }
+
+    uint32_t LevelEditOperations::EraseMask(ELevelPaintLayer layer, const Math::Vector3& groundPoint,
+        const LevelPaintBrush& brush)
+    {
+        const uint32_t index = static_cast<uint32_t>(layer);
+        return index < kLevelPaintLayerCount && HasPaintMasks()
+            ? m_PaintMasks[index].Erase(groundPoint.x, groundPoint.z, brush) : 0;
+    }
+
+    bool LevelEditOperations::SetPaintMaskBaseline(ELevelPaintLayer layer,
+        Core::Container::Span<const uint8_t> baseline, bool bResetValues)
+    {
+        const uint32_t index = static_cast<uint32_t>(layer);
+        return index < kLevelPaintLayerCount && HasPaintMasks()
+            && m_PaintMasks[index].SetBaseline(baseline, bResetValues);
+    }
+
+    bool LevelEditOperations::RegenerateDrynessBaseline(const Core::World& world,
+        const LevelDrynessBaselineSettings& settings, bool bResetValues, size_t* pOutTerritoryCount,
+        size_t* pOutWitherCount, String* pOutError)
+    {
+        if (pOutError != nullptr)
+        {
+            pOutError->clear();
+        }
+        if (!HasPaintMasks())
+        {
+            return SaveError(pOutError, "マスクが配置に合わせられていません。");
+        }
+
+        Core::Container::VariableArray<uint8_t> values;
+        size_t territoryCount = 0;
+        size_t witherCount = 0;
+        if (!BuildLevelDrynessBaseline(world, GetPaintMaskLayout(), settings, values, &territoryCount, &witherCount))
+        {
+            return SaveError(pOutError, "枯れの初期値を作れませんでした。設定と配置を確認してください。");
+        }
+        if (!SetPaintMaskBaseline(ELevelPaintLayer::Dryness, Core::Container::Span<const uint8_t>(values), bResetValues))
+        {
+            return SaveError(pOutError, "枯れの初期値をマスクに設定できませんでした。");
+        }
+        if (pOutTerritoryCount != nullptr)
+        {
+            *pOutTerritoryCount = territoryCount;
+        }
+        if (pOutWitherCount != nullptr)
+        {
+            *pOutWitherCount = witherCount;
+        }
+        return true;
+    }
+
+    bool LevelEditOperations::SavePaintMasks(const String& masksDirectory, size_t* pOutSavedLayers, String* pOutError)
+    {
+        if (pOutSavedLayers != nullptr)
+        {
+            *pOutSavedLayers = 0;
+        }
+        if (pOutError != nullptr)
+        {
+            pOutError->clear();
+        }
+        if (!HasPaintMasks())
+        {
+            return SaveError(pOutError, "マスクが配置に合わせられていません。");
+        }
+        const String& directory = masksDirectory.empty() ? m_PaintMaskDirectory : masksDirectory;
+        if (!IsPaintMaskDirectoryValid(directory))
+        {
+            return SaveError(pOutError, "マスクの保存先が空か、不正な文字を含んでいます。");
+        }
+        try
+        {
+            bool bSuccess = true;
+            for (uint32_t index = 0; index < kLevelPaintLayerCount; ++index)
+            {
+                const String path = MakePaintMaskPath(directory, static_cast<ELevelPaintLayer>(index));
+                String error;
+                if (SaveLevelPaintMaskPng(m_PaintMasks[index], path, &error))
+                {
+                    m_PaintMasks[index].ClearDirty();
+                }
+                else
+                {
+                    // 全層の保存を試み、最初に失敗した層の説明を返す。
+                    PaintMaskFileError(bSuccess ? pOutError : nullptr, path, error);
+                    bSuccess = false;
+                }
+            }
+            if (bSuccess && pOutSavedLayers != nullptr)
+            {
+                *pOutSavedLayers = kLevelPaintLayerCount;
+            }
+            return bSuccess;
+        }
+        catch (const std::bad_alloc&)
+        {
+            return SaveError(pOutError, "マスクの保存に必要なメモリを確保できませんでした。");
+        }
+        catch (const std::length_error&)
+        {
+            return SaveError(pOutError, "マスクの保存先パスが長すぎます。");
+        }
+    }
+
+    bool LevelEditOperations::LoadPaintMasks(String* pOutError)
+    {
+        if (pOutError != nullptr)
+        {
+            pOutError->clear();
+        }
+        if (!HasPaintMasks())
+        {
+            return SaveError(pOutError, "マスクが配置に合わせられていません。");
+        }
+        try
+        {
+            LevelPaintMask masks[kLevelPaintLayerCount];
+            bool bLoaded[kLevelPaintLayerCount] = {};
+            for (uint32_t index = 0; index < kLevelPaintLayerCount; ++index)
+            {
+                // 基準値を含めて複製し、全層の検査が終わるまで現在の状態を保つ。
+                masks[index] = m_PaintMasks[index];
+                const String path = MakePaintMaskPath(m_PaintMaskDirectory, static_cast<ELevelPaintLayer>(index));
+                if (!ReadPaintMaskFile(masks[index], path, bLoaded[index], pOutError))
+                {
+                    return false;
+                }
+            }
+            for (uint32_t index = 0; index < kLevelPaintLayerCount; ++index)
+            {
+                m_PaintMasks[index] = std::move(masks[index]);
+                m_bPaintMaskLoadedFromFile[index] = bLoaded[index];
+            }
+            return true;
+        }
+        catch (const std::bad_alloc&)
+        {
+            return SaveError(pOutError, "マスクの読み直しに必要なメモリを確保できませんでした。");
+        }
+        catch (const std::length_error&)
+        {
+            return SaveError(pOutError, "マスクの読み直しに必要な配列またはパスが長すぎます。");
+        }
     }
 } // namespace NorvesLib::Modules::Gameplay::Level

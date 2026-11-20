@@ -876,6 +876,8 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
         surface.emissiveSample = textureGrad(emissiveTexture, texCoord, footprint.UvDx, footprint.UvDy).rgb;
     }
     const bool bOpaqueAlbedoAlpha = (entry.header.x & VIS_MATERIAL_FLAG_OPAQUE_ALBEDO_ALPHA) != 0u;
+    // Fur の材質は RequiresGBufferOverlay で ID のラスタから外れ、重ね描きの GBufferFragment.glsl が書く。
+    // この経路には届かないので、ここでは Fur の A をそろえない。
     surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples),
                           bOpaqueAlbedoAlpha ? 1.0 : samples.Albedo.a);
     surface.normal = (bTerrain || bTerrainSplat) ? terrainNormal : ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
