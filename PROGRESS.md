@@ -12658,3 +12658,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U12 AI モジュールの静的ライブラリと共有の型・タイル・格子を置く(U2 の切り直し): 着地(直し 1 回)
 - U3 純関数のナビ格子の焼き NavGridBaker: 着地(直し 0 回)
 - U4 格子の問い合わせ(通行・最寄り・視線・コスト)と視線での平滑化: 着地(直し 0 回)
+- U5 整数コストの A* NavPathfinder(予算で分けて進める): 着地(直し 0 回)
