@@ -12690,3 +12690,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 Engine::Engine に StringTable を持たせ、起動時に日本語の表を読む: 着地(直し 0 回)
 - U4 ITextMetrics と TextLayout の本体(折り返し・禁則・揃え・行間・省略・基準線): 着地(直し 0 回)
 - U6 FontAtlas を使う ITextMetrics の実装: 着地(直し 0 回)
+- U5 TextLayout のインラインのタグ({icon:Action}・色)と結果のキャッシュ: 着地(直し 0 回)

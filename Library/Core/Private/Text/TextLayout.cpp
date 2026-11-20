@@ -1,6 +1,9 @@
 ﻿// 文字の計量、改行位置の決定、基準線への配置を順に行う。
 #include "Text/TextLayout.h"
+#include "Text/IdentityPool.h"
 #include "Text/Utf8.h"
+#include <cstring>
+#include <utility>
 
 namespace NorvesLib::Core
 {
@@ -21,6 +24,8 @@ namespace NorvesLib::Core
             bool bSpace;
             bool bNoLineStart;
             bool bNoLineEnd;
+            Math::Vector4 Color;
+            Container::AnsiStringView Action;
         };
 
         using Elements = Container::VariableArray<TextElement>;
@@ -48,13 +53,105 @@ namespace NorvesLib::Core
                 || (c >= 0x30000 && c <= 0x3347F);
         }
 
-        void ReadElements(Container::AnsiStringView utf8, const ITextMetrics& metrics, Elements& elements)
+        constexpr Container::AnsiStringView IconPrefix = "{icon:";
+        constexpr Container::AnsiStringView ColorPrefix = "{color:#";
+        constexpr Container::AnsiStringView ColorEnd = "{/color}";
+
+        Container::AnsiStringView ReadAction(Container::AnsiStringView tag)
+        {
+            if (tag.substr(0, IconPrefix.size()) != IconPrefix)
+            {
+                return {};
+            }
+            for (size_t i = IconPrefix.size(); i < tag.size() && i <= IconPrefix.size() + 64; ++i)
+            {
+                const char c = tag[i];
+                if (c == '}')
+                {
+                    return tag.substr(IconPrefix.size(), i - IconPrefix.size());
+                }
+                if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                      || c == '_' || c == '.'))
+                {
+                    break;
+                }
+            }
+            return {};
+        }
+
+        int HexDigit(char c)
+        {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            return -1;
+        }
+
+        size_t ReadColor(Container::AnsiStringView tag, Math::Vector4& color)
+        {
+            if (tag.substr(0, ColorPrefix.size()) != ColorPrefix)
+            {
+                return 0;
+            }
+            size_t i = ColorPrefix.size();
+            float rgba[] = {0.0f, 0.0f, 0.0f, 1.0f};
+            for (size_t channel = 0; channel < 4; ++channel)
+            {
+                if (i + 2 >= tag.size()) return 0;
+                const int high = HexDigit(tag[i]);
+                const int low = HexDigit(tag[i + 1]);
+                if (high < 0 || low < 0) return 0;
+                rgba[channel] = (high * 16 + low) / 255.0f;
+                i += 2;
+                if (channel >= 2 && tag[i] == '}')
+                {
+                    color = {rgba[0], rgba[1], rgba[2], rgba[3]};
+                    return i + 1;
+                }
+            }
+            return 0;
+        }
+
+        void ReadElements(Container::AnsiStringView utf8, const ITextMetrics& metrics,
+                          const TextLayoutSettings& settings, Elements& elements)
         {
             const auto bytes = utf8.as_span();
+            constexpr size_t MaxColorDepth = 8;
+            Math::Vector4 colors[MaxColorDepth + 1] = {settings.DefaultColor};
+            size_t depth = 0;
             size_t offset = 0;
             while (offset < bytes.size())
             {
                 const auto start = static_cast<uint32_t>(offset);
+                const auto& color = colors[depth > MaxColorDepth ? MaxColorDepth : depth];
+                if (bytes[offset] == '{')
+                {
+                    const auto tag = utf8.substr(offset);
+                    if (tag.substr(0, ColorEnd.size()) == ColorEnd)
+                    {
+                        if (depth > 0) --depth;
+                        offset += ColorEnd.size();
+                        continue;
+                    }
+                    Math::Vector4 nextColor;
+                    const size_t colorLength = ReadColor(tag, nextColor);
+                    if (colorLength > 0)
+                    {
+                        // 上限を超えた開始タグは深さだけ数え、対応する終了タグで外側の色を失わないようにする。
+                        if (++depth <= MaxColorDepth) colors[depth] = nextColor;
+                        offset += colorLength;
+                        continue;
+                    }
+                    const auto action = ReadAction(tag);
+                    if (!action.empty())
+                    {
+                        const float advance = settings.IconAdvancePx > 0.0f ? settings.IconAdvancePx
+                            : metrics.GetAscenderPx() + metrics.GetDescenderPx();
+                        elements.push_back({0, start, advance, true, false, false, false, color, action});
+                        offset += IconPrefix.size() + action.size() + 1;
+                        continue;
+                    }
+                }
                 const Utf8Decoded decoded = DecodeUtf8(bytes, offset);
                 uint32_t c = decoded.Codepoint;
                 offset += decoded.Length;
@@ -68,7 +165,7 @@ namespace NorvesLib::Core
                 // 行末空白を幅から除くため、その手前の開き括弧の禁則も引き継ぐ。
                 const bool noEnd = space ? (!elements.empty() && elements.back().bNoLineEnd)
                                          : Contains(NoLineEnd, c);
-                elements.push_back({c, start, advance, IsCjk(c), space, Contains(NoLineStart, c), noEnd});
+                elements.push_back({c, start, advance, IsCjk(c), space, Contains(NoLineStart, c), noEnd, color, {}});
             }
         }
 
@@ -164,7 +261,11 @@ namespace NorvesLib::Core
                 {
                     break;
                 }
-                out.Glyphs.push_back({element.Codepoint, {}, element.AdvancePx, element.ByteOffset, lineIndex});
+                if (!element.Action.empty())
+                {
+                    out.Icons.push_back({static_cast<uint32_t>(out.Glyphs.size()), Container::AnsiString(element.Action)});
+                }
+                out.Glyphs.push_back({element.Codepoint, {}, element.AdvancePx, element.ByteOffset, lineIndex, element.Color});
                 pen += element.AdvancePx;
                 if (!element.bSpace)
                 {
@@ -179,7 +280,8 @@ namespace NorvesLib::Core
                     out.Glyphs.pop_back();
                     --cut;
                 }
-                out.Glyphs.push_back({Ellipsis, {}, markerWidth, elements[cut].ByteOffset, lineIndex});
+                const auto& color = cut > first ? elements[cut - 1].Color : elements[first].Color;
+                out.Glyphs.push_back({Ellipsis, {}, markerWidth, elements[cut].ByteOffset, lineIndex, color});
                 line.WidthPx += markerWidth;
             }
             line.GlyphCount = static_cast<uint32_t>(out.Glyphs.size() - line.FirstGlyph);
@@ -241,6 +343,7 @@ namespace NorvesLib::Core
     {
         out.Glyphs.clear();
         out.Lines.clear();
+        out.Icons.clear();
         out.SizePx = {};
         out.bTruncated = false;
         if (utf8.empty())
@@ -248,8 +351,46 @@ namespace NorvesLib::Core
             return;
         }
         Elements elements;
-        ReadElements(utf8, metrics, elements);
+        ReadElements(utf8, metrics, settings, elements);
+        if (elements.empty())
+        {
+            return;
+        }
         BreakLines(elements, metrics, settings, out);
         PositionLines(metrics, settings, out);
+    }
+
+    const TextLayoutResult& TextLayoutCache::GetOrLayout(Container::AnsiStringView utf8, const ITextMetrics& metrics,
+                                                         const TextLayoutSettings& settings)
+    {
+        const uint64_t hash = Fnv1aRaw(utf8.data(), utf8.size());
+        const uint64_t generation = metrics.GetGeneration();
+        for (auto it = m_Entries.begin(); m_Capacity > 0 && it != m_Entries.end(); ++it)
+        {
+            if (it->TextHash == hash && it->Generation == generation && it->Settings == settings
+                && it->TextBytes.size() == utf8.size()
+                && (utf8.empty() || std::memcmp(it->TextBytes.data(), utf8.data(), utf8.size()) == 0))
+            {
+                m_Entries.splice(m_Entries.begin(), m_Entries, it);
+                return it->Result;
+            }
+        }
+
+        Entry entry{hash, generation, settings};
+        if (m_Capacity > 0 && !utf8.empty())
+        {
+            entry.TextBytes.assign(utf8.begin(), utf8.end());
+        }
+        TextLayout::Layout(utf8, metrics, settings, entry.Result);
+        if (!m_Entries.empty() && m_Entries.size() >= m_Capacity)
+        {
+            m_Entries.pop_back();
+        }
+        return m_Entries.emplace_front(std::move(entry)).Result;
+    }
+
+    void TextLayoutCache::Clear()
+    {
+        m_Entries.clear();
     }
 }
