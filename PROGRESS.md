@@ -12664,3 +12664,12 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U8 ナビのサービス INavigationService と予算実行: 着地(直し 0 回)
 - U10 AI モジュールの設計文書: 着地(直し 0 回)
 - U9 AI モジュール本体と Game への登録(最後。タスクの verify): 着地(直し 0 回)
+
+## G13-GR21-AI-MODULE-NAV（2026-11-21）
+- Done: `Library/Modules/AI`（static lib `NorvesModule_AI`）に `IAIModule`・`RegisterAIModule`・`FindAIModule`・`RegisterReflectedTypes`（登録する型が無いので空）と `AIModule` を置いた。`AIModule` は `Install` で Engine を借り、`NavigationService` を所有して `GetNavigation()` で `INavigationService` を貸し、`PreFixedTick` で古い要求から展開の予算（既定 1500）を配り、`LateTick` でカメラの周りだけを `DebugDrawQueue` に描く（既定は無効）。Game にリンクし `OnPreInitialize` で Gameplay の直後に登録した。
+- Done: Core に `Math/PolylinePath.h`（弧長・最寄り点（ヒントと跳びの上限つき）・先読み点・残りの長さ）。ナビは `NavGridDesc`・SoA の `NavTile`・`NavGrid`（タイルの読み込み・解放・世代・タイルをまたぐ Region の併合）・`NavGridBaker::Bake`・`NavGridQueries`（通行・最寄り・視線・コスト）と視線の平滑化・`NavPathfinder`（8 近傍・角切りなし・128/181・オクタイル×ε・自前の二分ヒープ・分割と一括がビット同一・Region 違いは 0 展開で Failed・Partial）・`NavAgentProfileSet` と `Assets/AI/NavProfiles.json`（Small・Medium・Large の仮の値）・`NavDebugDraw`。契約は `Docs/Architecture/AIModule.md`。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致）。
+- done-when (4) の試験（`PolylinePathTest`・`NavGridPathfindingTest`・`AIModuleLinkTest`・構成の時のリンクの検査）と `Docs/Testing.md` の更新は、試験を作らない・回さない決まりにより作っていない。
+- 人が見るときの見どころ: 今は経路を要求する呼び手もタイルを焼いて読み込む呼び手も無いので、どのシーンでも見た目は変わらない。起動のログに AI モジュールの登録の失敗や `AI/NavProfiles.json` を読めない旨の警告が出ないことを見る。撮影・計測の確かめは回さない決まり。
+- Next: 操舵（G13-GR22-STEERING-MOTOR。行動の決定と位置の書き戻しは PreFixedTick 側に置き、登録の順に依らないことを固める）、動く障害物（G13-GR21-NAV-OBSTACLES）、地形からのベイク（G13-GR21-NVNAV-COOK）。
+- Notes: 判断: AI のソースは `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)` で集める。1 セルだけの経路はセル中心の 1 点を返す。`Reset` の後も古い `PathHandle` は無効のまま。始点が通れなければ 2 m 以内の通れるセルへ寄せ、無ければ Failed。展開の予算 1500 は未計測の仮の値。
