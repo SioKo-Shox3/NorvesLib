@@ -11,11 +11,6 @@
 #include "Streaming/IStreamingPayloadHandler.h"
 #include "Thread/Mutex.h"
 
-namespace NorvesLib::Core::Scene
-{
-    class SurfaceRegistry;
-}
-
 namespace NorvesLib::Core::Scatter
 {
     class ScatterSystem;
@@ -42,20 +37,19 @@ namespace NorvesLib::Modules::Physics
 
     /// Assets/ からの論理パスにある次の JSON を読む（各配列は省略可能）。
     /// {"format":"norves.static-colliders.v1","colliders":[
-    ///   {"shape":"sphere","position":[0,0,0],"radius":1},
+    ///   {"shape":"sphere","position":[0,0,0],"radius":1,"surface":3},
     ///   {"shape":"box","position":[0,0,0],"halfExtents":[1,1,1],"rotation":[0,0,0,1]},
     ///   {"shape":"capsule","position":[0,0,0],"radius":0.5,"halfHeight":1,"scale":[1,1,1],"surface":"Rock"}],
     ///  "scatter":[{"name":"grassland","species":"rock","shape":"sphere","radius":1,"centerHeight":0.5}]}
     /// rotation は単位回転、scale は 1、centerHeight は 0 が既定。
-    /// surface は登録簿の表面の名前。省略で明示なし。
+    /// "surface":"Rock" は登録簿の表面の名前。"surface":3 は結果の SurfaceId に写す従来の層番号。
+    /// 層番号は登録簿の表面には入れない。surface を省略すると両方とも指定なし。
     class StaticColliderPayloadHandler final : public Core::Streaming::IStreamingPayloadHandler
     {
     public:
         explicit StaticColliderPayloadHandler(IPhysicsModule& physics);
         /// 散布の参照先を借りる。設定とコミット・解放は GameThread で行う。
         void SetScatterSystem(Core::Scatter::ScatterSystem* pScatterSystem);
-        /// 表面の登録簿を借りる。設定と名前の解決は GameThread で行う。
-        void SetSurfaceRegistry(const Core::Scene::SurfaceRegistry* registry);
         /// 読み込み先の試験用設定。空なら既定の Assets/ を使う。
         void SetAssetRoot(Core::Container::AnsiString root);
         /// 上位 8 ビットは鍵の出どころ。0x01 はセルのストリーミング。
@@ -88,8 +82,6 @@ namespace NorvesLib::Modules::Physics
         struct PayloadState
         {
             Core::Container::VariableArray<StaticColliderDesc> Colliders;
-            // 明示の colliders と同じ順で名前を保持する。空文字列は表面の指定なし。
-            Core::Container::VariableArray<Core::Container::String> SurfaceNames;
             Core::Container::VariableArray<ScatterEntry> Scatter;
             bool bScatterResolved = false;
             bool bRegistered = false;
@@ -102,7 +94,6 @@ namespace NorvesLib::Modules::Physics
 
         IPhysicsModule& m_Physics;
         Core::Scatter::ScatterSystem* m_pScatterSystem = nullptr;
-        const Core::Scene::SurfaceRegistry* m_pSurfaceRegistry = nullptr;
         Core::Container::AnsiString m_AssetRoot;
         // 表へのアクセスと状態の使用を同じロックで守り、ワーカーへ表内の参照を渡さない。
         mutable Thread::Mutex m_Mutex;

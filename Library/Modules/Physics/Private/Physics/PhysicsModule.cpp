@@ -12,6 +12,7 @@
 #include "Physics/CharacterBodyComponent.h"
 #include "Physics/ColliderComponent.h"
 #include "Physics/ColliderShapeTransform.h"
+#include "Physics/PhysicsSurfaceName.h"
 #include "Physics/RigidBodyComponent.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
 #include "Rendering/Terrain/TerrainSystem.h"
@@ -98,11 +99,9 @@ namespace NorvesLib::Modules::Physics
         m_Engine = &engine;
         m_bBound = true;
         m_StaticColliderPayloadHandler.SetScatterSystem(&engine.GetScatterSystem());
-        m_StaticColliderPayloadHandler.SetSurfaceRegistry(&engine.GetSurfaceRegistry());
         engine.GetScatterSystem().SetColliderListener(&m_ScatterColliderBinding);
         if (!engine.GetStreamingSystem().RegisterHandler(&m_StaticColliderPayloadHandler))
         {
-            m_StaticColliderPayloadHandler.SetSurfaceRegistry(nullptr);
             LOG_WARNING("PHYSICS_STREAMING_HANDLER_SKIPPED マニフェストが既にあるか、同じ種類のハンドラが登録済みです");
         }
         engine.GetSceneQuery().SetTerrainSystem(&engine.GetTerrainSystem());
@@ -322,7 +321,6 @@ namespace NorvesLib::Modules::Physics
         }
 
         engine.GetStreamingSystem().UnregisterHandler(&m_StaticColliderPayloadHandler);
-        m_StaticColliderPayloadHandler.SetSurfaceRegistry(nullptr);
         m_StaticColliderPayloadHandler.SetScatterSystem(nullptr);
         if (engine.GetScatterSystem().GetColliderListener() == &m_ScatterColliderBinding)
         {
@@ -564,8 +562,10 @@ namespace NorvesLib::Modules::Physics
         for (size_t index = 0; index < colliders.size(); ++index)
         {
             const StaticColliderDesc& desc = colliders[index];
-            if (desc.bTrigger || (desc.bHasSurface && m_Engine != nullptr
-                && desc.Surface.Value >= m_Engine->GetSurfaceRegistry().GetSurfaceCount()))
+            const bool hasSurfaceName = !desc.SurfaceName.empty();
+            if (desc.bTrigger || (hasSurfaceName && !IsValidSurfaceName(desc.SurfaceName)) ||
+                (!hasSurfaceName && desc.bHasSurface && m_Engine != nullptr &&
+                    desc.Surface.Value >= m_Engine->GetSurfaceRegistry().GetSurfaceCount()))
             {
                 return EPhysicsResult::InvalidArgument;
             }
@@ -609,8 +609,22 @@ namespace NorvesLib::Modules::Physics
             proxy.Layer = desc.Layer;
             proxy.Mask = desc.Mask;
             proxy.UserData = desc.UserData;
-            proxy.Surface = desc.bHasSurface ? desc.Surface : Core::Scene::SurfaceId::Default();
-            proxy.bHasSurface = desc.bHasSurface;
+            proxy.SurfaceId = desc.SurfaceId;
+            if (hasSurfaceName)
+            {
+                auto& names = operation.Chunk.SurfaceNames;
+                if (names.empty())
+                {
+                    names.resize(colliders.size());
+                }
+                names[index] = desc.SurfaceName;
+                proxy.bHasSurface = true;
+            }
+            else
+            {
+                proxy.Surface = desc.bHasSurface ? desc.Surface : Core::Scene::SurfaceId::Default();
+                proxy.bHasSurface = desc.bHasSurface;
+            }
             proxy.bTrigger = false;
             proxy.Mobility = EPhysicsProxyMobility::Static;
             proxy.bStatic = true;
@@ -673,6 +687,19 @@ namespace NorvesLib::Modules::Physics
         }
     }
 
+    void PhysicsModule::ResolveStaticChunkSurfaces(StaticColliderChunk& chunk) const
+    {
+        for (size_t i = 0; i < chunk.SurfaceNames.size(); ++i)
+        {
+            const auto& name = chunk.SurfaceNames[i];
+            if (!name.empty())
+            {
+                chunk.Proxies[i].Surface = m_Engine ? m_Engine->GetSurfaceRegistry().FindByName(name)
+                    : Core::Scene::SurfaceId::Default();
+            }
+        }
+    }
+
     void PhysicsModule::ApplyStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation)
     {
         if (!operation.bRegister)
@@ -687,6 +714,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         StaticColliderChunk& chunk = operation.Chunk;
+        ResolveStaticChunkSurfaces(chunk);
         chunk.SlotIndices.reserve(chunk.Proxies.size());
         for (PhysicsShapeProxy& proxy : chunk.Proxies)
         {
@@ -959,18 +987,9 @@ namespace NorvesLib::Modules::Physics
         {
             return result;
         }
-        if (name.size() > Core::Scene::SurfaceRegistry::MaximumNameBytes || (!name.empty() && !name.data()))
+        if (!name.empty() && !IsValidSurfaceName(name))
         {
             return EPhysicsResult::InvalidArgument;
-        }
-        for (size_t i = 0; i < name.size(); ++i)
-        {
-            const char ch = name[i];
-            if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-                (ch >= '0' && ch <= '9') || ch == '_'))
-            {
-                return EPhysicsResult::InvalidArgument;
-            }
         }
 
         component.SurfaceName.Get() = Core::Container::String(name);
@@ -1003,6 +1022,10 @@ namespace NorvesLib::Modules::Physics
             {
                 ResolveColliderSurface(*slot.Component);
             }
+        }
+        for (auto& entry : m_StaticColliderChunks)
+        {
+            ResolveStaticChunkSurfaces(entry.second);
         }
         m_SurfaceRegistryRevision = revision;
     }
@@ -1604,6 +1627,8 @@ namespace NorvesLib::Modules::Physics
             }
             if (!bIsPresent)
             {
+                const PhysicsShapeProxy* first = m_WorkingBroadphase.FindProxy(previous.First);
+                const PhysicsShapeProxy* second = m_WorkingBroadphase.FindProxy(previous.Second);
                 Math::GeometryContact contact = previous.Contact;
                 contact.Depth = 0.0f;
                 m_PendingEvents.push_back(PendingPhysicsEvent{
@@ -1612,8 +1637,8 @@ namespace NorvesLib::Modules::Physics
                     previous.Second,
                     contact,
                     0.0f,
-                    previous.FirstSurface,
-                    previous.SecondSurface});
+                    first ? first->Surface : previous.FirstSurface,
+                    second ? second->Surface : previous.SecondSurface});
             }
         }
         m_PreviousTriggerPairs = m_CurrentTriggerPairs;

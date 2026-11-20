@@ -67,6 +67,8 @@ namespace NorvesLib::Modules::Physics
         {
             Core::Container::VariableArray<uint32_t> SlotIndices;
             Core::Container::VariableArray<PhysicsShapeProxy> Proxies;
+            // 全要素が名前なしなら空。それ以外は Proxies と同じ長さで、名前なしの要素には空文字列を置く。
+            Core::Container::VariableArray<Core::Container::String> SurfaceNames;
         };
 
         struct PendingStaticColliderChunkOperation
@@ -179,6 +181,7 @@ namespace NorvesLib::Modules::Physics
         void BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle = false) const;
         bool IsStaticColliderChunkRegistered(uint64_t key) const;
         void SubmitStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation);
+        void ResolveStaticChunkSurfaces(StaticColliderChunk& chunk) const;
         void ApplyStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation);
         void ApplyPendingStaticColliderChunkOperations();
         void RebuildPublishedSnapshot();

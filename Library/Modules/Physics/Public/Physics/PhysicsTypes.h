@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Container/String.h"
 #include "Math/GeometryTypes.h"
 #include "Math/Transform.h"
 #include "Scene/SceneQuery.h"
@@ -71,10 +72,15 @@ namespace NorvesLib::Modules::Physics
         Core::Scene::PhysicsCollisionMask Layer = Core::Scene::DefaultPhysicsLayer;
         /// 衝突の対象にするレイヤーの集合。
         Core::Scene::PhysicsCollisionMask Mask = Core::Scene::AllPhysicsLayers;
+        /// 結果の従来の SurfaceId に写す地形の層番号（G5-GR38）。登録簿の Surface には入れない。
+        uint8_t SurfaceId = Core::Scene::kInvalidPhysicsSurfaceId;
         /// 登録簿の表面の添字。地形の層の番号は入れない。bHasSurface が false なら使わない。
         Core::Scene::SurfaceId Surface{};
         /// Surface を明示したか。
         bool bHasSurface = false;
+        /// 登録簿の表面の名前。空でなければ Surface・bHasSurface より優先する。
+        /// 登録時と登録簿の改訂時に同じ ColliderHandle のまま解決する。未知の名前は Default となり、登録簿が一度警告する。
+        Core::Container::String SurfaceName;
         /// 呼び手が設定する任意のデータ。
         uint64_t UserData = 0;
         /// detached はトリガーを持てないため、true は登録時に拒否する。

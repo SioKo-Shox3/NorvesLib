@@ -4,8 +4,8 @@
 #include "Asset/AssetFileReader.h"
 #include "Logging/LogMacros.h"
 #include "Physics/ColliderShapeTransform.h"
+#include "Physics/PhysicsSurfaceName.h"
 #include "Scatter/ScatterSystem.h"
-#include "Scene/SurfaceRegistry.h"
 #include "Text/JsonDocument.h"
 
 #include <cfloat>
@@ -262,7 +262,7 @@ namespace NorvesLib::Modules::Physics
             return true;
         }
 
-        bool ReadCollider(JsonValue item, StaticColliderDesc& out, Core::Container::String& outSurfaceName)
+        bool ReadCollider(JsonValue item, StaticColliderDesc& out)
         {
             if (!item.IsObject() || !ReadShape(item, out.Shape, true) ||
                 !ReadVector(item.FindMember("position"), out.WorldTransform.position))
@@ -293,24 +293,19 @@ namespace NorvesLib::Modules::Physics
             }
             if (surface.IsValid())
             {
-                if (!surface.IsString())
+                if (surface.IsIntegerLiteral() && std::isfinite(surface.AsNumber()) &&
+                    surface.AsNumber() >= 0.0 && surface.AsNumber() <= UINT8_MAX)
+                {
+                    out.SurfaceId = static_cast<uint8_t>(surface.AsUInt32());
+                }
+                else if (surface.IsString() && IsValidSurfaceName(surface.AsString()))
+                {
+                    out.SurfaceName = surface.AsString();
+                }
+                else
                 {
                     return false;
                 }
-                const auto& name = surface.AsString();
-                if (name.empty() || name.size() > Core::Scene::SurfaceRegistry::MaximumNameBytes)
-                {
-                    return false;
-                }
-                for (const auto ch : name)
-                {
-                    if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-                        (ch >= '0' && ch <= '9') || ch == '_'))
-                    {
-                        return false;
-                    }
-                }
-                outSurfaceName = name;
             }
             return true;
         }
@@ -413,12 +408,6 @@ namespace NorvesLib::Modules::Physics
         m_pScatterSystem = pScatterSystem;
     }
 
-    void StaticColliderPayloadHandler::SetSurfaceRegistry(const Core::Scene::SurfaceRegistry* registry)
-    {
-        Thread::ScopedLock lock(m_Mutex);
-        m_pSurfaceRegistry = registry;
-    }
-
     void StaticColliderPayloadHandler::SetAssetRoot(Core::Container::AnsiString root)
     {
         Thread::ScopedLock lock(m_Mutex);
@@ -494,13 +483,11 @@ namespace NorvesLib::Modules::Physics
         for (size_t i = 0; i < colliders.GetArraySize(); ++i)
         {
             StaticColliderDesc desc;
-            Core::Container::String surfaceName;
-            if (!ReadCollider(colliders.GetArrayElement(i), desc, surfaceName))
+            if (!ReadCollider(colliders.GetArrayElement(i), desc))
             {
                 return fail("コライダーの形状・位置・寸法・回転・拡大・表面が不正です");
             }
-            state.Colliders.push_back(desc);
-            state.SurfaceNames.push_back(std::move(surfaceName));
+            state.Colliders.push_back(std::move(desc));
         }
         for (size_t i = 0; i < scatter.GetArraySize(); ++i)
         {
@@ -612,16 +599,6 @@ namespace NorvesLib::Modules::Physics
         if (state.bRegistered)
         {
             return true;
-        }
-        for (size_t i = 0; i < state.SurfaceNames.size(); ++i)
-        {
-            const auto& name = state.SurfaceNames[i];
-            if (!name.empty())
-            {
-                auto& desc = state.Colliders[i];
-                desc.Surface = m_pSurfaceRegistry ? m_pSurfaceRegistry->FindByName(name) : Core::Scene::SurfaceId::Default();
-                desc.bHasSurface = true;
-            }
         }
         const EPhysicsResult result = m_Physics.RegisterStaticColliderChunk(MakeChunkKey(context.Cell, context.PayloadIndex),
             {state.Colliders.data(), state.Colliders.size()});
