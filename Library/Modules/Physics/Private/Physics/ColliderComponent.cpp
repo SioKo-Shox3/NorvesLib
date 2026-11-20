@@ -72,6 +72,12 @@ namespace NorvesLib::Modules::Physics
         return module ? module->SetColliderHeightField(*this, heightField) : EPhysicsResult::NotRegistered;
     }
 
+    EPhysicsResult ColliderComponent::SetSurface(Core::Container::StringView name)
+    {
+        PhysicsModule* module = FindRegisteredPhysicsModule();
+        return module ? module->SetColliderSurface(*this, name) : EPhysicsResult::NotRegistered;
+    }
+
     EPhysicsResult ColliderComponent::SetSurfaceId(uint8_t surfaceId)
     {
         PhysicsModule* module = FindRegisteredPhysicsModule();

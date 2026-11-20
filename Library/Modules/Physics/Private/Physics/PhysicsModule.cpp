@@ -15,6 +15,7 @@
 #include "Physics/RigidBodyComponent.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
 #include "Rendering/Terrain/TerrainSystem.h"
+#include "Scene/SurfaceRegistry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -255,6 +256,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         ApplyPendingStaticColliderChunkOperations();
+        RefreshColliderSurfaces();
 
         struct StepGuard
         {
@@ -346,6 +348,7 @@ namespace NorvesLib::Modules::Physics
         {
             return Core::Scene::EPhysicsSceneQueryResult::NotReady;
         }
+        RefreshColliderSurfaces();
         RebuildPublishedSnapshot();
         return Core::Scene::EPhysicsSceneQueryResult::Success;
     }
@@ -736,7 +739,12 @@ namespace NorvesLib::Modules::Physics
         }
         if (component.m_ColliderHandle.IsValid())
         {
-            return ValidateCollider(component);
+            const EPhysicsResult result = ValidateCollider(component);
+            if (result == EPhysicsResult::Success)
+            {
+                ResolveColliderSurface(component);
+            }
+            return result;
         }
 
         Core::Entity* owner = component.GetOwner();
@@ -772,6 +780,7 @@ namespace NorvesLib::Modules::Physics
         slot.bActive = false;
         m_ColliderSlotByOwner.emplace(owner, index);
         component.m_ColliderHandle = Core::Scene::ColliderHandle{index, slot.Generation};
+        ResolveColliderSurface(component);
         return EPhysicsResult::Success;
     }
 
@@ -941,6 +950,61 @@ namespace NorvesLib::Modules::Physics
         component.m_bHasShape = true;
         component.m_bHeightFieldTransformWarning = false;
         return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderSurface(ColliderComponent& component, Core::Container::StringView name)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (name.size() > Core::Scene::SurfaceRegistry::MaximumNameBytes || (!name.empty() && !name.data()))
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+        for (size_t i = 0; i < name.size(); ++i)
+        {
+            const char ch = name[i];
+            if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                (ch >= '0' && ch <= '9') || ch == '_'))
+            {
+                return EPhysicsResult::InvalidArgument;
+            }
+        }
+
+        component.SurfaceName.Get() = Core::Container::String(name);
+        ResolveColliderSurface(component);
+        return EPhysicsResult::Success;
+    }
+
+    void PhysicsModule::ResolveColliderSurface(ColliderComponent& component) const
+    {
+        const auto& name = component.SurfaceName.Get();
+        component.m_Surface = m_Engine && !name.empty()
+            ? m_Engine->GetSurfaceRegistry().FindByName(name)
+            : Core::Scene::SurfaceId::Default();
+    }
+
+    void PhysicsModule::RefreshColliderSurfaces()
+    {
+        if (!m_Engine)
+        {
+            return;
+        }
+        const uint64_t revision = m_Engine->GetSurfaceRegistry().GetRevision();
+        if (revision == m_SurfaceRegistryRevision)
+        {
+            return;
+        }
+        for (const ColliderSlot& slot : m_ColliderSlots)
+        {
+            if (slot.bOccupied && !slot.bDetached && slot.Component)
+            {
+                ResolveColliderSurface(*slot.Component);
+            }
+        }
+        m_SurfaceRegistryRevision = revision;
     }
 
     EPhysicsResult PhysicsModule::SetColliderSurfaceId(ColliderComponent& component, uint8_t surfaceId)
@@ -1710,6 +1774,8 @@ namespace NorvesLib::Modules::Physics
             proxy.UserData = slot.Component->m_UserData;
             proxy.bTrigger = slot.Component->m_bTrigger;
             proxy.SurfaceId = slot.Component->m_SurfaceId;
+            proxy.Surface = slot.Component->m_Surface;
+            proxy.bHasSurface = !slot.Component->SurfaceName.Get().empty();
             EPhysicsProxyShape shape = EPhysicsProxyShape::Sphere;
             bool bPrimitiveShape = false;
             switch (slot.Component->m_Shape)
@@ -1811,6 +1877,8 @@ namespace NorvesLib::Modules::Physics
         m_LastDiagnostic = EPhysicsDiagnostic::None;
         m_bHasPublishedSnapshot = false;
         m_PublishedSnapshotSequence = 0;
+        // 読み込み前の登録簿も改訂番号 0 を持つため、再初期化直後は未解決として扱う。
+        m_SurfaceRegistryRevision = UINT64_MAX;
     }
 
     Math::Transform PhysicsModule::GetFreshWorldTransform(const Core::Entity& entity) const

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
+#include "Container/StringView.h"
 #include "Container/UnorderedMap.h"
 #include "Physics/CharacterMover.h"
 #include "Physics/IPhysicsModule.h"
@@ -142,6 +143,9 @@ namespace NorvesLib::Modules::Physics
         EPhysicsResult SetColliderCapsule(ColliderComponent& component, float radius, float halfHeight);
         EPhysicsResult SetColliderHeightField(ColliderComponent& component,
             Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> heightField);
+        EPhysicsResult SetColliderSurface(ColliderComponent& component, Core::Container::StringView name);
+        void ResolveColliderSurface(ColliderComponent& component) const;
+        void RefreshColliderSurfaces();
         EPhysicsResult SetColliderSurfaceId(ColliderComponent& component, uint8_t surfaceId);
         EPhysicsResult SetColliderLocalPose(ColliderComponent& component, const Math::Transform& localPose);
         EPhysicsResult SetColliderTrigger(ColliderComponent& component, bool bTrigger);
@@ -236,6 +240,7 @@ namespace NorvesLib::Modules::Physics
         bool m_bVariableCharacterInProgress = false;
         bool m_bCharacterInputInProgress = false;
         bool m_bHasPublishedSnapshot = false;
+        uint64_t m_SurfaceRegistryRevision = 0;
         uint64_t m_PublishedSnapshotSequence = 0;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;
         Core::Container::VariableArray<BodySlot> m_BodySlots;

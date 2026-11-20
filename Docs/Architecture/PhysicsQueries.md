@@ -98,3 +98,10 @@
 ## 親の休眠と物理の寿命（GR41）
 コライダー・RigidBody の有効性は所有者の `Entity::IsActiveInHierarchy()` で決まり、祖先のどれかを `SetActive(false)` にするか破棄予約すると、次の固定ステップで作業用・公開のブロードフェーズ、クエリ、接触から外れる。
 trigger に重なっていた子は、休眠で `OverlapEnd` が1回出て、親を戻すと `OverlapBegin` が1回出る。ゲーム側の受け手は「休眠でも End が来る」と読む。
+
+## コライダーの表面（GR115）
+
+`BuildBroadphase` はコライダーの解決済みの表面を proxy の `Surface` に、名前の指定の有無を `bHasSurface` に写す。
+物理クエリの結果と接触イベントは proxy の表面を使い、`GetColliderSurface` は公開スナップショットの proxy から明示された表面を返す。
+形状の署名が一致して静的な木を共有するときも、表面は毎回の proxy から読む。
+名前の保存と再解決、明示なしと `Default` の扱いは[表面の語彙と照会の契約](SurfaceContract.md)に従う。

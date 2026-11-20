@@ -12674,3 +12674,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 表面の登録簿 SurfaceRegistry: 着地(直し 1 回)
 - U4 Engine の持ち物・Game の起動での読み込み・語彙のデータ・契約の文書: 着地(直し 0 回)
 - U1 proxy・問い合わせの結果・接触のイベント・静的コライダーへ登録簿の表面を通し、GetColliderSurface を実装する: 着地(直し 0 回)
+- U2 ColliderComponent の SurfaceName を保存対象にし、名前を登録簿の表面へ解決して proxy へ写す（文書を含む）: 着地(直し 0 回)

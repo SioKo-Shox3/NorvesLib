@@ -14,7 +14,7 @@
 - `SurfaceQuery` は位置、法線、任意のコライダー、半径と照会フラグを持つ。半径 0 は点を表す。
 - `SurfaceSample` は主・副の表面と副の重み、濡れ、水たまりの深さ、草の密度、明示タグを使った場合のコライダーを持つ。
 
-登録簿の `SurfaceId` と、地形の `GroundSample::SurfaceId`（`uint8_t` の層番号）、物理の結果の `uint8_t SurfaceId` は別物であり、暗黙に変換しない。地形の層から表面へは `TerrainMaterialDesc` の `Layers` と各層の `SurfaceName` の表を介する。番号を表面へ橋渡しする場所は、今後実装する地形の provider と物理の表面の受け渡しの 2 か所に限る。
+登録簿の `SurfaceId` と、地形の `GroundSample::SurfaceId`（`uint8_t` の層番号）、物理の結果の `uint8_t SurfaceId` は別物であり、暗黙に変換しない。地形の層から表面へは `TerrainMaterialDesc` の `Layers` と各層の `SurfaceName` の表を介する。表面を解決するのは、地形の層に対応する名前を引く地形の provider と、コライダーに明示した表面を渡す物理の 2 か所に限る。
 
 保存するのは `String` の名前であり、`SurfaceId` の数値は保存しない。添字は読み込みで決まる。再読み込みでは同じ名前の添字を保ち、消えた名前は添字を再利用せず引退させる。引退した添字の `GetDesc` は `Default` の記述を返し、`GetName` は元の名前を返す。同じ名前が復帰すれば元の添字を使う。
 
@@ -73,10 +73,15 @@ provider が返す 2 層の重みは、負または非有限の値を 0 とし�
 
 ## 物理の結果
 
-`PhysicsRaycastHit`、`PhysicsOverlapHit`、`PhysicsQueryHit` は従来の `uint8_t SurfaceId` に加え、登録簿の `SurfaceId` 型の `Surface` を持つ。`Surface` は将来コライダーの明示表面を渡す欄であり、現在は常に `Default`。
+コライダーに明示した表面は、`PhysicsRaycastHit`、`PhysicsOverlapHit`、`PhysicsQueryHit` の `Surface` に入る。`RaycastClosest`、`RaycastAll`、`OverlapSphere`、`OverlapBox`、`OverlapCapsule`、`SweepSphere`、`SweepCapsule` と旧入口で共通とする。`PhysicsContactEvent` の `SelfSurface` は通知先、`OtherSurface` は相手のコライダーの表面を表す。いずれも明示なしなら `Default` を返す。
+
+`ColliderComponent` は `SurfaceName` を `PROPERTY` として持ち、シーンには名前を保存する。`Initialize` 時の登録で名前を登録簿の `SurfaceId` に解決する。登録後は `SetSurface` で名前を設定し、`GetSurface` ですぐに解決済みの値を読める。空の名前は明示を外す。名前の形式が不正なら `SetSurface` は `InvalidArgument` を返し、旧値を保つ。未知の名前は保持し、`FindByName` が `Default` を返す。ログ有効時の警告は登録簿の読み直しまで名前ごとに 1 回だけ出る。
+
+登録簿の `GetRevision()` が変わると、次の物理の 1 歩または明示のスナップショット更新のうち、先に行う方で名前を解決し直す。結果・接触イベントには次の公開から反映する。`GetColliderSurface` は公開スナップショットを参照する。明示なしなら `NoHit` を返し、`SceneQuery::QuerySurface` は provider へ進む。`Default` を明示した場合は `Success` を返す。
+
+Entity を持たない静的コライダーは、`StaticColliderDesc::Surface` に登録簿の添字を、`bHasSurface` に明示の有無を渡す。payload の `"surface"` は表面の名前の文字列で、GameThread で登録するたびに解決する。従来の `uint8_t SurfaceId` は地形の層の番号を扱い、登録簿の添字とは別に保持する。
 
 ## 後の段階
 
-- コライダーの `SurfaceName` の PROPERTY と、物理の結果への表面の受け渡し。
 - 地形・草・濡れの provider と、足音・足跡などの消費者。
 - スクリプトへの公開。
