@@ -46,6 +46,8 @@ GHSL-2023-165〜171 に対する上流 PR #1553〜#1559 は 2024-07-04 に閉じ
 
 ## 適用した修正
 
+### GHSL-2023-172
+
 GHSL-2023-172 では、疎な codebook の `sorted_entries` が 0 のとき `sorted_values` が NULL のまま、
 `DECODE` が `sorted_values[-1]` を読もうとする。取り込み時に次の 1 行だけを変更した。
 
@@ -56,9 +58,65 @@ GHSL-2023-172 では、疎な codebook の `sorted_entries` が 0 のとき `sor
 
 出所は上流の未取り込み・クローズ済み [PR #1560](https://github.com/nothings/stb/pull/1560) と、
 同じ修正を持つ [sezero/stb の `stb_vorbis-sezero` ブランチ](https://github.com/sezero/stb/tree/stb_vorbis-sezero)。
-上流に修正が取り込まれたら、このローカルパッチを外す。
+
+### CRC 表の定数化
+
+デコーダを開くたびに `crc32_init` が共有の CRC 表を書き換えていたため、別のスレッドでデコーダを開いたり、シーク中に表を読んだりすると競合していた。
+同じ式で事前計算した表を読み取り専用にし、初期化処理を削除した。
+
+```diff
+-static uint32 crc_table[256];
+-static void crc32_init(void)
+-{
+-   …
+-}
++static const uint32 crc_table[256] = {
++   0x00000000, 0x04c11db7, 0x09823b6e, 0x0d4326d9, 0x130476dc, 0x17c56b6b, 0x1a864db2, 0x1e475005,
++   …
++};
+@@
+-   crc32_init(); // always init it, to avoid multithread race conditions
+```
+
+### シークの実行時の検査
+
+壊れた入力では、Debug ビルドは位置や範囲の `assert` で停止し、`assert` が無効なビルドは復号済みバッファの終端を越えて読み取り位置を進めることがあった。
+`seek_to_sample_coarse` は最後のページのサンプル位置、探索中のページの順序、戻ったページに位置の分かる区切りがあることを検査する。
+`stb_vorbis_seek_frame64` は現在位置を、`stb_vorbis_seek64` は復号の成否と移動量を検査し、失敗時は `VORBIS_seek_failed` を記録して 0 を返す。
+
+```diff
+-   assert(right.last_decoded_sample != -1);
++   if (right.last_decoded_sample == -1) goto error;
+@@
+-         assert(mid.page_start < right.page_start);
++         if (mid.page_start >= right.page_start) goto error;
+@@
+-   assert(end_pos >= 0);
++   if (end_pos < 0) goto error;
+@@
+-   assert(f->current_loc_valid);
+-   assert(f->current_loc <= sample_number);
++   if (!f->current_loc_valid || f->current_loc > sample_number)
++      return error(f, VORBIS_seek_failed);
+@@
+-      (void)stb_vorbis_get_frame_float(f, &n, NULL);
+-      assert(sample_number > frame_start);
+-      assert(f->channel_buffer_start + (int) (sample_number-frame_start) <= f->channel_buffer_end);
++      if (!stb_vorbis_get_frame_float(f, &n, NULL)
++          || sample_number <= frame_start
++          || sample_number - frame_start > (int64) (f->channel_buffer_end - f->channel_buffer_start)) {
++         f->current_playback_loc_valid = FALSE;
++         return error(f, VORBIS_seek_failed);
++      }
+       f->channel_buffer_start += (int) (sample_number - frame_start);
+```
+
+3 件のローカルパッチは、それぞれの修正が上流に取り込まれた時点で外す。
 
 ## 運用上の前提
+
+書き換わる共有状態がないため、別々のデコーダインスタンスは別のスレッドで同時に使用できるが、同じインスタンスは同時に使用しない。
+壊れた入力へのシークで上記の検査に失敗すると、`assert` で停止せずに 0 を返す。
 
 ランタイムの復号対象は、cook 時に全体を復号して検証し、ロード時に payload のハッシュを確かめたものに限る。
 利用者が置いたファイルやネットワークからの信頼できない入力をデコーダに直接渡さない。
@@ -70,6 +128,6 @@ GHSL-2023-172 では、疎な codebook の `sorted_entries` が 0 のとき `sor
 ## 更新手順
 
 1. 更新先の commit から `stb_vorbis.c` と `LICENSE` の原本を取得する。
-2. 上流の修正状況を確認し、必要なら GHSL-2023-172 のパッチを当て直す。
+2. 上流の修正状況を確認し、`UPSTREAM.json` の `patches` の各修正を必要なら当て直す。
 3. `UPSTREAM.json` の版・出所と、取り込み後の `size`・`sha256`、パッチ適用前の `upstreamSize`・`upstreamSha256` を更新する。
 4. 上記の脆弱性の表と運用上の前提を見直す。

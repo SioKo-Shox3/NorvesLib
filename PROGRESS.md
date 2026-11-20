@@ -12663,3 +12663,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（第三者のパーサがメモリを読む = 危険地帯）。AssetCook から `NorvesAudioDecode` で全フレームを復号して検証する cook は G16-GR74-VORBIS-COOK。まだ呼び出し元が無いので、ゲームの見た目・音に変化は無い。
 - Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (3) 固定の .ogg の fixture と作り方の README、(4) `AudioDecoderTest`・`StbVorbisVendorContractTest`、試験の閾値の文書 `Docs/AudioValidation/GR74Acceptance.md`、`Docs/Testing.md` の 3 点は作っていない（`Test/` は既に無い）。ctest も回していない。
 - Notes: 既知の限界: (a) stb は総フレームを最後のページの granule から求めるので、終端のページを含む末尾を失った入力でも、直前の有効なページまでの短い総フレームで正常に開いて終端まで復号できることがある（切り詰めを失敗として見分けられない場合がある）。cook の検証は payload のハッシュの照合と組み合わせる前提。(b) 壊れた入力でシークの内部の条件が崩れると、Debug では `HasFailed` を返す前に stb の `assert` で止まりうる（`stb_vorbis.c` の seek の箇所）。ランタイムが開くのは検証済みの payload だけ。
+- U3 stb_vorbis の CRC 表を定数にし、シークの assert を実行時の検査にする: 着地(直し 1 回)
