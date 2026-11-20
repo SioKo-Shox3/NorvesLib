@@ -12655,3 +12655,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 上の Notes の「kGloss は照明の全体の値(1.0、仮)」の判断と「要起票: 材質ごとの濡れのつや `FurParams::WetGloss` を照明へ届ける作業」は、この直しで材質から画素ごとに届くようになったので置き換わった(起票しない)。
 - Notes: 判断: lighting.frag の先頭に BOM が付いた(実行時のシェーダーのコンパイラは BOM を外して読む。`VulkanShaderCompiler.cpp:160`)。
 - U1 stb_vorbis v1.24 を取り込み、独立の静的ターゲットと出所・脆弱性の文書を置く: 着地(直し 0 回)
+- U2 NorvesAudioDecode と IAudioDecoder / CreateVorbisDecoder を作り、NorvesAudioDomain をリンクさせる: 着地(直し 0 回)
