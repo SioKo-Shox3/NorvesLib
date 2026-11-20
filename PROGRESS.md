@@ -12661,3 +12661,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 整数コストの A* NavPathfinder(予算で分けて進める): 着地(直し 0 回)
 - U6 エージェントのプロファイルの集合と NavProfiles.json: 着地(直し 0 回)
 - U7 カメラの周りだけを描くナビのデバッグ描画: 着地(直し 0 回)
+- U8 ナビのサービス INavigationService と予算実行: 着地(直し 0 回)
