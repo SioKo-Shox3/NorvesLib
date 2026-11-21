@@ -82,6 +82,7 @@ namespace NorvesLib::Modules::AI
         {
             Core::Container::VariableArray<uint32_t> Indices;
             Core::Container::VariableArray<Math::Vector3> Positions;
+            Core::Container::VariableArray<uint64_t> Ids;
         };
 
         void Gather(const StepAgents& stepAgents);

@@ -242,9 +242,11 @@ namespace NorvesLib::Modules::AI
     {
         m_NeighborHash.QueryRadius(m_Positions.X[index], m_Positions.Z[index], radius, scratch.Indices, index);
         scratch.Positions.clear();
+        scratch.Ids.clear();
         for (uint32_t neighbor : scratch.Indices)
         {
             scratch.Positions.push_back(m_Positions.Get(neighbor));
+            scratch.Ids.push_back(m_NeighborObjectIds[neighbor]);
         }
     }
 
@@ -347,8 +349,8 @@ namespace NorvesLib::Modules::AI
         const auto primary = SolveRequest(record, agent.GetRequest(), input, self, limits, plane, dt, nav, profile);
         const float radius = (std::max)(1.0f, 2.0f * profile.Radius);
         GatherNeighbors(index, radius, scratch);
-        const WeightedVelocity items[] = {{primary, 1.0f},
-                                          {Separation(self, scratch.Positions, radius, limits, plane), 1.0f}};
+        const auto separation = Separation(self, scratch.Positions, radius, limits, plane, scratch.Ids, m_NeighborObjectIds[index]);
+        const WeightedVelocity items[] = {{primary, 1.0f}, {separation, 1.0f}};
         auto desired = CombineWeighted(items, limits, plane);
         if (plane == SteeringPlane::Ground)
         {
