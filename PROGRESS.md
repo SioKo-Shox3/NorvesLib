@@ -12755,3 +12755,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ(差し戻しの直し): `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0(`NorvesModule_AI.lib`・`Game.exe` を生成、`error C`・`error LNK`・`fatal error` は 0、AI のファイルの警告 0。警告は既存の shaderc の LNK4099 だけ)。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol` は一致。
 - Notes: 判断: クリアランスの量子化の意味(中心間距離 − 半セル)は変えていない。厚みの無い足跡が格子線の上にあるときは両側のセルを塞ぐ(隙間を作らない側に倒す)。
 - U1 表面の記述に草のしきい値の欄を足し、地形の層の表面名を語彙に足す: 着地(直し 0 回)
+- U2 HitEffectEmitter の表面の選択で parent をたどる: 着地(直し 0 回)

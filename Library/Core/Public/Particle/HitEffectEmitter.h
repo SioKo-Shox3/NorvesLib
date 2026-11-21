@@ -3,6 +3,11 @@
 
 #include "Particle/VfxEffectSystem.h"
 
+namespace NorvesLib::Core::Scene
+{
+    class SurfaceRegistry;
+}
+
 namespace NorvesLib::Core::Particle
 {
     /** @brief 呼び手が通知する当たりの情報。 */
@@ -12,14 +17,14 @@ namespace NorvesLib::Core::Particle
         Math::Vector3 Position = Math::Vector3(0.0f, 0.0f, 0.0f);
         /** @brief 被弾面から攻撃側へ向く法線（GR16 の CombatHitEvent の Normal と同じ向き）。 */
         Math::Vector3 Normal = Math::Vector3(0.0f, 1.0f, 0.0f);
-        /** @brief エフェクトの選択に使う表面の名前。 */
+        /** @brief 当たりの表面名。表に一致する名前がなく、登録簿があれば親を順に照合する。 */
         Container::String SurfaceName;
     };
 
     /** @brief 表面の名前とエフェクトの添字の対応。 */
     struct HitEffectTableEntry
     {
-        /** @brief 完全一致で照合する表面の名前。 */
+        /** @brief 当たりの表面名または登録簿でたどった祖先名と完全一致で照合する名前。 */
         Container::String SurfaceName;
         /** @brief 対応するエフェクトの添字。 */
         uint32_t EffectIndex = 0u;
@@ -67,7 +72,11 @@ namespace NorvesLib::Core::Particle
         bool SetTable(const HitEffectTable& table, Container::String* outError = nullptr);
         /** @brief 現在の表を取得する。 */
         const HitEffectTable& GetTable() const;
-        /** @brief 表面の名前からエフェクトの添字を選ぶ。 */
+        /** @brief 親の照合に使う登録簿を借用する。登録簿はエミッターより長く生かすか、破棄前に nullptr を渡す。 */
+        void SetSurfaceRegistry(const Scene::SurfaceRegistry* registry);
+        /** @brief 借用中の表面の登録簿を取得する。 */
+        const Scene::SurfaceRegistry* GetSurfaceRegistry() const;
+        /** @brief 表面名の完全一致を優先し、登録簿があれば親を順に照合する。 */
         uint32_t SelectEffect(const char* surfaceName) const;
         /** @brief 有効な当たりから放出要求を一つ積む。 */
         bool SubmitHit(const HitEffectHit& hit);
@@ -89,6 +98,8 @@ namespace NorvesLib::Core::Particle
     private:
         /** @brief 検証済みの対応表。 */
         HitEffectTable m_Table;
+        /** @brief 表面の親をたどるために借用する登録簿。 */
+        const Scene::SurfaceRegistry* m_SurfaceRegistry = nullptr;
         /** @brief 消費を待つ放出要求の列。 */
         VariableArray<HitEffectEmitRequest> m_PendingRequests;
         /** @brief エフェクトの添字ごとに遅延作成するインスタンス。 */
