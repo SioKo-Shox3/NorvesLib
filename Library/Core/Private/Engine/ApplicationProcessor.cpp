@@ -791,6 +791,12 @@ namespace
         return argument == String(TEXT("--capture-deterministic"));
     }
 
+    // --capture-ui: --capture-png の撮影に画面空間の Canvas（製品の UI）を載せる（値を取らない）。
+    bool IsCaptureUiOption(const String& argument)
+    {
+        return argument == String(TEXT("--capture-ui"));
+    }
+
     // --capture-hdr: --capture-png と同じフレームのブルーム前のシーンの色を、PNG の横へ HDR として書く（値を取らない）。
     [[maybe_unused]] bool IsCaptureHdrOption(const String& argument)
     {
@@ -1283,7 +1289,8 @@ namespace NorvesLib::Core::Engine
         bool bFixedFrameDelta = false;
         int64_t fixedFrameNumeratorNanoseconds = 0;
         int64_t fixedFrameDenominator = 1;
-        bool bEnableCanvasView = false;
+        bool bCaptureUi = false;
+        bool bEnableCanvasView = config.bEnableCanvasView;
         bool bBoardInstanceBatchingEnabled = true;
         Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
         uint32_t pathTracingSamplesPerFrame = 1u;
@@ -1322,6 +1329,10 @@ namespace NorvesLib::Core::Engine
         int windowWidth = config.WindowWidth;
         int windowHeight = config.WindowHeight;
         bool bWindowBackground = config.bWindowBackground;
+        if (bEnableCanvasView)
+        {
+            LOG_INFO("ApplicationProcessor boot option enable_canvas_view=true");
+        }
         for (size_t i = 0; i < args.size(); ++i)
         {
             bool bParsedMultiThreadedRendering = false;
@@ -1614,6 +1625,11 @@ namespace NorvesLib::Core::Engine
                             "0 より大きく 1 秒以下の小数か分数（例 1/24・0.0125）で指定する");
             }
 
+            if (IsCaptureUiOption(args[i]))
+            {
+                bCaptureUi = true;
+            }
+
             if (IsCaptureDeterministicOption(args[i]))
             {
                 bCaptureDeterministic = true;
@@ -1684,7 +1700,7 @@ namespace NorvesLib::Core::Engine
         }
 
         // 撮影はアセットの読み込みが落ち着いた後の画面を取る。描画フレーム数の指定が無ければ既定値を使う。
-        // 最終出力だけを写すため、キャンバス（画面空間のボード）は無効にし、overlay（ImGui）は描かない。
+        // 通常の撮影では Canvas を無効にし、--capture-ui のときだけ残す。ImGui の overlay はどちらでも描かない。
         if (!m_CapturePngPath.empty())
         {
             exitFrameOptions.bWaitForAssetSettle = true;
@@ -1692,10 +1708,14 @@ namespace NorvesLib::Core::Engine
             {
                 exitFrameOptions.RenderedTarget = kCapturePngDefaultSettledRenderedFrames;
             }
-            if (bEnableCanvasView)
+            if (bEnableCanvasView && !bCaptureUi)
             {
                 LOG_WARNING("ApplicationProcessor runtime option --enable-canvas-view ignored with --capture-png");
                 bEnableCanvasView = false;
+            }
+            else if (bEnableCanvasView && bCaptureUi)
+            {
+                LOG_INFO("ApplicationProcessor runtime option capture_ui=1 (Canvas を撮影に載せる)");
             }
             LOG_INFO("ApplicationProcessor capture_png settled_rendered_frames=%llu",
                      static_cast<unsigned long long>(exitFrameOptions.RenderedTarget));
@@ -1710,6 +1730,10 @@ namespace NorvesLib::Core::Engine
         }
         else
         {
+            if (bCaptureUi)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --capture-ui は --capture-png が無いので撮影には効かない（Canvas の有無は起動設定に従う）");
+            }
             if (m_bCaptureHdr)
             {
                 LOG_WARNING("ApplicationProcessor runtime option --capture-hdr は --capture-png が無いので無視する");
@@ -2826,6 +2850,16 @@ namespace NorvesLib::Core::Engine
         if(platformApp)
         {
             platformApp->PumpMessages();
+            // WM_SIZE・WM_DPICHANGED で変わったクライアント領域の物理 px を描画へ渡す。同じ寸法なら RenderWorld::Resize は何もしない。
+            if (auto* mainWindow = sourceEngine->GetMainWindow())
+            {
+                int clientWidth = 0;
+                int clientHeight = 0;
+                if (mainWindow->GetClientSize(clientWidth, clientHeight))
+                {
+                    sourceEngine->GetRenderWorld().Resize(static_cast<uint32_t>(clientWidth), static_cast<uint32_t>(clientHeight));
+                }
+            }
             exitRequested=platformApp->IsExitRequested();
             if(exitRequested) exitCode=platformApp->GetExitCode();
         }

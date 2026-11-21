@@ -15,6 +15,20 @@ namespace Game::Boot
         return MakeShared<Game::GameApplicationHandler>();
     }
 
+    // 製品の UI を使う起動（ゲームの流れ・UI の見本のシーン・UI を載せた撮影）のときだけ Canvas を作る。
+    // 既定の起動とランチャーでは作らない。
+    static void ConfigureBootFromArguments(BootConfig &config)
+    {
+        for (const auto &argument : config.Arguments)
+        {
+            if (argument == TEXT("--game-flow") || argument == TEXT("--scene=ui-gallery") || argument == TEXT("--capture-ui"))
+            {
+                config.bEnableCanvasView = true;
+                return;
+            }
+        }
+    }
+
     BootConfig GetBootConfig()
     {
         BootConfig config;
@@ -36,6 +50,8 @@ namespace Game::Boot
 
         // 起動画面の点光源の影も VSM（--point-shadow-method=cube でキューブへ戻せる）
         config.DefaultPointShadowMethod = NorvesLib::Core::Rendering::PointShadowMethod::Vsm;
+
+        config.ConfigureFromArguments = &ConfigureBootFromArguments;
 
         // ハンドラ作成関数
         config.CreateHandler = &CreateGameHandler;
