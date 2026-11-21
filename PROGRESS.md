@@ -12957,3 +12957,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(反復 3): `glslangValidator` は `board2d.vert` を `-I` 付きで渡すと、インクルード先 `Common/SceneInstanceData.glsl` の先頭の BOM で構文エラーになる（`board2d.vert` とインクルード先はこの反復で変えていない。実行時のコンパイルは `ShaderManager` が受け持つ）。
 - Notes(反復 3): 採った判断: Opaque × マスクの板はテクスチャのアルファも合成に使う（不透明なテクスチャなら被覆率だけで合成する）。反転（bFlipY）した円弧の板は、テクスチャと一緒に円弧も上下に映る。人が見るときの見どころ: 塗り 0.25・開始角 0・時計回りの RadialFill の板が画面の右上の四分の一を塗ること、Opaque の RadialFill（塗り 0）や CircleMask の板を別の板に重ねたとき、マスクの外で下の板が見えること。
 - Next: G15-GR68-UI-CHECK（記録のたびのパイプラインの作成の費用、UI の縁の画素の確かめ）。
+- U6 板のプロキシのハッシュに、サンプラー・シェーダーの種類・板ごとの値を含める: 着地(直し 0 回)
