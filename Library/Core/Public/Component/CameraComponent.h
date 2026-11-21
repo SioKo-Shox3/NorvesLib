@@ -148,6 +148,16 @@ namespace NorvesLib::Core::Component
         float GetFocusDistance() const { return m_FocusDistance; }
 
         /**
+         * @brief カメラの不連続（カット）を印します。次の BuildCameraProxy から CutSerial が 1 増えます。
+         *
+         * 補間を切るテレポート・ファストトラベル・時間の飛ばしなど、前のフレームのカメラから続かないフレームで呼びます。
+         * 描画はそのフレームで前のカメラ・TAA の履歴・パストレーサーの連番の前の値を捨てます。保存はしません（PROPERTY でない）。
+         */
+        void MarkCameraCut() { ++m_CutSerial; }
+        /** @brief これまでに印したカットの数（CameraProxy::CutSerial に写す値）。 */
+        uint32_t GetCutSerial() const { return m_CutSerial; }
+
+        /**
          * @brief owner のワールド Transform とレンズ値を CameraProxy へ snapshot 化します。
          * @return owner が存在して snapshot を構築できた場合 true。
          *
@@ -178,6 +188,8 @@ namespace NorvesLib::Core::Component
         Rendering::CameraExposureMode m_ExposureMode = Rendering::CameraExposureMode::Manual;
         Rendering::CameraAntiAliasingMode m_AntiAliasingMode = Rendering::CameraAntiAliasingMode::FXAA;
         float m_GradingContrast = -1.0f;
+        // カットの通し番号。PROPERTY にしない（保存・エディタの対象でない）。
+        uint32_t m_CutSerial = 0;
 
     private:
         void SetDefaults();
