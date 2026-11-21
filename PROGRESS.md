@@ -12817,3 +12817,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(反復 3): ランナーの評価者の反証。聴感の確かめは G16-GR73-SPATIAL-CHECK。
 - U1 InputRouter に UI の優先度 PriorityUI = 500 を足す: 着地(直し 0 回)
 - U2 BootConfig に bEnableCanvasView と引数で整える関数を足し、--capture-ui で撮影に Canvas を残し、Game が UI の起動のときだけ Canvas を作る: 着地(直し 0 回)
+- U3 CompositePass の出力をキャンバスの寸法にして、シーンとキャンバスを別の大きさのまま UV で合成する: 着地(直し 0 回)
