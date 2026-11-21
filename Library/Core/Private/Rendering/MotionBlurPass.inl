@@ -140,7 +140,7 @@ namespace NorvesLib::Core::Rendering
         {
             return context.GetActiveCamera() != nullptr && context.GetPreviousCamera() != nullptr &&
                    context.GetActiveDebugMode() == DebugViewMode::Normal &&
-                   ComputeMotionBlurShutterFraction(settings) > 0.0f;
+                   ComputeMotionBlurShutterFraction(settings, context.GetActiveCamera(), context.SnapshotDeltaTime) > 0.0f;
         }
 
         // 記述子セットをフレームの持ち主から借りる。持ち主の無い文脈（RenderingCoordinator を通さない検査）では
@@ -359,8 +359,8 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        const float shutterFraction = ComputeMotionBlurShutterFraction(m_Settings);
         const CameraProxy* camera = context.GetActiveCamera();
+        const float shutterFraction = ComputeMotionBlurShutterFraction(m_Settings, camera, context.SnapshotDeltaTime);
         const CameraProxy* previousCamera = context.GetPreviousCamera();
         const auto sameSize = [&](const RHI::TexturePtr& texture)
         {
