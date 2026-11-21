@@ -13022,3 +13022,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 評価(Public API の危険地帯)はランナーが回す。写像・ダッキングの量の聴感と、2ch でない mastering voice の行列は G16-GR73-SPATIAL-CHECK。
 - Notes: 要起票: `Assets/Audio/Banks/default.soundbank.json` の `Ambience.RainLoop` に `"bus": "ambient"` が無く、ばらの WAV(カテゴリ未指定)では送り先が Se になるため、設定の環境音の音量(`SetCategoryVolume(Ambience)` → Ambient のスライダー)が雨音に効かない(`SoundSystem.cpp` の `ResolveOutputBus` の優先順は done-when どおり)。
 - U11 SPI の旧 CreateVoice を仮想に戻し、IAudioMixer の戻り値の説明を実装に合わせる: 着地(直し 0 回)
+- U12 同梱の雨音を Ambient のバスへ向け、文書を合わせてタスクのビルドを通す: 着地(直し 0 回)

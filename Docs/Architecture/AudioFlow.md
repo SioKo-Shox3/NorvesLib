@@ -65,6 +65,8 @@ AUDIO_SMOKE stage=shutdown voices=0 callbacks=0 shutdown_complete=1
 
 XAudio2 は各バスに 2 ch・48 kHz の submix voice を作る。source voice は作成時の send で出力バスへ、子バスは Master の submix へ、Master の submix は mastering voice へ送る。`ProcessingStage` は `kAudioBusCount − 深さ` で決まり、深さ 1 の子（段 4）を深さ 0 の Master（段 5）より先に処理する。Null バックエンドはバスの作成状態と音量を保持する。
 
+既存の 4 引数の `IAudioBackend::CreateVoice`（ハンドル、フォーマット、周波数比の上限、mailbox）は仮想関数のままで、既定の実装では送り先を Se に設定して記述構造体版へ渡す。
+
 ### voice の送り先と音量
 
 `SoundSystem` は選んだクリップごとに、次の順で最初に決まったバスを `AudioVoiceDesc::OutputBus` に設定する。
@@ -73,7 +75,7 @@ XAudio2 は各バスに 2 ch・48 kHz の submix voice を作る。source voice 
 2. NVAUD のカテゴリがあれば、`Sfx` と `Footstep` は Se、`Ambience` は Ambient、`Music` は Music、`Ui` は Ui に送る。
 3. どの指定もなければ Se に送る。定義の `category` は送り先に使わない。
 
-同梱の `Ambience.RainLoop` にはバンクの `bus` 指定がないため、カテゴリ未指定のばらの WAV は Se に、カテゴリが `Ambience` の cook 済みクリップは Ambient に送る。
+同梱の `Ambience.RainLoop` はバンクで `bus: ambient` を指定しているため、クリップのカテゴリに関係なく Ambient に送られ、GR76 の環境音の音量（Ambient のスライダー）で雨音を調整できる。
 
 `GetBusVolume` が返すバス自身の線形ゲインは `10^(volume_db/20) × slider² × ダッキングの線形利得 × ポーズ用の利得`。スライダーは [0, 1] に収め、二乗の写像を仮に使う。ポーズ対象のバスには `SetPauseGain` の値、対象外には 1 を掛ける。`GetEffectiveBusGain` は、そのバスから Master までの各ゲインを一度ずつ掛けた値を返す。
 
