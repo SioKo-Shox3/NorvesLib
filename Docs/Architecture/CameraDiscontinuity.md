@@ -30,10 +30,11 @@ RenderThread は未描画のパケットを新しいパケットで差し替え�
 - **TAA の画像履歴** — `TemporalAAHistoryTracker::Evaluate` は、同じビューポートで履歴を書いたカメラと登録 ID・`SourceCameraId`・`CutSerial` のいずれかが違えば `CameraChanged` を返し、その履歴を再利用しない。
   描画がゲームフレームを飛ばしたとき、`SceneView` は `FindReprojectionCamera` で履歴を書いたカメラを求める。カットのパケット自体が捨てられても、番号が違えばこの関数は `nullptr` を返し、カット前のカメラで再投影しない。
 - **パストレーシングの連番** — GameThread と RenderThread はそれぞれの `PathTracingSequenceCarry` に、最後に見たメインカメラの識別子と通し番号を記録する。
-  `ApplyPathTracingSequenceCarry` はどちらかが変わると、同じ `SequenceFrame` の途中でも、連番でないパケット（`SequenceFrame == 0`）でも、前のカメラと `RayTracingScene` の全インスタンスの前の変換を捨てる。
+  `ApplyPathTracingSequenceCarry` はどちらかが変わると、同じ `SequenceFrame` の途中では前のカメラと `RayTracingScene` の全インスタンスの前の変換を捨てる。連番でないパケット（`SequenceFrame == 0`）でも全インスタンスの前の変換を捨てるが、パケットの前のカメラ（`PreviousMainCamera`）は、今のカメラと `CameraId`・`SourceCameraId`・`CutSerial` の3つが一致すれば残す。
   GameThread は、カットで前の値を捨てたかを `FramePacket::bPathTracingPreviousCut` に書く（`Clear()` で `false` に戻る）。連番では `PathTracingSequenceCarry::bPreviousCut` にその判定を保持し、カットを検出したパケットから同じ連番フレームの最後のパケットまですべてに写す。
   RenderThread はパケットの判定と自身のカメラ照合のどちらかがカットを示せば、差分の同期で後から加えた MegaGeometry のインスタンスにも同じ判定を適用する。RenderThread が最初に描くパケットがカットの直後でも、前の変換は復活しない。
-  カットを伝えるパケットをすべて取りこぼしても、RenderThread は直前に描いたカメラの `SeenSourceCameraId`・`SeenCutSerial` との照合でカットを検出し、前の値を捨てる。GameThread はカット後の前フレームを持ち越せるため、そのフレームだけ両者の前の値が異なることがある。
+  カットのパケットを描かずに差し替えた場合や、そのパケットが全量の同期だった場合、RenderThread は次の差分同期で、最後に記録した `SeenSourceCameraId`・`SeenCutSerial` との照合でカットを検出し、パストレーサーのインスタンスの前の変換を捨てる。GameThread はカット後の前フレームの変換を持ち越せるため、このフレームでは両者のインスタンスの前の変換が異なることがある。
+  連番でないパケットでは、ラスタの前のカメラは今のカメラと上の3つの値が一致すれば残るため、次のパケットの velocity とモーションブラーにはカット後の前のカメラを使える。カットのパケット自体では `GenerateDrawCommands` がすでに前のカメラを外しているため、カット前の視点が戻ることはない。
 - **シャッター区間** — `SamplePathTracingCamera` は登録 ID と投影方式に加えて `SourceCameraId` と `CutSerial` も照合する。カットをまたぐときは現在のカメラを使い、前のカメラとの間を補間しない。
 - **物体の動き** — `ApplyPreviousObjectStates` は物体の前の変換をゲームフレームの連続性で扱う。カメラがカットしても、直前のフレームから追跡できている物体の変換はラスター描画用に保持する。パストレーサーのシャッター補間に使う `RayTracingScene` の前の変換は、カットで捨てる。
 
