@@ -12776,3 +12776,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U10 KeepDistance を要求の帯どおりに判定し、重なった 2 個体を Separation が安定した ID で引き離す: 着地(直し 0 回)
 - U11 操舵の登録を EntityHandle と ID にし、活動の条件・部分経路の終点・GR24 の近傍の個体の解決を直す: 着地(直し 0 回)
 - U12 分離に近傍の ID を渡し、設計文書を直した契約に合わせる（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 6 の評価）: `KeepDistance` は要求の上下端をそのまま判定に使い（幅 0 も可）、帯へ戻る停止半径を `min(0.1 m, (0.5 − ヒステリシスの割合) × 帯幅)` にして帯の内側で止まる。`Separation` は 0.0001 m 未満の重なりを ID の組で決まる軸の逆向きに離し、操舵の系は所有 Entity の ObjectId を渡す。
+- 差し戻しの直し: 操舵の系は Component のポインタを持たず、ComponentId・所有 Entity の ObjectId・EntityHandle で登録して固定歩ごとに Engine の World から引き直す。近傍のハッシュと同じ添字の `AIModule::GetNeighborEntities()` を GR24 へ公開する。収集とモーターの条件は `SteeringSystem::CanSteer`（所有 Entity の階層での有効と Tick、Component の有効と Tick、破棄予定でない）にそろえた。`MoveTo` の完走は、`Partial` なら折れ線の終点、`Succeeded` なら終点から目的地へ NavRaycast が通るときだけ目的地へ Arrive する。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT_CODE=0（`NorvesModule_AI.lib`・`Game.exe` を生成、error 0、変更ファイルの警告 0）。`git diff --numstat` と `--ignore-cr-at-eol` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。
+- Notes: 評価の残課題（done-when の外）: `AIModule::Shutdown` 後の再 `Initialize` で生きている個体は登録し直されない。壁の近くの目的地ではコンテキスト操舵が正面を外して壁沿いにそれることがある（シーンに置いたときに見る点）。
