@@ -8526,8 +8526,19 @@
   - トーンマップの前に Grade を掛ける。順は、露出バイアス → ホワイトバランス → 暗部の持ち上げ → log2 のコントラスト(pivot·(c/pivot)^contrast)→ 彩度(保護色相は有効時だけ)→ ハイライトの肩 → スプリットトーン。
   - トーンマップの後の Look は、LUT A・B(binding 3・4)を Blend で混ぜて Intensity を掛ける。
   - 最終段に三角分布のディザを掛ける。強さが 0 なら掛けない。
-  - Grade の中の値の上限は、RGB の比を保つ形(最大の成分で割って縮める。Inf を含んでも NaN を出さない)で掛け、成分ごとの `min` で色を失わない。
-  - 確かめる値: 入力 (4,2,1)・ExposureBias=3・Contrast=4・ContrastPivot=0.25・HighlightRolloff Start=0.25・Strength=1・ほかは中立のとき、肩の後がおよそ (1.941, 0.121, 0.0076)、ACES Filmic の出力がおよそ (0.911, 0.164, 0.003)。入力グレー 128・ExposureBias=8・Contrast=4 で、ACES Filmic と Uncharted2 が NaN も Inf も出さない。この値は使い捨ての計算で確かめて PROGRESS.md に書く。
+  - Grade の中の値の上限は今の形を保つ:
+    - 彩度と肩の前は、最大の成分が 1e30 を超えるときだけ、RGB の比を保って縮める。Inf を含んでも NaN を出さない。
+    - 表示変換の手前は、演算子が飽和する 1e18 で成分ごとに切る。
+    - 成分ごとの `min` で色相を変えない。
+    - 1e30 を超えたときに小さい成分が比例して縮むのは、比を保つ縮めの仕様とする。
+  - 彩度(保護色相の補間を含む)とスプリットトーンの色の補間は、端点で厳密になる形 `a·(1−t) + b·t` で書く。重みが 1 のとき、元の値と明部の倍率がそのまま通る(`a + (b−a)·t` の桁落ちで暗い成分を 0 にしない)。
+  - 確かめる値:
+    - 入力 (4,2,1)・ExposureBias=3・Contrast=4・ContrastPivot=0.25・HighlightRolloff Start=0.25・Strength=1・ほかは中立: 肩の後がおよそ (1.941, 0.121, 0.0076)、ACES Filmic の出力がおよそ (0.911, 0.164, 0.003)。
+    - 入力グレー 128・ExposureBias=8・Contrast=4: ACES Filmic と Uncharted2 が NaN も Inf も出さない。
+    - (i) Contrast=4・ディザ 0・入力 (0.25,0.25,64)・支点 0.25・彩度 0・青を完全に保護(中心 240°・幅 40°・Keep 1): ACES Filmic がおよそ (0.374, 0.374, 1)。
+    - (ii) Contrast=4・ディザ 0・入力 (32,0.25,0)・支点 0.25・明部の色倍率 (2⁻²⁶,1,1): ACES Filmic がおよそ (0.804, 0.374, 0)。
+    - これらの値は、シェーダーの演算を単精度に丸めた使い捨ての計算で確かめ、PROGRESS.md に書く。
+  - 単精度の丸めによる差は、上の確かめる値の外では問わない。評価は、書いた値と上限の形で行う。
   - `TonemapACES`・`Uncharted2Helper` と、gradingMode 0・1 の分岐は変えない。
   (2) `GPUToneMappingParams`(192 バイト・36 欄)の static_assert の大きさと offset、GLSL のブロックが一致したままである。
   (3) `GetActiveCamera()->PostProcess.bValid` のとき:
@@ -8545,10 +8556,9 @@
 - after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR62
 - needs-gr: GR30
-- done-when: (1) `CameraProxy` に `uint32_t CutSerial = 0`（カットのたびに 1 増える通し番号。既定 0 で今と同じ）。`CameraComponent` に `MarkCameraCut()`（次の `BuildCameraProxy` から CutSerial が 1 増える。PROPERTY にはしない）。(2) `RenderingCoordinator::GenerateDrawCommands` の前のカメラの条件 `bPreviousMainCameraContinuous`（RenderingCoordinator.cpp:4811-4818）に「前のカメラと今のカメラの CutSerial と SourceCameraId が同じ」を足す（SourceCameraId の切り替えでも velocity を別のカメラの行列で作らない）。(3) `TemporalAAHistoryQuery`（TemporalAA.h:162）・`TemporalAAHistoryTracker`（:202）に CutSerial を足し、違えば `CameraChanged`。`FindReprojectionCamera`（:252）も CutSerial が違えば null（描かれずに捨てられたパケットをまたいでも、カットの向こうへ再投影しない）。(4) パストレーサー: `ApplyPathTracingSequenceCarry`（FramePacket.h:720）はカットのパケットで前のカメラと instance の前の変換を捨て、`SamplePathTracingCamera`（PathTracingCamera.h）の前のカメラの採用も同じ条件にする。(5) 規約の文書 `Docs/Architecture/CameraDiscontinuity.md`: CutSerial はカメラの不連続の唯一の印。進めるのは CameraDirector の Cut とカットシーンの出入り（G14-GR62-DIRECTOR）と `MarkCameraCut`（GR02 の補間を切るテレポート・GR71 のファストトラベル・GR55 の時間の飛ばしはこれを呼ぶ）。G7 の環境の `DiscontinuityId` とは別の印で、環境の不連続がカメラのカットを伴うときは呼ぶ側が両方を進める。(6) 試験: `CameraCutPreviousCameraTest`（`ViewportCameraIdRenderPlanTest` の束へ MEMBER）— CutSerial が変わったパケットで前のカメラを渡さず次のパケットで渡す、SourceCameraId の切り替えでも同じ、TAA の履歴が `CameraChanged` で捨てられる、捨てたパケットをまたいでも `FindReprojectionCamera` が null、`ApplyPathTracingSequenceCarry` がカットで前のカメラと instance の変換を捨てる。`RenderingVelocityVulkanTest`（Test/Core/Rendering/CMakeLists.txt:647）に `--scenario=camera-cut`（カメラを動かしながら途中のフレームで CutSerial を進める）を足して `RenderingVelocityCameraCutVulkanTest` として登録し、カットのフレームの velocity が全画素 0、次のフレームで 0 でない。既存の `CameraTableTest`・`TemporalAAJitterTest`・`RenderingVelocityCameraVulkanTest`・`RenderingVelocityMotionVulkanTest`・`R8PathTracingSequenceFrameVulkanTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` が通る。
-- verify: `cmake --build build --config Debug --target ViewportCameraIdRenderPlanTest CameraViewConstantsTest RenderingVelocityVulkanTest PathTracingCameraVulkanTest RenderingGoldenImageTest Game -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(CameraCutPreviousCameraTest|CameraTableTest|ViewportCameraIdRenderPlanTest|TemporalAAJitterTest|RenderingVelocityCameraCutVulkanTest|RenderingVelocityCameraVulkanTest|RenderingVelocityMotionVulkanTest|R8PathTracingSequenceFrameVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$" --no-tests=error --output-on-failure --timeout 600`
-- paths: Library/Core/Public/Rendering/SceneProxy.h, Library/Core/Public/Rendering/TemporalAA.h, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/PathTracingCamera.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Private/Rendering/TemporalAAPass.inl, Library/Core/Public/Component/CameraComponent.h, Library/Core/Private/Component/CameraComponent.cpp, Docs/Architecture/CameraDiscontinuity.md, Test/Core/Rendering/CameraCutPreviousCameraTest.cpp, Test/Core/Rendering/RenderingVelocityVulkanTest.cpp, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- done-when: (1) `CameraProxy::CutSerial`(既定 0)と `CameraComponent::MarkCameraCut()`(PROPERTY でない)があり、`BuildCameraProxy` が CutSerial と SourceCameraId(生成元の `GetComponentId()`)を写す。(2) `GenerateDrawCommands` は、前のカメラの `SourceCameraId` と `CutSerial` が今のカメラと同じときだけ前のカメラをパケットへ渡す。`UpdateCamera` でメインの登録枠を更新すると `m_MainCamera` へ写る。`GetPreviousCamera()` は登録 ID・`SourceCameraId`・`CutSerial` が一致するときだけ返す。(3) `TemporalAAHistoryQuery`・`TemporalAAHistoryTracker` は CutSerial が違えば `CameraChanged`、`FindReprojectionCamera` は CutSerial が違えば null。(4) `ApplyPathTracingSequenceCarry` はカットで instance の前の変換と(連番の)前のカメラを捨て、`SamplePathTracingCamera` も同じ条件で前のカメラを使う。ただし連番でないパケット(`SequenceFrame == 0`)でカットと判定しても、パケットの `PreviousMainCamera` が今のカメラと `CameraId`・`SourceCameraId`・`CutSerial` の 3 つで一致すれば、`bHasPreviousMainCamera` とともに残す。これで、RenderThread の carry がカットのパケットを見なかった場合(描かずに差し替えた・全量の同期だった)でも、次のパケットの velocity とモーションブラーがカット後の前のカメラを失わない。(5) 規約の文書 `Docs/Architecture/CameraDiscontinuity.md` に、CutSerial が唯一の印であること・進める側・`DiscontinuityId` とは別の印で呼ぶ側が両方を進めることと、(4) のただし書き(パストレーサーの carry はラスタの前のカメラを、一致する限り消さない)が書いてある(UTF-8 BOM・CRLF)。試験は作らない・回さない。Debug の Game のビルドが通る。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Rendering/SceneProxy.h, Library/Core/Public/Rendering/TemporalAA.h, Library/Core/Public/Rendering/TemporalAAPass.h, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Public/Rendering/PathTracingCamera.h, Library/Core/Public/Rendering/ViewRenderContext.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Private/Rendering/TemporalAAPass.inl, Library/Core/Public/Component/CameraComponent.h, Library/Core/Private/Component/CameraComponent.cpp, Docs/Architecture/CameraDiscontinuity.md, TASKS.md, PROGRESS.md
 - notes: ロードマップ 2856 行と 2895 行（CutSerial を最初の独立のコミットにする）、要件 `#### GR62` の設計案の 5。10-02 の後に `SourceCameraId`（SceneProxy.h:448）が入り、TAA はカメラの切り替えで履歴を捨てる（TemporalAA.h:220）が、同じカメラの中のカットと、前のカメラの受け渡し（RenderingCoordinator.cpp:4811）には印が無い。1 フレームだけ立てるブール値では、そのパケットが捨てられたとき（TemporalAA.h:196 の差し替え）カットをまたいで再投影するので、通し番号にする（要件の設計案）。段階をまたぐ注意 4415・4479 行の直す点（カメラの不連続の唯一の印）をここで規約にする。`needs-gr: GR30` は G5 の GR30 の項目が同じ TAA・velocity の経路（TemporalAA.h・GBuffer の velocity）を触るので、その後に載せるため（ロードマップ 2882 行の硬い依存）。自動露出をカットで即座に合わせる処理は入れない（非ゴール 2873 行。ショットは手動露出が前提）。試験を足す理由: 取りこぼしたパケットをまたぐカットは、そのフレームだけ筋が引く形で黙って起き、撮影の 1 枚では気づけない。危険地帯（RenderThread・TAA・PT の連番・Public API の CameraProxy）。評価者の反証を省かない。
 
 ## G14-GR62-LENS-SHUTTER: 物理カメラの値（焦点距離・撮像面・ゲートフィット）と、露出から切り離したシャッター角の動きぼけを足す
@@ -10943,3 +10953,13 @@ TASK にした理由（判断の根拠）:
 - verify: `build/Tools/AssetCook/Debug/AssetCook.exe --asset-set Assets/AssetSets/FurMaterials.json --runtime-root build/Verify/G6-GR35-WET-CHECK-P1 --source-root . --manifest build/Verify/G6-GR35-WET-CHECK-P1/manifest.json`
 - paths: Assets/Materials/Fur/phantom.furmat.json, Docs/Architecture/FurRendering.md, TASKS.md, PROGRESS.md
 - from: G6-GR35-WET-CHECK
+
+## G14-GR62-DIRECTOR-P1: 前のフレームの HZB の再利用（MegaGeometry と草）を、カメラの CutSerial が同じときだけにする
+- status: todo
+- after: G14-GR62-CUT-SERIAL
+- done-when: (1) `MegaHiZContract`（MegaGeometryPass.h:83）に `uint32_t CutSerial = 0` を足す。HZB を作るとき、MegaGeometryPass.cpp:5425 で `currentContract.SourceCameraId` を写している所の隣で `command.MainCamera.CutSerial` も写す。(2) `EvaluatePreviousHiZ`（MegaGeometryPass.h:140-180）は、`CameraId`・`SourceCameraId` が違うときに加え、`CutSerial` が違うときも `MegaPrevHiZStatus::CameraCut` を返す。(3) 草の HiZ の採用の条件 `bUseHiZ`（GrassPass.cpp:790-796）に `hiZContract.CutSerial == camera->CutSerial` を足す。(4) CutSerial が既定の 0 から変わらない間は、両方の判定の結果が今と変わらない（既定の起動画面とランチャーの各シーンの見た目も変わらない）。(5) Game が Debug でビルドできる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Rendering/MegaGeometryPass.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Private/Rendering/GrassPass.cpp
+- effort: medium
+- from: G14-GR62-DIRECTOR
+- notes: 根拠は計画の文書に 2 つある。ロードマップ（GameFeatureRoadmap.md）4479 行の「CutSerial は、カメラの不連続の唯一の印にする」と、要件 GR62（GameFeatureRequirements.md 6414 行）の「カットの1フレームは前のカメラが無い扱い」。どのタスクもこの 2 か所を扱っていない。G14-GR62-CUT-SERIAL の done-when は RenderingCoordinator・TAA・PT の 3 経路だけで、G14-GR62-DIRECTOR も HiZ に触れない。そのため、前のフレームの HZB を使う 2 か所（MegaGeometry の 2 パス遮蔽の 1 パス目、草の生成の遮蔽）が取り残されている。これは、`blocked/G14-GR62-CUT-SERIAL.md` に評価者が残した残課題と同じ件。同じカメラのままカットすると（Director の Cut や、`MarkCameraCut` を呼ぶテレポートなど）、草はカット前の別のショットの深度へ契約の VP で投影し直して遮蔽を判定する。その結果、カットしたフレームだけ草が欠ける。MegaGeometry は 2 パス目で拾い直すので描画の正しさは保つが、1 パス目の判定は無駄になる。CutSerial は統合ブランチにまだ無い（grep で TASKS.md にしか出てこない。G14-GR62-CUT-SERIAL が人待ち）ので、after に置く。RenderThread の HZB の契約を触るので危険地帯にあたるが、差分は比べる条件を 2 つ足すのと、値を写す 1 行だけ。
