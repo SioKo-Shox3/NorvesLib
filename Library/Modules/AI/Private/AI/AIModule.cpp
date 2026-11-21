@@ -1,7 +1,9 @@
 ﻿#include "AI/AIModule.h"
 
+#include "AI/Steering/SteeringAgentComponent.h"
 #include "Asset/AssetFileReader.h"
 #include "Logging/LogMacros.h"
+#include "Object/IClass.h"
 
 #if NORVES_ENABLE_DEBUG_OUTPUT
 #include "AI/Navigation/NavDebugDraw.h"
@@ -11,6 +13,7 @@
 #include "Rendering/RenderingCoordinator.h"
 #endif
 
+#include <algorithm>
 #include <utility>
 
 namespace NorvesLib::Modules::AI
@@ -47,7 +50,45 @@ namespace NorvesLib::Modules::AI
 
     void AIModule::RegisterReflectedTypes()
     {
-        // 現在の AI モジュールには登録するリフレクション型がない。
+        Core::ClassRegistry::Get().RegisterClass(SteeringAgentComponent::StaticClass());
+    }
+
+    void AIModule::RegisterAgent(SteeringAgentComponent& agent)
+    {
+        if (!IsOwnerThread() || agent.m_bRegistered)
+        {
+            return;
+        }
+        m_Agents.push_back(&agent);
+        agent.m_bRegistered = true;
+    }
+
+    void AIModule::UnregisterAgent(SteeringAgentComponent& agent)
+    {
+        if (!IsOwnerThread() || !agent.m_bRegistered)
+        {
+            return;
+        }
+        const auto it = std::find(m_Agents.begin(), m_Agents.end(), &agent);
+        if (it != m_Agents.end())
+        {
+            m_Agents.erase(it);
+            agent.m_bRegistered = false;
+        }
+    }
+
+    uint32_t AIModule::GetAgentCount() const
+    {
+        return IsOwnerThread() ? static_cast<uint32_t>(m_Agents.size()) : 0u;
+    }
+
+    Core::Container::Span<SteeringAgentComponent* const> AIModule::GetAgents() const
+    {
+        if (!IsOwnerThread())
+        {
+            return {};
+        }
+        return {m_Agents.data(), m_Agents.size()};
     }
 
     bool AIModule::Initialize()
@@ -144,6 +185,11 @@ namespace NorvesLib::Modules::AI
     {
         if (IsOwnerThread())
         {
+            for (auto* agent : m_Agents)
+            {
+                agent->m_bRegistered = false;
+            }
+            m_Agents.clear();
             m_Navigation.Reset();
             m_bInitialized = false;
         }
@@ -155,7 +201,7 @@ namespace NorvesLib::Modules::AI
         {
             return;
         }
-        if (m_bInitialized)
+        if (m_bInitialized || !m_Agents.empty())
         {
             Shutdown();
         }

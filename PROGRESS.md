@@ -12756,3 +12756,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: クリアランスの量子化の意味(中心間距離 − 半セル)は変えていない。厚みの無い足跡が格子線の上にあるときは両側のセルを塞ぐ(隙間を作らない側に倒す)。
 - U1 操舵の基本の純関数（Seek・Flee・Arrive・Pursue・KeepDistance・Wander と上限の積分）: 着地(直し 0 回)
 - U4 近傍の一様格子ハッシュ: 着地(直し 0 回)
+- U5 SteeringAgentComponent と AIModule への登録・型の登録・Physics のリンク: 着地(直し 0 回)
