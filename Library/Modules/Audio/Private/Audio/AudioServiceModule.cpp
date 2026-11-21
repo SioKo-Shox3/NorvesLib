@@ -121,11 +121,12 @@ namespace NorvesLib::Modules::Audio::Private
                 {
                     return false;
                 }
-                AudioResult result = m_Service->Initialize();
+                bool bServiceInitialized = false;
+                AudioResult result = InitializeServiceAndBuses(bServiceInitialized);
                 if (result != AudioResult::Success && m_Options.bAllowNullBackendFallback &&
                     m_BackendStatus.Kind != AudioBackendKind::Null)
                 {
-                    const char* reason = GetFailureReason(result);
+                    const char* reason = bServiceInitialized ? "bus_setup_failed" : GetFailureReason(result);
                     // SoundSystem の参照先を破棄する前に、参照する側を終了して外す。
                     m_SoundSystem->Shutdown();
                     m_SoundSystem.reset();
@@ -134,7 +135,7 @@ namespace NorvesLib::Modules::Audio::Private
                     m_Service = CreateAudioServiceForBackend(Core::Container::MakeUnique<NullAudioBackend>());
                     m_SoundSystem = Core::Container::MakeUnique<SoundSystem>(*m_Service, Random::Generator{});
                     m_SoundSystem->BindMixer(m_Mixer.get());
-                    result = m_Service->Initialize();
+                    result = InitializeServiceAndBuses(bServiceInitialized);
                     if (result == AudioResult::Success)
                     {
                         SetFallbackStatus(reason);
@@ -142,13 +143,12 @@ namespace NorvesLib::Modules::Audio::Private
                 }
                 if (result != AudioResult::Success)
                 {
+                    if (bServiceInitialized)
+                    {
+                        m_Mixer->BindService(nullptr);
+                        m_Service->Shutdown();
+                    }
                     return false;
-                }
-                m_Mixer->BindService(m_Service.get());
-                const AudioResult busResult = m_Mixer->ReapplyBackendState();
-                if (busResult != AudioResult::Success)
-                {
-                    LOG_WARNING("AUDIO_MIXER bus_create=failed result=%d", static_cast<int>(busResult));
                 }
                 m_bInitialized = true;
                 if (m_BackendStatus.bFellBackToNull)
@@ -238,6 +238,23 @@ namespace NorvesLib::Modules::Audio::Private
             }
 
         private:
+            AudioResult InitializeServiceAndBuses(bool& bServiceInitialized)
+            {
+                AudioResult result = m_Service->Initialize();
+                bServiceInitialized = result == AudioResult::Success;
+                if (!bServiceInitialized)
+                {
+                    return result;
+                }
+                m_Mixer->BindService(m_Service.get());
+                result = m_Mixer->ReapplyBackendState();
+                if (result != AudioResult::Success)
+                {
+                    LOG_WARNING("AUDIO_MIXER bus_setup=failed result=%d", static_cast<int>(result));
+                }
+                return result;
+            }
+
             void SetFallbackStatus(const char* reason)
             {
                 m_BackendStatus.Kind = AudioBackendKind::Null;

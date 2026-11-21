@@ -23,6 +23,8 @@ namespace NorvesLib::Modules::Audio::Private
             return category == SoundCategory::Ambience ? AudioBusId::Ambient : AudioBusId::Se;
         }
 
+        // バンクの bus、cook 済みクリップのカテゴリの順に送り先を決め、どちらもなければ Se を使う。
+        // 定義の category は送り先の判定に使わない。
         AudioBusId ResolveOutputBus(const SoundDefinition& definition, const AudioClipResource& clip)
         {
             if (definition.bHasBus)
@@ -44,7 +46,7 @@ namespace NorvesLib::Modules::Audio::Private
             case CookedAudioCategory::Unspecified:
                 break;
             }
-            return GetCategoryBus(definition.Category);
+            return AudioBusId::Se;
         }
 
         bool IsValidFade(const SoundFade& fade)
