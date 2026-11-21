@@ -246,6 +246,26 @@ namespace NorvesLib::Core::Rendering
         Impostor
     };
 
+    enum class BoardSampler : uint8_t
+    {
+        Point,          ///< 最近傍・クランプ。文字やピクセル絵の既定値。
+        LinearClamp,    ///< 線形・クランプ。ミップを使わない。
+        LinearMipClamp  ///< 線形・ミップ線形・クランプ。縮小表示する地図などに使う。
+    };
+
+    enum class BoardShaderKind : uint8_t
+    {
+        /// 標準の板（board2d.frag、既定）。ShaderParams は使わない。
+        Standard,
+        /// 円弧・リングの塗り（board2d_ring.frag）。ShaderParams.x は塗りの割合（0〜1）。
+        /// y は開始角を回転数で表す（0 は真上、0.25 は右）。z は内径の比（0〜1、0 で扇形）。
+        /// w が 0 以上なら画面上で時計回り、負なら反時計回りに塗る。
+        RadialFill,
+        /// 板に内接する円の外を透明にする（board2d_circle.frag）。ShaderParams は予約用で全成分を 0 にする。
+        /// テクスチャは UVRect の範囲から引く。小地図の表示位置と拡大率は UVRect で調整する。
+        CircleMask
+    };
+
     inline RenderLayer operator|(RenderLayer a, RenderLayer b)
     {
         return static_cast<RenderLayer>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
