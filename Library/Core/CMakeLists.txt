@@ -1022,6 +1022,7 @@ set(PUBLIC_HEADERS
     Public/Math/GeometryTypes.h
     Public/Math/GeometryIntersection.h
     Public/Math/Curves.h
+    Public/Math/PolylinePath.h
     # Thread
     Public/Thread/Atomic.h
     Public/Thread/ConditionVariable.h
