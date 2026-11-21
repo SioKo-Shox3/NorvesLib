@@ -38,10 +38,9 @@ namespace NorvesLib::Modules::AI
                 return false;
             }
             target.Position = entity->GetWorldTransform().position;
-            const auto* agent = entity->GetComponent<SteeringAgentComponent>();
-            if (agent && !agent->IsPendingDestroy())
+            if (const auto* agent = entity->GetComponent<SteeringAgentComponent>())
             {
-                target.Velocity = agent->GetSteeringVelocity();
+                target.Velocity = SteeringSystem::CanSteer(*agent) ? agent->GetSteeringVelocity() : Math::Vector3{};
             }
             else if (const auto* body = entity->GetComponent<Physics::CharacterBodyComponent>();
                      body && !body->IsPendingDestroy())
@@ -79,23 +78,21 @@ namespace NorvesLib::Modules::AI
 
     void SteeringSystem::RegisterAgent(SteeringAgentComponent& agent)
     {
-        const auto* owner = agent.GetOwner();
-        if (!owner)
+        if (!agent.GetOwner())
         {
             return;
         }
         const auto componentId = agent.GetComponentId();
         for (const auto& record : m_Records)
         {
-            if (record.ComponentId == componentId)
+            if (record.Agent == &agent || record.ComponentId == componentId)
             {
                 return;
             }
         }
         auto& record = m_Records.emplace_back();
+        record.Agent = &agent;
         record.ComponentId = componentId;
-        record.OwnerObjectId = owner->GetObjectId();
-        record.Owner = owner->GetEntityHandle();
         agent.m_bRegistered = true;
     }
 
@@ -119,29 +116,22 @@ namespace NorvesLib::Modules::AI
 
     SteeringAgentComponent* SteeringSystem::ResolveAgent(size_t index, const Core::World& world)
     {
-        auto& record = m_Records[index];
-        auto* owner = record.Owner.IsValid() ? world.ResolveEntityHandle(record.Owner) : nullptr;
-        if (!owner || owner->GetObjectId() != record.OwnerObjectId)
-        {
-            owner = world.FindEntityByObjectId(record.OwnerObjectId);
-            record.Owner = owner ? owner->GetEntityHandle() : Core::EntityHandle{};
-        }
-        auto* agent = owner ? owner->GetComponent<SteeringAgentComponent>() : nullptr;
-        return agent && agent->GetComponentId() == record.ComponentId ? agent : nullptr;
+        auto* agent = m_Records[index].Agent;
+        const auto* owner = agent ? agent->GetOwner() : nullptr;
+        return owner && owner->GetWorld() == &world ? agent : nullptr;
     }
 
-    void SteeringSystem::Reset(INavigationService& nav, const Core::World* world)
+    void SteeringSystem::Reset(INavigationService& nav)
     {
-        for (size_t i = 0; i < m_Records.size(); ++i)
+        for (const auto& record : m_Records)
         {
-            const auto path = m_Records[i].Path;
-            if (path.IsValid())
+            if (record.Path.IsValid())
             {
-                nav.ReleasePath(path);
+                nav.ReleasePath(record.Path);
             }
-            if (auto* agent = world ? ResolveAgent(i, *world) : nullptr)
+            if (record.Agent)
             {
-                agent->m_bRegistered = false;
+                record.Agent->m_bRegistered = false;
             }
         }
         m_Records.clear();
@@ -179,8 +169,7 @@ namespace NorvesLib::Modules::AI
                 nav.CancelPath(record.Path);
                 nav.ReleasePath(record.Path);
             }
-            record = AgentRecord{.ComponentId = record.ComponentId, .OwnerObjectId = record.OwnerObjectId,
-                                 .Owner = record.Owner, .Revision = request.Revision};
+            record = AgentRecord{.Agent = record.Agent, .ComponentId = record.ComponentId, .Revision = request.Revision};
             if (request.Kind == ESteeringRequest::Wander)
             {
                 InitializeWander(record.Wander, agent->WanderSeed.Get());
@@ -228,8 +217,8 @@ namespace NorvesLib::Modules::AI
                 continue;
             }
             const auto& owner = *agent->GetOwner();
-            m_NeighborEntities.push_back(m_Records[i].Owner);
-            m_NeighborObjectIds.push_back(m_Records[i].OwnerObjectId);
+            m_NeighborEntities.push_back(owner.GetEntityHandle());
+            m_NeighborObjectIds.push_back(owner.GetObjectId());
             m_Positions.Append(owner.GetWorldTransform().position);
             m_Velocities.Append(agent->GetSteeringVelocity());
             auto& input = m_Inputs.emplace_back();

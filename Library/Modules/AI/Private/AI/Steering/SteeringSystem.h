@@ -24,7 +24,7 @@ namespace NorvesLib::Modules::AI
 
         void RegisterAgent(SteeringAgentComponent& agent);
         void UnregisterAgent(SteeringAgentComponent& agent, INavigationService& nav);
-        void Reset(INavigationService& nav, const Core::World* world);
+        void Reset(INavigationService& nav);
         uint32_t GetAgentCount() const { return static_cast<uint32_t>(m_Records.size()); }
         SteeringAgentComponent* ResolveAgent(size_t index, const Core::World& world);
         static bool CanSteer(const SteeringAgentComponent& agent);
@@ -35,8 +35,8 @@ namespace NorvesLib::Modules::AI
 
         StepAgents BeginStep(INavigationService& nav, const Core::World& world);
         void Compute(float dt, const INavigationService& nav, const StepAgents& stepAgents);
-        // 直近の固定歩で収集したハッシュの添字 i は GetNeighborEntities()[i] に対応する。
-        // ハンドルを取得できていない個体の要素は無効なハンドルになる。
+        // 直近の固定歩で収集したハッシュの添字 i は GetNeighborEntities()[i]・GetNeighborObjectIds()[i] に対応する。
+        // どちらもその歩に所有 Entity から読んだ値。ECS の行がまだ無い個体のハンドルは無効。
         const Spatial::UniformGridHash& GetNeighborHash() const { return m_NeighborHash; }
         Core::Container::Span<const Core::EntityHandle> GetNeighborEntities() const { return m_NeighborEntities; }
         Core::Container::Span<const uint64_t> GetNeighborObjectIds() const { return m_NeighborObjectIds; }
@@ -44,9 +44,9 @@ namespace NorvesLib::Modules::AI
     private:
         struct AgentRecord
         {
+            // Initialize で登録し EndPlay/Finalize/デストラクタで必ず外す Component の非所有参照。PhysicsModule::RegisterCharacter と同じ形。
+            SteeringAgentComponent* Agent = nullptr;
             uint64_t ComponentId = 0;
-            uint64_t OwnerObjectId = 0;
-            Core::EntityHandle Owner;
             uint32_t Revision = 0;
             Steering::KeepDistanceState KeepDistance;
             Steering::WanderState Wander;

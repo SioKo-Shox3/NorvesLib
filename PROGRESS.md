@@ -12780,3 +12780,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 差し戻しの直し: 操舵の系は Component のポインタを持たず、ComponentId・所有 Entity の ObjectId・EntityHandle で登録して固定歩ごとに Engine の World から引き直す。近傍のハッシュと同じ添字の `AIModule::GetNeighborEntities()` を GR24 へ公開する。収集とモーターの条件は `SteeringSystem::CanSteer`（所有 Entity の階層での有効と Tick、Component の有効と Tick、破棄予定でない）にそろえた。`MoveTo` の完走は、`Partial` なら折れ線の終点、`Succeeded` なら終点から目的地へ NavRaycast が通るときだけ目的地へ Arrive する。
 - 確かめ（直しの後）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT_CODE=0（`NorvesModule_AI.lib`・`Game.exe` を生成、error 0、変更ファイルの警告 0）。`git diff --numstat` と `--ignore-cr-at-eol` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。
 - Notes: 評価の残課題（done-when の外）: `AIModule::Shutdown` 後の再 `Initialize` で生きている個体は登録し直されない。壁の近くの目的地ではコンテキスト操舵が正面を外して壁沿いにそれることがある（シーンに置いたときに見る点）。
+- U13 操舵の登録簿を Component の非所有の参照にし、所有者の ID とハンドルを歩ごとに読み、操舵できない目標の速度を零として読む: 着地(直し 0 回)

@@ -225,7 +225,7 @@ namespace NorvesLib::Modules::AI
     {
         if (IsOwnerThread())
         {
-            m_Steering.Reset(m_Navigation, m_Engine ? &m_Engine->GetWorld() : nullptr);
+            m_Steering.Reset(m_Navigation);
             m_LocomotionProfiles.Clear();
             m_Navigation.Reset();
             m_bInitialized = false;
