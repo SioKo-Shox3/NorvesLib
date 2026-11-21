@@ -12,9 +12,11 @@
 #include "Physics/CharacterBodyComponent.h"
 #include "Physics/ColliderComponent.h"
 #include "Physics/ColliderShapeTransform.h"
+#include "Physics/PhysicsSurfaceName.h"
 #include "Physics/RigidBodyComponent.h"
 #include "Rendering/Terrain/TerrainHeightField.h"
 #include "Rendering/Terrain/TerrainSystem.h"
+#include "Scene/SurfaceRegistry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -253,6 +255,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         ApplyPendingStaticColliderChunkOperations();
+        RefreshColliderSurfaces();
 
         struct StepGuard
         {
@@ -343,6 +346,7 @@ namespace NorvesLib::Modules::Physics
         {
             return Core::Scene::EPhysicsSceneQueryResult::NotReady;
         }
+        RefreshColliderSurfaces();
         RebuildPublishedSnapshot();
         return Core::Scene::EPhysicsSceneQueryResult::Success;
     }
@@ -468,6 +472,24 @@ namespace NorvesLib::Modules::Physics
         return m_PublishedBroadphase.AppendOverlapQuery(query,outHits);
     }
 
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::GetColliderSurface(
+        Core::Scene::ColliderHandle collider, Core::Scene::SurfaceId& outSurface) const
+    {
+        outSurface = Core::Scene::SurfaceId::Default();
+        const auto readiness = GetReadinessResult();
+        if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
+        {
+            return readiness;
+        }
+        const PhysicsShapeProxy* proxy = m_PublishedBroadphase.FindProxy(collider);
+        if (!proxy || !proxy->bHasSurface)
+        {
+            return Core::Scene::EPhysicsSceneQueryResult::NoHit;
+        }
+        outSurface = proxy->Surface;
+        return Core::Scene::EPhysicsSceneQueryResult::Success;
+    }
+
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::IsAlive(
         Core::Scene::ColliderHandle collider,
         bool& outAlive) const
@@ -540,7 +562,10 @@ namespace NorvesLib::Modules::Physics
         for (size_t index = 0; index < colliders.size(); ++index)
         {
             const StaticColliderDesc& desc = colliders[index];
-            if (desc.bTrigger)
+            const bool hasSurfaceName = !desc.SurfaceName.empty();
+            if (desc.bTrigger || (hasSurfaceName && !IsValidSurfaceName(desc.SurfaceName)) ||
+                (!hasSurfaceName && desc.bHasSurface && m_Engine != nullptr &&
+                    desc.Surface.Value >= m_Engine->GetSurfaceRegistry().GetSurfaceCount()))
             {
                 return EPhysicsResult::InvalidArgument;
             }
@@ -585,6 +610,21 @@ namespace NorvesLib::Modules::Physics
             proxy.Mask = desc.Mask;
             proxy.UserData = desc.UserData;
             proxy.SurfaceId = desc.SurfaceId;
+            if (hasSurfaceName)
+            {
+                auto& names = operation.Chunk.SurfaceNames;
+                if (names.empty())
+                {
+                    names.resize(colliders.size());
+                }
+                names[index] = desc.SurfaceName;
+                proxy.bHasSurface = true;
+            }
+            else
+            {
+                proxy.Surface = desc.bHasSurface ? desc.Surface : Core::Scene::SurfaceId::Default();
+                proxy.bHasSurface = desc.bHasSurface;
+            }
             proxy.bTrigger = false;
             proxy.Mobility = EPhysicsProxyMobility::Static;
             proxy.bStatic = true;
@@ -647,6 +687,19 @@ namespace NorvesLib::Modules::Physics
         }
     }
 
+    void PhysicsModule::ResolveStaticChunkSurfaces(StaticColliderChunk& chunk) const
+    {
+        for (size_t i = 0; i < chunk.SurfaceNames.size(); ++i)
+        {
+            const auto& name = chunk.SurfaceNames[i];
+            if (!name.empty())
+            {
+                chunk.Proxies[i].Surface = m_Engine ? m_Engine->GetSurfaceRegistry().FindByName(name)
+                    : Core::Scene::SurfaceId::Default();
+            }
+        }
+    }
+
     void PhysicsModule::ApplyStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation)
     {
         if (!operation.bRegister)
@@ -661,6 +714,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         StaticColliderChunk& chunk = operation.Chunk;
+        ResolveStaticChunkSurfaces(chunk);
         chunk.SlotIndices.reserve(chunk.Proxies.size());
         for (PhysicsShapeProxy& proxy : chunk.Proxies)
         {
@@ -713,7 +767,12 @@ namespace NorvesLib::Modules::Physics
         }
         if (component.m_ColliderHandle.IsValid())
         {
-            return ValidateCollider(component);
+            const EPhysicsResult result = ValidateCollider(component);
+            if (result == EPhysicsResult::Success)
+            {
+                ResolveColliderSurface(component);
+            }
+            return result;
         }
 
         Core::Entity* owner = component.GetOwner();
@@ -749,6 +808,7 @@ namespace NorvesLib::Modules::Physics
         slot.bActive = false;
         m_ColliderSlotByOwner.emplace(owner, index);
         component.m_ColliderHandle = Core::Scene::ColliderHandle{index, slot.Generation};
+        ResolveColliderSurface(component);
         return EPhysicsResult::Success;
     }
 
@@ -918,6 +978,56 @@ namespace NorvesLib::Modules::Physics
         component.m_bHasShape = true;
         component.m_bHeightFieldTransformWarning = false;
         return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderSurface(ColliderComponent& component, Core::Container::StringView name)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (!name.empty() && !IsValidSurfaceName(name))
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.SurfaceName.Get() = Core::Container::String(name);
+        ResolveColliderSurface(component);
+        return EPhysicsResult::Success;
+    }
+
+    void PhysicsModule::ResolveColliderSurface(ColliderComponent& component) const
+    {
+        const auto& name = component.SurfaceName.Get();
+        component.m_Surface = m_Engine && !name.empty()
+            ? m_Engine->GetSurfaceRegistry().FindByName(name)
+            : Core::Scene::SurfaceId::Default();
+    }
+
+    void PhysicsModule::RefreshColliderSurfaces()
+    {
+        if (!m_Engine)
+        {
+            return;
+        }
+        const uint64_t revision = m_Engine->GetSurfaceRegistry().GetRevision();
+        if (revision == m_SurfaceRegistryRevision)
+        {
+            return;
+        }
+        for (const ColliderSlot& slot : m_ColliderSlots)
+        {
+            if (slot.bOccupied && !slot.bDetached && slot.Component)
+            {
+                ResolveColliderSurface(*slot.Component);
+            }
+        }
+        for (auto& entry : m_StaticColliderChunks)
+        {
+            ResolveStaticChunkSurfaces(entry.second);
+        }
+        m_SurfaceRegistryRevision = revision;
     }
 
     EPhysicsResult PhysicsModule::SetColliderSurfaceId(ColliderComponent& component, uint8_t surfaceId)
@@ -1409,7 +1519,8 @@ namespace NorvesLib::Modules::Physics
             if ((!firstCollider->bDetached && firstCollider->Component->m_bTrigger)
                 || (!secondCollider->bDetached && secondCollider->Component->m_bTrigger))
             {
-                m_CurrentTriggerPairs.push_back(TriggerPairState{candidate.First, candidate.Second, contact});
+                m_CurrentTriggerPairs.push_back(TriggerPairState{
+                    candidate.First, candidate.Second, contact, firstProxy->Surface, secondProxy->Surface});
                 continue;
             }
 
@@ -1471,7 +1582,9 @@ namespace NorvesLib::Modules::Physics
                     candidate.First,
                     candidate.Second,
                     contact,
-                    normalImpulse});
+                    normalImpulse,
+                    firstProxy->Surface,
+                    secondProxy->Surface});
             }
         }
     }
@@ -1496,7 +1609,9 @@ namespace NorvesLib::Modules::Physics
                     current.First,
                     current.Second,
                     current.Contact,
-                    0.0f});
+                    0.0f,
+                    current.FirstSurface,
+                    current.SecondSurface});
             }
         }
         for (const TriggerPairState& previous : m_PreviousTriggerPairs)
@@ -1512,6 +1627,8 @@ namespace NorvesLib::Modules::Physics
             }
             if (!bIsPresent)
             {
+                const PhysicsShapeProxy* first = m_WorkingBroadphase.FindProxy(previous.First);
+                const PhysicsShapeProxy* second = m_WorkingBroadphase.FindProxy(previous.Second);
                 Math::GeometryContact contact = previous.Contact;
                 contact.Depth = 0.0f;
                 m_PendingEvents.push_back(PendingPhysicsEvent{
@@ -1519,7 +1636,9 @@ namespace NorvesLib::Modules::Physics
                     previous.First,
                     previous.Second,
                     contact,
-                    0.0f});
+                    0.0f,
+                    first ? first->Surface : previous.FirstSurface,
+                    second ? second->Surface : previous.SecondSurface});
             }
         }
         m_PreviousTriggerPairs = m_CurrentTriggerPairs;
@@ -1561,6 +1680,8 @@ namespace NorvesLib::Modules::Physics
                 receiver.OtherHandle = otherHandle;
                 receiver.Event.Self = selfHandle;
                 receiver.Event.Other = otherHandle;
+                receiver.Event.SelfSurface = receiverIndex == 0 ? pending.FirstSurface : pending.SecondSurface;
+                receiver.Event.OtherSurface = receiverIndex == 0 ? pending.SecondSurface : pending.FirstSurface;
                 receiver.Event.Contact = pending.Contact;
                 receiver.Event.NormalImpulse = pending.NormalImpulse;
                 if (receiverIndex != 0)
@@ -1678,6 +1799,8 @@ namespace NorvesLib::Modules::Physics
             proxy.UserData = slot.Component->m_UserData;
             proxy.bTrigger = slot.Component->m_bTrigger;
             proxy.SurfaceId = slot.Component->m_SurfaceId;
+            proxy.Surface = slot.Component->m_Surface;
+            proxy.bHasSurface = !slot.Component->SurfaceName.Get().empty();
             EPhysicsProxyShape shape = EPhysicsProxyShape::Sphere;
             bool bPrimitiveShape = false;
             switch (slot.Component->m_Shape)
@@ -1779,6 +1902,8 @@ namespace NorvesLib::Modules::Physics
         m_LastDiagnostic = EPhysicsDiagnostic::None;
         m_bHasPublishedSnapshot = false;
         m_PublishedSnapshotSequence = 0;
+        // 読み込み前の登録簿も改訂番号 0 を持つため、再初期化直後は未解決として扱う。
+        m_SurfaceRegistryRevision = UINT64_MAX;
     }
 
     Math::Transform PhysicsModule::GetFreshWorldTransform(const Core::Entity& entity) const

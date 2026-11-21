@@ -77,6 +77,7 @@
 #include "DummyModule/DummyRenderModule.h"
 #include "Physics/IPhysicsModule.h"
 #include "Gameplay/IGameplayModule.h"
+#include "AI/IAIModule.h"
 #include "Gameplay/World/InteractionService.h"
 
 #if defined(NORVES_GAME_AUDIO)
@@ -1140,6 +1141,13 @@ namespace Game
                 NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
         {
             LOG_ERROR("Gameplay module registration failed");
+            return false;
+        }
+
+        if (NorvesLib::Modules::AI::RegisterAIModule(
+                NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
+        {
+            LOG_ERROR("AI モジュールの登録に失敗しました");
             return false;
         }
 

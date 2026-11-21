@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Audio/AudioSpatial.h"
 #include "Audio/ISoundSystem.h"
 #include "Component/Component.h"
 
@@ -8,7 +9,7 @@ namespace NorvesLib::Modules::Audio
     class IAudioModule;
 
     /**
-     * @brief Entity に属する 2D 音声を再生する。全操作は GameThread 専用。
+     * @brief 2D 音声と、Entity の位置に追従する World3D 音声を再生する。全操作は GameThread 専用。
      * @details 所有キーは初期化時に採番する 0 以外の連番で、最上位ビットを 0 に保つ。
      * 別の Component と GameMode のキーには重ならず、使い終えたキーは再利用しない。
      */
@@ -28,13 +29,26 @@ namespace NorvesLib::Modules::Audio
         AudioResult Stop(SoundInstanceHandle handle, const SoundFade& fade);
         AudioResult StopAll(const SoundFade& fade);
 
+        /**
+         * @brief 音のモジュールが毎 Tick 呼び、World3D 音源を持ち主のワールド位置に同期する。
+         * 持ち主が無い場合と 2D の場合は何もしない。終了したハンドルを除き、再生中の音に位置を渡す。
+         */
+        void SyncSpatialEmitter(ISoundSystem& soundSystem);
+
         PROPERTY(Core::Container::String, SoundName)
         PROPERTY(bool, bAutoPlay)
         PROPERTY(float, Volume)
         PROPERTY(float, PitchSemitones)
+        PROPERTY(AudioSpatialization, Spatialization)
+        PROPERTY(float, MinDistance)
+        PROPERTY(float, MaxDistance)
+        PROPERTY(Core::Scene::AcousticRolloff, Rolloff)
+        PROPERTY(float, DopplerScale)
+        PROPERTY(AudioOcclusionMode, OcclusionMode)
 
     private:
         [[nodiscard]] IAudioModule* FindRegisteredModule() const;
+        [[nodiscard]] AudioEmitterSpatialSettings MakeSpatialSettings() const;
         void PruneHandles(ISoundSystem& soundSystem);
 
         IAudioModule* m_AudioModule = nullptr;

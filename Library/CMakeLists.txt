@@ -39,6 +39,7 @@ add_subdirectory(Core)
 add_subdirectory(Modules/Dummy)
 add_subdirectory(Modules/Physics)
 add_subdirectory(Modules/Gameplay)
+add_subdirectory(Modules/AI)
 add_subdirectory(Modules/Audio)
 
 # ImGui モジュール本体(第2段 B-i)。NORVES_ENABLE_IMGUI ON 時のみ構築する

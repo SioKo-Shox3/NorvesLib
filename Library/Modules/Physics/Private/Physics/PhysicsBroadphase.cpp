@@ -1217,6 +1217,7 @@ namespace NorvesLib::Modules::Physics
                 return Result::InvalidArgument;
             }
             hit.SurfaceId = CalculateSurfaceId(proxy, hit.Point);
+            hit.Surface = proxy.Surface;
             outHit = hit;
             return Result::Success;
         }
@@ -1730,6 +1731,7 @@ namespace NorvesLib::Modules::Physics
                 outHit.Distance = hit[0].Distance;
                 outHit.UserData = hit[0].UserData;
                 outHit.SurfaceId = hit[0].SurfaceId;
+                outHit.Surface = hit[0].Surface;
             }
             return result;
         }
@@ -1770,6 +1772,7 @@ namespace NorvesLib::Modules::Physics
                 hit.bHasEntity = source.bHasEntity;
                 hit.UserData = source.UserData;
                 hit.SurfaceId = source.SurfaceId;
+                hit.Surface = source.Surface;
                 hit.Contact.Normal = source.Normal * -1.0f;
                 hit.Contact.Depth = source.Depth;
                 hit.Contact.Point = source.Point;

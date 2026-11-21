@@ -2,6 +2,7 @@
 
 #include "RenderTypes.h"
 #include "Rendering/ImpostorMath.h"
+#include "Rendering/PostProcessProfile.h"
 #include "MeshTypes.h"
 #include "MaterialTypes.h"
 #include "SkinnedMeshTypes.h"
@@ -588,8 +589,9 @@ namespace NorvesLib::Core::Rendering
         // ViewClearanceComponent から埋める）。
         ViewClearanceParameters ViewClearance;
 
-        // ポストプロセス設定（ハンドル参照）
-        // PostProcessHandle PostProcess;
+        // データ駆動のポストプロセスの値。既定は bValid=false で描画は従来の設定を使う。
+        // FramePacket で値のままコピーする。LUT のパスは静的な寿命の文字列だけを借りる。
+        PostProcessSettings PostProcess;
 
         bool IsValid() const
         {

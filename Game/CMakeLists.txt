@@ -14,7 +14,7 @@ target_sources(NorvesGameSources INTERFACE ${SOURCE_FILES})
 
 # Windows アプリケーションの入口は Game だけに含める。
 add_executable(${MODULE_NAME} WIN32 Boot/GameBoot.cpp Boot/GameBoot.h)
-target_link_libraries(${MODULE_NAME} PRIVATE NorvesGameSources NorvesModule_Physics)
+target_link_libraries(${MODULE_NAME} PRIVATE NorvesGameSources NorvesModule_Physics NorvesModule_AI)
 
 # インクルードパスの設定
 target_include_directories(NorvesGameSources
@@ -37,6 +37,7 @@ target_link_libraries(NorvesGameSources
         NorvesModule_Dummy
         NorvesModule_Physics
         NorvesModule_Gameplay
+        NorvesModule_AI
         # Memory # Core に統合されました
         # Random # Core に統合されました
         # FileStream # Core に統合されました

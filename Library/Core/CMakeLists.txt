@@ -255,6 +255,7 @@ set(PRIVATE_SOURCES
     Private/Component/ScriptComponent.cpp
     Private/Engine/ApplicationProcessor.cpp
     # Scene
+    Private/Scene/AcousticDistance.cpp
     Private/Scene/SceneQuery.cpp
     Private/Scene/LevelSnap.cpp
     Private/Scene/PhysicsLayerTable.cpp
@@ -276,6 +277,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/CanvasView.cpp
     Private/Rendering/Viewport.cpp
     Private/Rendering/CameraViewConstants.cpp
+    Private/Rendering/PostProcessProfile.cpp
+    Private/Rendering/PostProcessProfileJson.cpp
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
     Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
@@ -755,6 +758,7 @@ set(PUBLIC_HEADERS
     Public/Component/HoldSlotComponent.h
     Public/Component/AnimatorComponent.h
     # Scene
+    Public/Scene/AcousticDistance.h
     Public/Scene/SceneQuery.h
     Public/Scene/LevelSnap.h
     Public/Scene/RenderTransformHistory.h
@@ -1027,6 +1031,7 @@ set(PUBLIC_HEADERS
     Public/Math/GeometryTypes.h
     Public/Math/GeometryIntersection.h
     Public/Math/Curves.h
+    Public/Math/PolylinePath.h
     # Thread
     Public/Thread/Atomic.h
     Public/Thread/ConditionVariable.h
