@@ -171,43 +171,35 @@ namespace NorvesLib::Core
 
         bool IsWordBoundary(const TextElement& left, const TextElement& right)
         {
-            return left.Codepoint == ' ' || left.bCjk || right.bCjk;
+            return left.bSpace || left.bCjk || right.bCjk;
         }
 
+        // 幅の上限から戻り、禁則を守れる単語境界を優先する。
+        // 見つからなければ禁則を守れる文字境界を探し、それもなければ幅の上限で切る。
         size_t ChooseWrap(const Elements& elements, size_t first, size_t overflow)
         {
-            size_t candidate = overflow;
-            while (candidate > first && !IsWordBoundary(elements[candidate - 1], elements[candidate]))
+            const auto canBreak = [](const TextElement& left, const TextElement& right)
             {
-                --candidate;
-            }
-            // 幅を超えた一語の途中なら文字境界を使う。
-            const bool splitWord = candidate == first;
-            if (splitWord)
-            {
-                candidate = overflow;
-            }
+                return !left.bNoLineEnd && !right.bNoLineStart && !right.bSpace;
+            };
 
-            size_t nearest = first;
-            for (size_t cut = candidate; cut > first; --cut)
+            for (size_t cut = overflow; cut > first; --cut)
             {
                 const auto& left = elements[cut - 1];
                 const auto& right = elements[cut];
-                if (left.bNoLineEnd || right.bNoLineStart || right.bSpace)
-                {
-                    continue;
-                }
-                if (splitWord || IsWordBoundary(left, right))
+                if (canBreak(left, right) && IsWordBoundary(left, right))
                 {
                     return cut;
                 }
-                if (nearest == first)
+            }
+            for (size_t cut = overflow; cut > first; --cut)
+            {
+                if (canBreak(elements[cut - 1], elements[cut]))
                 {
-                    nearest = cut;
+                    return cut;
                 }
             }
-            // 語の途中でも禁則を守れるなら追い出し、空行になる場合だけ元の位置で切る。
-            return nearest != first ? nearest : candidate;
+            return overflow;
         }
 
         size_t FindLineEnd(const Elements& elements, size_t first, const TextLayoutSettings& settings)

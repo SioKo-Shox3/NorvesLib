@@ -12704,3 +12704,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: StringTable・TextLayout を使う画面はまだ無く、各シーンの見た目は変わらない。`/utf-8` で日本語のログの行が、起動直後のコンソールで文字化けせずに出ること。
 - Next: ランナーの評価者の反証（Public API の Engine・Text）。起動時に `ja` を読む配線と、UI の Label への組版の配線は、文字列表を使う側の項目でする。
 - Notes: 既知の限界: 起動時の `GEngine->GetStringTable().LoadLanguage("ja", ...)` の呼び出しは置いていない（Game の .cpp は paths の外。`Surfaces.json` と同じく呼ぶ側で配線する）。`TextLayoutCache` の探索は保持件数に比例する。単独の `\r` は改行として扱わない。盤面の単位の作業ツリー（`.slots/NorvesLib-3-uN`）は FreeType の submodule が無いと ImGui・CORE_TEXT とも OFF で構成されるので、CORE_TEXT の経路を確かめる単位は `git submodule update --init Library/ThirdParty/freetype` と ON の再構成が要る。
+- U8 折り返しの位置の選び方を直す(幅内で禁則を守る単語境界 → 文字境界の順、空白の判定を bSpace に統一): 着地(直し 0 回)
