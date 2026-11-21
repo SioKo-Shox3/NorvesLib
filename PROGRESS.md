@@ -12758,3 +12758,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 近傍の一様格子ハッシュ: 着地(直し 0 回)
 - U5 SteeringAgentComponent と AIModule への登録・型の登録・Physics のリンク: 着地(直し 0 回)
 - U6 運動の層 AnimalMotor と動物の locomotion.v1 プロファイル: 着地(直し 0 回)
+- U2 経路追従・軌跡追従・群れの 3 則と重みの合成: 着地(直し 2 回)

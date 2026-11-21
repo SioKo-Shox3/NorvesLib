@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "Math/Vector3.h"
+#include "Container/Span.h"
+#include "Math/PolylinePath.h"
 #include <cstdint>
 
 /// 動物の操舵を計算する。長さ 0、NaN、無限大、極端な有限値を含む入力でも、
@@ -115,4 +117,74 @@ namespace NorvesLib::Modules::AI::Steering
     /// 現在と希望の水平速度がともに 1e-3 m/s を超えるとき、1 歩の水平方向の変化は旋回率 × dt 以下となる。
     Math::Vector3 ApplySteeringLimits(const Math::Vector3& currentVelocity, const Math::Vector3& desiredVelocity,
                                       const SteeringLimits& limits, float dt, SteeringPlane plane);
+
+    struct PathFollowState
+    {
+        float S = 0.0f; // 始点から進んだ弧長（m）
+        bool bHasHint = false;
+    };
+
+    struct PathFollowParams
+    {
+        float LookAhead = 1.5f;
+        float MaxJump = 4.0f;
+        float CornerLookAhead = 3.0f;
+        float MinCornerSpeedScale = 0.3f;
+        ArriveParams Arrive;
+        float CornerTolerance = 0.2f; // 途中の頂点から先読みの弦までの許容距離（m）
+        float MinLookAhead = 0.25f;   // 角で先読みを縮めるときの下限（m）
+    };
+
+    /// 折れ線の先を目指し、角で減速する。空なら進捗を保ち、零長・非有限の入力でも有限の速度を返す。
+    /// 終点まで、進捗と目標の間の各頂点から先読みの弦までの距離を CornerTolerance 以内に収める。
+    /// 半径付き Raycast で各線分の周囲に半径分の空きが確保された経路なら、許容距離を半径未満に取ると弦は閉塞セルに入らない。
+    Math::Vector3 PathFollow(const SteeringKinematics& self, const Math::PolylinePath& path,
+                             const SteeringLimits& limits, const PathFollowParams& params,
+                             PathFollowState& state, SteeringPlane plane);
+    /// 空の経路、または残りの弧長と終点までの水平距離がともに停止半径以内なら完了とする。
+    bool IsPathFollowFinished(const SteeringKinematics& self, const Math::PolylinePath& path,
+                              const PathFollowState& state, const ArriveParams& arrive);
+
+    constexpr uint32_t kTrailCapacity = 64;
+    constexpr float kTrailSampleInterval = 0.25f;
+
+    struct TrailRing
+    {
+        Math::Vector3 Points[kTrailCapacity];
+        uint32_t Head = 0; // 次に書き込む位置
+        uint32_t Count = 0;
+        float SinceLastSample = 0.0f;
+    };
+
+    struct FollowTrailParams
+    {
+        float FollowDistance = 2.0f;
+        ArriveParams Arrive;
+    };
+
+    /// 先頭の個体の位置を一定間隔で最大一点記録する。非有限の位置は無視し、不正な時間刻みは零とする。
+    void RecordTrail(TrailRing& ring, const Math::Vector3& leaderPosition, float dt);
+    /// 最新点から指定の弧長だけさかのぼった記録点へ向かう。空・零長・非有限の入力でも有限の速度を返す。
+    Math::Vector3 FollowTrail(const SteeringKinematics& self, const TrailRing& ring, const SteeringLimits& limits,
+                              const FollowTrailParams& params, SteeringPlane plane);
+
+    /// 水平半径内の近傍から離れる。重なりには添字で定まる向きを使い、非有限の近傍は除く。
+    Math::Vector3 Separation(const SteeringKinematics& self, Core::Container::Span<const Math::Vector3> neighborPositions,
+                             float radius, const SteeringLimits& limits, SteeringPlane plane);
+    /// 有限な近傍速度の平均を速さの上限に収める。有効な近傍が空なら零を返す。
+    Math::Vector3 Alignment(const SteeringKinematics& self, Core::Container::Span<const Math::Vector3> neighborVelocities,
+                            const SteeringLimits& limits, SteeringPlane plane);
+    /// 有限な近傍位置の重心へ向かう。有効な近傍が空なら零を返す。
+    Math::Vector3 Cohesion(const SteeringKinematics& self, Core::Container::Span<const Math::Vector3> neighborPositions,
+                           const SteeringLimits& limits, const ArriveParams& arrive, SteeringPlane plane);
+
+    struct WeightedVelocity
+    {
+        Math::Vector3 Velocity;
+        float Weight = 1.0f;
+    };
+
+    /// 希望速度の重み付き和を操舵面と速さの上限に収める。非有限の入力と負の重みの寄与は零とする。
+    Math::Vector3 CombineWeighted(Core::Container::Span<const WeightedVelocity> items, const SteeringLimits& limits,
+                                  SteeringPlane plane);
 }

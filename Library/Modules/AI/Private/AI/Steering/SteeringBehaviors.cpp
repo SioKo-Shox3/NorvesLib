@@ -83,6 +83,70 @@ namespace NorvesLib::Modules::AI::Steering
             const double speed = std::sqrt(2.0 * limits.MaxAcceleration * braking * (distance - radius));
             return WithSpeed(x, y, z, distance, std::min<double>(limits.MaxSpeed, speed));
         }
+
+        ArriveParams ValidArriveParams(const ArriveParams& params)
+        {
+            const ArriveParams defaults;
+            return {ValidLimit(params.StopRadius, defaults.StopRadius),
+                    ValidLimit(params.BrakingFactor, defaults.BrakingFactor)};
+        }
+
+        bool IsPathChordWithinTolerance(const Math::PolylinePath& path, uint32_t firstVertex, float endS,
+                                        const Math::Vector3& start, const Math::Vector3& target,
+                                        double tolerance, SteeringPlane plane)
+        {
+            const double dx = Difference(target.x, start.x);
+            const double dy = plane == SteeringPlane::Ground ? 0.0 : Difference(target.y, start.y);
+            const double dz = Difference(target.z, start.z);
+            const double lengthSquared = dx * dx + dy * dy + dz * dz;
+            const auto points = path.GetPoints();
+            for (uint32_t k = firstVertex; k < points.size() && path.GetCumulativeLength(k) < endS; ++k)
+            {
+                const double x = Difference(points[k].x, start.x);
+                const double y = plane == SteeringPlane::Ground ? 0.0 : Difference(points[k].y, start.y);
+                const double z = Difference(points[k].z, start.z);
+                // 線分への射影を両端で止める。投影面で弦が一点に縮む場合は始点から測る。
+                const double t = lengthSquared > 0.0 ? std::clamp((x * dx + y * dy + z * dz) / lengthSquared, 0.0, 1.0)
+                                                     : 0.0;
+                if (Length(x - t * dx, y - t * dy, z - t * dz) > tolerance)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // 重み付き和は float の範囲を超え得る。速さを制限してから成分を丸める。
+        Math::Vector3 ClampVelocitySum(double x, double y, double z, float maxSpeed)
+        {
+            const double length = Length(x, y, z);
+            return length > maxSpeed ? WithSpeed(x, y, z, length, maxSpeed) : RoundVelocity(x, y, z, maxSpeed);
+        }
+
+        bool TryGetNeighborMean(Core::Container::Span<const Math::Vector3> neighbors, Math::Vector3& mean)
+        {
+            double x = 0.0;
+            double y = 0.0;
+            double z = 0.0;
+            size_t count = 0;
+            for (const Math::Vector3& neighbor : neighbors)
+            {
+                if (IsFiniteVector(neighbor))
+                {
+                    x += neighbor.x;
+                    y += neighbor.y;
+                    z += neighbor.z;
+                    ++count;
+                }
+            }
+            if (count == 0)
+            {
+                return false;
+            }
+            const double divisor = static_cast<double>(count);
+            mean = {FiniteFloat(x / divisor), FiniteFloat(y / divisor), FiniteFloat(z / divisor)};
+            return true;
+        }
     }
 
     bool IsFiniteVector(const Math::Vector3& v)
@@ -369,5 +433,210 @@ namespace NorvesLib::Modules::AI::Steering
             retreat *= 4.0;
         }
         return current;
+    }
+
+    Math::Vector3 PathFollow(const SteeringKinematics& self, const Math::PolylinePath& path,
+                             const SteeringLimits& limits, const PathFollowParams& params,
+                             PathFollowState& state, SteeringPlane plane)
+    {
+        if (path.IsEmpty() || !std::isfinite(path.GetLength()))
+        {
+            return {};
+        }
+        const PathFollowParams defaults;
+        const float maxJump = ValidLimit(params.MaxJump, defaults.MaxJump);
+        const Math::Vector3 position = SanitizeVector(self.Position);
+        const auto closest = state.bHasHint ? path.FindClosest(position, state.S, maxJump) : path.FindClosest(position);
+        state.S = std::max(ValidLimit(state.S, 0.0f), closest.S);
+        state.bHasHint = true;
+
+        const float lookAhead = ValidLimit(params.LookAhead, defaults.LookAhead);
+        const float remaining = path.GetRemainingLength(state.S);
+
+        uint32_t firstVertex = closest.Segment + 1;
+        while (firstVertex < path.GetPointCount() && path.GetCumulativeLength(firstVertex) <= state.S)
+        {
+            ++firstVertex;
+        }
+        const float minLookAhead = std::min(lookAhead, ValidLimit(params.MinLookAhead, defaults.MinLookAhead));
+        const float tolerance = ValidLimit(params.CornerTolerance, defaults.CornerTolerance);
+        float length = std::min(lookAhead, remaining);
+        Math::Vector3 target;
+        constexpr uint32_t kMaxHalvings = 4;
+        for (uint32_t halvings = 0; ; ++halvings)
+        {
+            // 残り全体を先読みするときは、弧長の再加算による丸めを避けて終点を選ぶ。
+            const float endS = length == remaining ? path.GetLength() : state.S + length;
+            target = path.Evaluate(endS);
+            if (IsPathChordWithinTolerance(path, firstVertex, endS, closest.Point, target, tolerance, plane))
+            {
+                if (endS >= path.GetLength())
+                {
+                    return Arrive(self, target, limits, ValidArriveParams(params.Arrive), plane);
+                }
+                break;
+            }
+            if (halvings == kMaxHalvings || length <= minLookAhead)
+            {
+                target = path.Evaluate(path.GetCumulativeLength(firstVertex));
+                break;
+            }
+            length = std::max(minLookAhead, length * 0.5f);
+        }
+        const float cornerLookAhead = ValidLimit(params.CornerLookAhead, defaults.CornerLookAhead);
+        const float minScale = std::min(ValidLimit(params.MinCornerSpeedScale, defaults.MinCornerSpeedScale), 1.0f);
+        const float cosine = Math::Vector3::Dot(path.GetTangent(state.S), path.GetTangent(state.S + cornerLookAhead));
+        const float scale = std::clamp(0.5f + 0.5f * cosine, minScale, 1.0f);
+        return Seek(self, target, limits, plane) * scale;
+    }
+
+    bool IsPathFollowFinished(const SteeringKinematics& self, const Math::PolylinePath& path,
+                              const PathFollowState& state, const ArriveParams& arrive)
+    {
+        if (path.IsEmpty())
+        {
+            return true;
+        }
+        const float radius = ValidLimit(arrive.StopRadius, ArriveParams{}.StopRadius);
+        const Math::Vector3& end = path.GetPoints().back();
+        return path.GetRemainingLength(ValidLimit(state.S, 0.0f)) <= radius &&
+               Length(Difference(end.x, self.Position.x), 0.0, Difference(end.z, self.Position.z)) <= radius;
+    }
+
+    void RecordTrail(TrailRing& ring, const Math::Vector3& leaderPosition, float dt)
+    {
+        if (!IsFiniteVector(leaderPosition))
+        {
+            return;
+        }
+        if (ring.Count == 0)
+        {
+            ring.SinceLastSample = 0.0f;
+        }
+        else
+        {
+            const double previous = ValidLimit(ring.SinceLastSample, 0.0f);
+            const double step = ValidLimit(dt, 0.0f);
+            const bool due = previous + step >= kTrailSampleInterval;
+            // 大きな刻みでも前回の端数を保つ。float に戻したときも区間の上端を含めない。
+            const double remainder = std::fmod(previous, kTrailSampleInterval) + std::fmod(step, kTrailSampleInterval);
+            ring.SinceLastSample = std::min(static_cast<float>(std::fmod(remainder, kTrailSampleInterval)),
+                                            std::nextafter(kTrailSampleInterval, 0.0f));
+            if (!due)
+            {
+                return;
+            }
+        }
+        const uint32_t index = ring.Head % kTrailCapacity;
+        ring.Points[index] = leaderPosition;
+        ring.Head = (index + 1) % kTrailCapacity;
+        ring.Count = std::min(ring.Count, kTrailCapacity - 1) + 1;
+    }
+
+    Math::Vector3 FollowTrail(const SteeringKinematics& self, const TrailRing& ring, const SteeringLimits& limits,
+                              const FollowTrailParams& params, SteeringPlane plane)
+    {
+        if (ring.Count == 0)
+        {
+            return {};
+        }
+        const uint32_t count = std::min(ring.Count, kTrailCapacity);
+        const double distance = ValidLimit(params.FollowDistance, FollowTrailParams{}.FollowDistance);
+        uint32_t index = (ring.Head + kTrailCapacity - 1) % kTrailCapacity;
+        Math::Vector3 target = SanitizeVector(ring.Points[index]);
+        double arcLength = 0.0;
+        for (uint32_t i = 1; i < count && arcLength < distance; ++i)
+        {
+            index = (index + kTrailCapacity - 1) % kTrailCapacity;
+            const Math::Vector3 previous = SanitizeVector(ring.Points[index]);
+            arcLength += Length(Difference(target.x, previous.x), Difference(target.y, previous.y),
+                                Difference(target.z, previous.z));
+            target = previous;
+        }
+        return Arrive(self, target, limits, ValidArriveParams(params.Arrive), plane);
+    }
+
+    Math::Vector3 Separation(const SteeringKinematics& self, Core::Container::Span<const Math::Vector3> neighborPositions,
+                             float radius, const SteeringLimits& limits, SteeringPlane plane)
+    {
+        if (!std::isfinite(radius) || radius <= 0.0f)
+        {
+            return {};
+        }
+        const Math::Vector3 position = ToPlane(self.Position, plane);
+        double sumX = 0.0;
+        double sumY = 0.0;
+        double sumZ = 0.0;
+        for (size_t i = 0; i < neighborPositions.size(); ++i)
+        {
+            const Math::Vector3& neighbor = neighborPositions[i];
+            if (!IsFiniteVector(neighbor))
+            {
+                continue;
+            }
+            const double x = Difference(position.x, neighbor.x);
+            const double z = Difference(position.z, neighbor.z);
+            const double distance = Length(x, 0.0, z);
+            if (distance >= radius)
+            {
+                continue;
+            }
+            const double weight = 1.0 - distance / radius;
+            if (distance < 1e-4f)
+            {
+                const double angle = static_cast<double>(i) * 2.39996323;
+                sumX += std::sin(angle) * weight;
+                sumZ += std::cos(angle) * weight;
+            }
+            else
+            {
+                const double y = plane == SteeringPlane::Ground ? 0.0 : Difference(position.y, neighbor.y);
+                const double factor = weight / Length(x, y, z);
+                sumX += x * factor;
+                sumY += y * factor;
+                sumZ += z * factor;
+            }
+        }
+        const float speed = SanitizeLimits(limits).MaxSpeed;
+        return ClampVelocitySum(sumX * speed, sumY * speed, sumZ * speed, speed);
+    }
+
+    Math::Vector3 Alignment(const SteeringKinematics&, Core::Container::Span<const Math::Vector3> neighborVelocities,
+                            const SteeringLimits& limits, SteeringPlane plane)
+    {
+        Math::Vector3 mean;
+        if (!TryGetNeighborMean(neighborVelocities, mean))
+        {
+            return {};
+        }
+        return ClampLength(ToPlane(mean, plane), SanitizeLimits(limits).MaxSpeed);
+    }
+
+    Math::Vector3 Cohesion(const SteeringKinematics& self, Core::Container::Span<const Math::Vector3> neighborPositions,
+                           const SteeringLimits& limits, const ArriveParams& arrive, SteeringPlane plane)
+    {
+        Math::Vector3 center;
+        if (!TryGetNeighborMean(neighborPositions, center))
+        {
+            return {};
+        }
+        return Arrive(self, center, limits, ValidArriveParams(arrive), plane);
+    }
+
+    Math::Vector3 CombineWeighted(Core::Container::Span<const WeightedVelocity> items, const SteeringLimits& limits,
+                                  SteeringPlane plane)
+    {
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        for (const WeightedVelocity& item : items)
+        {
+            const double weight = ValidLimit(item.Weight, 0.0f);
+            const Math::Vector3 velocity = ToPlane(item.Velocity, plane);
+            x += weight * velocity.x;
+            y += weight * velocity.y;
+            z += weight * velocity.z;
+        }
+        return ClampVelocitySum(x, y, z, SanitizeLimits(limits).MaxSpeed);
     }
 }
