@@ -13121,3 +13121,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(差し戻しの直し): ランナーの評価者の判定(危険地帯: Public API の `IAudioService`・`IAudioOcclusion`、SPI の `IAudioBackend`、Core の `AcousticSettings` の既定値)。起動の確かめは G13-GR116-AUDIO-CHECK。
 - Notes(差し戻しの直し): 判断: `AcousticTransmission.h` と `AcousticTransmission.md` は paths の外だが、done-when が `voiceBudgetPerFrame（既定 4）` と名指しし、この値を読むのは音の遮蔽の更新器だけなので、既定の 1 行と文書の 1 行を直した。モジュールの Tick の中で解決したリスナーと、同じフレームの `SoundSystem::Update` で始まった声は、次のフレームのサービスの Tick から評価に入る(1 フレームの遅れ。初回は開いた値から寄せるので跳ばない)。評価器が null の間は経路の評価を休み、明示の位置は保留のまま残す。
 - U9 評価 0 件の更新で明示のリスナー位置を消さず、停止に失敗して鳴り続ける声の遮蔽の追跡を保つ: 着地(直し 0 回)
+- 証拠(2 回目の差し戻しの直し): `cmake --build build --config Debug --target Game -- /m:1` で `AudioOcclusionUpdater.cpp`・`SoundSystem.cpp` を再コンパイルし、`Game.vcxproj -> build/Game/Debug/Game.exe` までエラーなし(`.harness/relay/` の U9 の確かめの出力)。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。ctest の行と試験の部分は絶対規則 11 で回していない。
+- Done(2 回目の差し戻しの直し): 明示したリスナー位置は 1 声以上を評価した更新でだけ消費し、再評価の期限が来ていない更新では保留する。声の奪取・休眠では `AbortVoice` を先に呼び、声を実際に手放すときだけ遮蔽の追跡を外す。停止に失敗して鳴り続ける声は追跡と平滑化の今の値を保つので、音量が既定へ跳ばない。
+- Next(2 回目の差し戻しの直し): ランナーの評価者の判定(危険地帯: Public API の `IAudioService`・`IAudioOcclusion`、SPI の `IAudioBackend`)。起動の確かめは G13-GR116-AUDIO-CHECK。
+- Notes(2 回目の差し戻しの直し): 判断: 評価器が失敗を返した声も評価の枠を使ったものとして件数に入れる(その声は評価済みになり目標値を保つ)。奪取で停止に失敗して隔離になった声は、`SoundSystem` では外さず、更新器が次の Tick の初めに状態を見て外す。人が見るときの見どころ: 声の上限を超えて 3D の音を重ねたときと、遠ざかって休眠する音で、遮蔽のかかった音量がぶつ切れに戻らないこと。

@@ -8418,7 +8418,7 @@
 - notes-board: 距離の関数は G16 が先に作る Library/Core/Public/Scene/AcousticDistance.h の純関数を呼ぶ(自前の距離の関数を書かない。G16-S7 (A))
 
 ## G13-GR116-AUDIO-ACOUSTICS: 評価器の結果を声ごとの音量とローパスへ予算つきでなじませて当てる口を音のモジュールに足す
-- status: doing
+- status: done
 - after: G13-GR116-ACOUSTIC-EVALUATOR, G8-GR72-AUDIO-SPI, G8-GR72-SOUND-SYSTEM, G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR116
 - needs-gr: GR72
