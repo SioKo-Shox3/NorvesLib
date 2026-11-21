@@ -8281,7 +8281,7 @@
 - notes: 選定課題 G13-S7（表面の保存キーと GR38 の SurfaceType(u8)。ロードマップ 4563 行）は推奨 (A) を採る（G5 の `G5-GR38-HEIGHTFIELD-QUERY` の notes が既に (A) に合わせて決めている）: 保存は名前（String）、`SurfaceId` は読み込み順の添字で保存に使わない、地形の層の番号は地形の側に残し、層→表面の名前の表（地形の材質の記述）で橋渡しする。理由: 語彙の並べ替えで保存データが壊れず、parent のフォールバックが使え、足音・足跡・踏み倒し・濡れた毛・足 IK の消費者が名前で疎に結べる。名前の衝突に注意: G5 は地形の層の番号（u8）を `GroundSample::SurfaceId` と呼び、G12 の `G12-GR09-DETACHED-COLLIDERS` は `StaticColliderDesc` の表面の番号を「G5-GR38 の SurfaceId」と書く。ここの `Scene::SurfaceId` は登録簿の添字（u16）で別物なので、強い型にして取り違えをコンパイルで止める（変換は G13-GR115-GROUND-CONTACT の地形の provider と G13-GR115-PHYSICS-SURFACE だけで行う）。今のコードの事実（2026-11-03）: `ColliderComponent` に PROPERTY が無い（`ColliderComponent.h:29-34` は層・マスク・UserData の setter だけ）、問い合わせの結果に表面の欄が無い（`PhysicsQueryTypes.h:69-90`・`185-197`）、`HitEffectEmitter` は表面の名前を全バイト一致で引く（`HitEffectEmitter.cpp:163-173`）。設計はロードマップ 2811 行、要件 `#### GR115` の設計 (1)(2)(3)。`Engine.h`・`GameApplicationHandler.cpp` は多くの段階が触るので差分を小さくする。危険地帯（Public API: SceneQuery・Engine）なので評価者を通す。試験を足す理由（Docs/Testing.md の 3 点）: 反証する契約は「未知・重複・循環を拒否して前の内容を保ち、優先順位どおりに 1 つの表面を返す」こと。誤ると足音・火花・足跡が別の表面の物になるだけで、撮影でもログでも気づきにくく、黙って起きる。やらないこと: コライダーの PROPERTY と物理の結果への受け渡し（G13-GR115-PHYSICS-SURFACE）、地形・草・濡れの provider と消費者（G13-GR115-GROUND-CONTACT）、スクリプトへの公開（GR98、G18）。
 
 ## G13-GR115-PHYSICS-SURFACE: コライダーに表面の名前を付けてシーンに保存し、Raycast・Overlap・掃引・接触の結果に表面を載せる
-- status: todo
+- status: done
 - after: G13-GR115-SURFACE-REGISTRY, G12-GR09-BROADPHASE-S0S1, G12-GR09-STATIC-TREE, G12-GR09-DETACHED-COLLIDERS
 - gr: GR115
 - needs-gr: GR08, GR09

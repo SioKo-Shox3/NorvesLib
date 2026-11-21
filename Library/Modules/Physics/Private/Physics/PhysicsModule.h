@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
+#include "Container/StringView.h"
 #include "Container/UnorderedMap.h"
 #include "Physics/CharacterMover.h"
 #include "Physics/IPhysicsModule.h"
@@ -66,6 +67,8 @@ namespace NorvesLib::Modules::Physics
         {
             Core::Container::VariableArray<uint32_t> SlotIndices;
             Core::Container::VariableArray<PhysicsShapeProxy> Proxies;
+            // 全要素が名前なしなら空。それ以外は Proxies と同じ長さで、名前なしの要素には空文字列を置く。
+            Core::Container::VariableArray<Core::Container::String> SurfaceNames;
         };
 
         struct PendingStaticColliderChunkOperation
@@ -93,6 +96,8 @@ namespace NorvesLib::Modules::Physics
             Core::Scene::ColliderHandle First;
             Core::Scene::ColliderHandle Second;
             Math::GeometryContact Contact;
+            Core::Scene::SurfaceId FirstSurface{};
+            Core::Scene::SurfaceId SecondSurface{};
         };
 
         enum class EPhysicsEventType : uint8_t
@@ -109,6 +114,8 @@ namespace NorvesLib::Modules::Physics
             Core::Scene::ColliderHandle Second;
             Math::GeometryContact Contact;
             float NormalImpulse = 0.0f;
+            Core::Scene::SurfaceId FirstSurface{};
+            Core::Scene::SurfaceId SecondSurface{};
         };
 
         friend class ColliderComponent;
@@ -138,6 +145,9 @@ namespace NorvesLib::Modules::Physics
         EPhysicsResult SetColliderCapsule(ColliderComponent& component, float radius, float halfHeight);
         EPhysicsResult SetColliderHeightField(ColliderComponent& component,
             Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> heightField);
+        EPhysicsResult SetColliderSurface(ColliderComponent& component, Core::Container::StringView name);
+        void ResolveColliderSurface(ColliderComponent& component) const;
+        void RefreshColliderSurfaces();
         EPhysicsResult SetColliderSurfaceId(ColliderComponent& component, uint8_t surfaceId);
         EPhysicsResult SetColliderLocalPose(ColliderComponent& component, const Math::Transform& localPose);
         EPhysicsResult SetColliderTrigger(ColliderComponent& component, bool bTrigger);
@@ -171,6 +181,7 @@ namespace NorvesLib::Modules::Physics
         void BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle = false) const;
         bool IsStaticColliderChunkRegistered(uint64_t key) const;
         void SubmitStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation);
+        void ResolveStaticChunkSurfaces(StaticColliderChunk& chunk) const;
         void ApplyStaticColliderChunkOperation(PendingStaticColliderChunkOperation& operation);
         void ApplyPendingStaticColliderChunkOperations();
         void RebuildPublishedSnapshot();
@@ -203,6 +214,8 @@ namespace NorvesLib::Modules::Physics
         Core::Scene::EPhysicsSceneQueryResult OverlapCapsule(
             const Math::Capsule& capsule,
             Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const override;
+        Core::Scene::EPhysicsSceneQueryResult GetColliderSurface(Core::Scene::ColliderHandle collider,
+            Core::Scene::SurfaceId& outSurface) const override;
         Core::Scene::EPhysicsSceneQueryResult IsAlive(Core::Scene::ColliderHandle collider, bool& outAlive) const override;
         Core::Scene::EPhysicsSceneQueryResult IsAlive(Core::Scene::BodyHandle body, bool& outAlive) const override;
         Core::Scene::EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const override;
@@ -230,6 +243,7 @@ namespace NorvesLib::Modules::Physics
         bool m_bVariableCharacterInProgress = false;
         bool m_bCharacterInputInProgress = false;
         bool m_bHasPublishedSnapshot = false;
+        uint64_t m_SurfaceRegistryRevision = 0;
         uint64_t m_PublishedSnapshotSequence = 0;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;
         Core::Container::VariableArray<BodySlot> m_BodySlots;
