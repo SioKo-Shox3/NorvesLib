@@ -41,6 +41,8 @@ add_library(NorvesAudioDomain STATIC
     Private/Audio/AudioGameModeOwner.cpp
     Private/Audio/AudioDomain.cpp
     Private/Audio/AudioDomain.h
+    Private/Audio/AudioMixerConfig.cpp
+    Private/Audio/AudioMixerConfig.h
     Private/Audio/AudioMixerDomain.cpp
     Private/Audio/AudioMixerDomain.h
     Private/Audio/AudioServiceModule.cpp
@@ -99,6 +101,8 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
     Private/Audio/AudioGameModeOwner.cpp
     Private/Audio/AudioDomain.cpp
     Private/Audio/AudioDomain.h
+    Private/Audio/AudioMixerConfig.cpp
+    Private/Audio/AudioMixerConfig.h
     Private/Audio/AudioMixerDomain.cpp
     Private/Audio/AudioMixerDomain.h
     Private/Audio/AudioModule.cpp

@@ -28,6 +28,8 @@ namespace NorvesLib::Modules::Audio::Private
         void BindService(IAudioService* service);
         /** 基準音量・ポーズ対象・規則をまとめて替える。不正な値があれば前の設定を保つ。 */
         void ApplyConfig(const AudioMixerConfig& config);
+        /** 明示読み込みも含めて初回の試行前なら、既定の論理パスから設定を読む。 */
+        void EnsureDefaultConfigLoaded(const Core::Asset::AssetSystem& assets);
         /** 現在の活動からダッキングを進め、音量の差分を反映する。 */
         void Update(float deltaSeconds, const AudioMixerActivity& activity);
         /** 全規則の保持時間を捨て、リリースを開始する。 */
@@ -35,6 +37,8 @@ namespace NorvesLib::Modules::Audio::Private
         /** 反映先を切り離す。バスの音量と設定は保持する。 */
         void Shutdown();
 
+        AudioResult LoadConfig(const Core::Asset::AssetSystem& assets, Core::Container::AnsiStringView logicalPath,
+                               AudioMixerLoadReport& outReport) override;
         AudioResult SetUserBusVolume(AudioBusId bus, float slider01) override;
         [[nodiscard]] float GetUserBusVolume(AudioBusId bus) const override;
         AudioResult SetPauseGain(float gain) override;
@@ -69,6 +73,7 @@ namespace NorvesLib::Modules::Audio::Private
         BusState m_Buses[kAudioBusCount];
         Core::Container::VariableArray<DuckState> m_DuckStates;
         float m_PauseGain = 1.0f;
+        bool m_bConfigLoadAttempted = false;
         IAudioService* m_Service = nullptr;
     };
 }

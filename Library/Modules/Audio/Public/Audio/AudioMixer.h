@@ -3,12 +3,37 @@
 
 #include "Audio/AudioTypes.h"
 #include "Container/Span.h"
+#include "Container/String.h"
 #include "Container/StringView.h"
 #include "Container/VariableArray.h"
 #include "Text/IdentityPool.h"
 
+namespace NorvesLib::Core::Asset
+{
+    class AssetSystem;
+}
+
 namespace NorvesLib::Modules::Audio
 {
+    inline constexpr const char* kAudioMixerDefaultConfigPath = "Audio/Mixer.json";
+
+    enum class AudioMixerConfigReason : uint8_t
+    {
+        NotFound, ParseError, UnsupportedVersion, UnknownKey, MissingField, InvalidValue
+    };
+
+    struct AudioMixerDiagnostic
+    {
+        AudioMixerConfigReason Reason = AudioMixerConfigReason::ParseError;
+        Core::Container::String Detail; ///< 設定内のキーの道筋。ファイルを解決できない場合は論理パス。
+    };
+
+    struct AudioMixerLoadReport
+    {
+        bool bUsedDefaults = true;
+        Core::Container::VariableArray<AudioMixerDiagnostic> Diagnostics;
+    };
+
     /** 設定ファイルで使う小文字のバス名を返す。範囲外なら空文字列を返す。 */
     [[nodiscard]] const char* GetAudioBusName(AudioBusId bus) noexcept;
     /** 小文字のバス名を完全一致で解決する。失敗時は outBus を保つ。 */
@@ -60,6 +85,13 @@ namespace NorvesLib::Modules::Audio
     public:
         virtual ~IAudioMixer() = default;
 
+        /**
+         * JSON の上書きを既定設定に適用し、Success と bUsedDefaults=false を返す。
+         * ファイルが見つからない場合や不正な場合は MakeDefaultAudioMixerConfig() を適用し直し、
+         * InvalidState と bUsedDefaults=true、診断を返す。どちらの場合も適用した設定で再生を続ける。
+         */
+        virtual AudioResult LoadConfig(const Core::Asset::AssetSystem& assets, Core::Container::AnsiStringView logicalPath,
+                                       AudioMixerLoadReport& outReport) = 0;
         /** 設定の音量を [0, 1] に丸めて保存する。範囲外のバス・非有限値には InvalidState を返す。 */
         virtual AudioResult SetUserBusVolume(AudioBusId bus, float slider01) = 0;
         /** 設定のスライダー値を返す。範囲外のバスでは 0 を返す。 */

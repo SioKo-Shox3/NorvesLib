@@ -1,7 +1,10 @@
 ﻿// バス構成と現在の音量を保持し、活動による減衰とバックエンドへの反映を行う。
 #include "Audio/AudioMixerDomain.h"
 
+#include "Asset/AssetSystem.h"
+#include "Audio/AudioMixerConfig.h"
 #include "Audio/IAudioService.h"
+#include "Logging/LogMacros.h"
 
 #include <algorithm>
 #include <cmath>
@@ -107,6 +110,44 @@ namespace NorvesLib::Modules::Audio::Private
         for (auto& bus : m_Buses)
         {
             bus.LastSentGain = -1.0f;
+        }
+    }
+
+    AudioResult AudioMixerDomain::LoadConfig(const Core::Asset::AssetSystem& assets, Core::Container::AnsiStringView logicalPath,
+                                             AudioMixerLoadReport& outReport)
+    {
+        m_bConfigLoadAttempted = true;
+        auto config = MakeDefaultAudioMixerConfig();
+        const auto resolved = assets.ResolveAsset(logicalPath, Core::Asset::AssetKind::Raw);
+        if (!resolved.Succeeded())
+        {
+            outReport = {};
+            outReport.Diagnostics.push_back({AudioMixerConfigReason::NotFound, Core::Container::String(logicalPath)});
+        }
+        else if (ParseAudioMixerConfig(resolved.Blob.GetSpan(), config, outReport))
+        {
+            ApplyConfig(config);
+            LOG_INFO("AUDIO_MIXER config=loaded path=%s duck_rules=%zu",
+                     Core::Container::String(logicalPath).c_str(), config.DuckRules.size());
+            return AudioResult::Success;
+        }
+
+        // 解析に失敗しても config には読み込み前の既定設定が残る。
+        ApplyConfig(config);
+        for (const auto& diagnostic : outReport.Diagnostics)
+        {
+            LOG_WARNING("AUDIO_MIXER config=default reason=%u detail=%s",
+                        static_cast<unsigned>(diagnostic.Reason), diagnostic.Detail.c_str());
+        }
+        return AudioResult::InvalidState;
+    }
+
+    void AudioMixerDomain::EnsureDefaultConfigLoaded(const Core::Asset::AssetSystem& assets)
+    {
+        if (!m_bConfigLoadAttempted)
+        {
+            AudioMixerLoadReport report;
+            LoadConfig(assets, kAudioMixerDefaultConfigPath, report);
         }
     }
 

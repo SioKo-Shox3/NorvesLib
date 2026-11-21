@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "buses": {
+    "master":  { "volume_db": 0.0 },
+    "se":      { "volume_db": 0.0, "pause": true },
+    "ambient": { "volume_db": 0.0, "pause": true },
+    "music":   { "volume_db": 0.0, "pause": true },
+    "ui":      { "volume_db": 0.0, "pause": false }
+  },
+  "ducking": []
+}
