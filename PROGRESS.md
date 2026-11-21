@@ -12710,3 +12710,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 採った判断: (1) 前のカメラの受け渡し・パストレーサーの持ち越し・シャッターの補間は、カットとカメラの切り替え（`SourceCameraId` の違い）を同じに扱う。(2) パストレーサーの carry は直前に見たカメラの印を `Reset` で消さず、連番でないパケットからの初めのパケットでもカットを見分ける。(3) 物体の前の変換（`ApplyPreviousObjectStates`）はカメラの印で捨てない。パストレーサーの連番のカットでは instance の前の変換も捨てる。カットで自動露出を即座に合わせる処理は入れていない（非ゴール）。
 - 要起票: MegaGeometry の前のフレームの HZB の再利用判定 `EvaluatePreviousHiZ`（`Library/Core/Public/Rendering/MegaGeometryPass.h:175`。`MegaHiZContract` に `CutSerial` が無い）と、草の HiZ の採用（`Library/Core/Private/Rendering/GrassPass.cpp:796`）は `CameraId`・`SourceCameraId` だけを比べて `CutSerial` を見ない。同じカメラで `MarkCameraCut` したフレームで、カットの前の深度で遮蔽を判定する（`CameraDiscontinuity.md` の約束に反する）。
 - U6 パストレーサーの持ち越しで、連番でないパケットのカットと RenderThread が後から足す instance にもカットの判定を当てる: 着地(直し 0 回)
+- U7 メインカメラの登録枠の更新を m_MainCamera へ写し、GetPreviousCamera と BuildCameraProxy でカメラの生成元をそろえる: 着地(直し 0 回)

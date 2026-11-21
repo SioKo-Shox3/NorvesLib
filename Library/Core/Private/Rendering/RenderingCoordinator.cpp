@@ -7086,6 +7086,11 @@ namespace NorvesLib::Core::Rendering
         storedCamera.SourceCameraId = ResolveSourceCameraId(camera);
         storedCamera.CameraId = cameraId;
         it->second = storedCamera;
+        if (cameraId == m_MainCameraId)
+        {
+            // 履歴の連続性を、ビューポートが登録表から読むカメラと同じ値で判定する。
+            m_MainCamera = storedCamera;
+        }
         return true;
     }
 
