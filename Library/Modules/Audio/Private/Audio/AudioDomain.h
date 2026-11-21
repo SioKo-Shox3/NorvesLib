@@ -7,7 +7,11 @@
 
 namespace NorvesLib::Modules::Audio
 {
-    [[nodiscard]] bool IsPlayableVoiceDesc(uint64_t frameCount, const AudioVoiceDesc& desc) noexcept;
+    // 1 voice に渡せる PCM のバイト数の上限。全バックエンドで共通とし、XAudio2 の単一バッファの上限以下に保つ。
+    inline constexpr uint64_t kAudioMaxVoicePcmBytes = 0x80000000ull;
+
+    // サービスの CreateVoice と SoundSystem の 3D 再生開始時に、PCM のバイト数、ピッチの上限、開始フレーム、ループ区間を検査する。
+    [[nodiscard]] bool IsPlayableVoiceDesc(uint64_t frameCount, uint64_t pcmBytes, const AudioVoiceDesc& desc) noexcept;
 }
 
 namespace NorvesLib::Modules::Audio::Private

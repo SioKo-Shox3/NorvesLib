@@ -11,8 +11,12 @@
 
 namespace NorvesLib::Modules::Audio
 {
-    bool IsPlayableVoiceDesc(uint64_t frameCount, const AudioVoiceDesc& desc) noexcept
+    bool IsPlayableVoiceDesc(uint64_t frameCount, uint64_t pcmBytes, const AudioVoiceDesc& desc) noexcept
     {
+        if (pcmBytes == 0 || pcmBytes > kAudioMaxVoicePcmBytes)
+        {
+            return false;
+        }
         if (!std::isfinite(desc.MaxPitchSemitones) || desc.MaxPitchSemitones < 0.0f ||
             desc.MaxPitchSemitones > kAudioMaxVoicePitchSemitones || desc.StartFrame >= frameCount)
         {
@@ -122,7 +126,7 @@ namespace NorvesLib::Modules::Audio::Private
                     return AudioResult::InvalidState;
                 }
 
-                if (!IsPlayableVoiceDesc(clip->GetFrameCount(), desc))
+                if (!IsPlayableVoiceDesc(clip->GetFrameCount(), clip->GetPcmBlob().GetSize(), desc))
                 {
                     return AudioResult::InvalidState;
                 }

@@ -1,5 +1,6 @@
 ﻿#include "Audio/XAudio2BackendFactory.h"
 
+#include "Audio/AudioDomain.h"
 #include "Container/VariableArray.h"
 #include "Thread/Atomic.h"
 
@@ -12,6 +13,9 @@ namespace NorvesLib::Modules::Audio::Private
 {
     namespace
     {
+        static_assert(kAudioMaxVoicePcmBytes <= XAUDIO2_MAX_BUFFER_BYTES,
+                      "共通の PCM バイト数の上限は XAudio2 の単一バッファの上限以下にしてください");
+
         class XAudio2Backend;
 
         class XAudio2VoiceCallback final : public IXAudio2VoiceCallback

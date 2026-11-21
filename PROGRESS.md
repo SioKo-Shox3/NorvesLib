@@ -12834,3 +12834,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 5): `.harness/runs/20261121-141619/verify-G16-GR73-VIRTUAL-VOICE-iter5-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`AudioDomain.cpp`・`SoundSystem.cpp` を再コンパイル。`error C`・`error LNK`・`warning C` は 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。
 - Next(反復 5): ランナーの評価者の反証(前回の指摘 3 件への対応の差分)。人が聴くときの見どころは反復 2 の Next のとおり。
 - Notes(反復 5): 採った判断: 2D の音は開始の時点で休眠にならないので、クリップの選び方の順(奪取の後)は変えず `CreateVoice` の検査に任せた。3D の物理の開始も、不正な定義では既存の voice を奪う前に拒むようになった。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
+- U5 1 voice の PCM のバイト数の上限を共通の検査に足す: 着地(直し 0 回)

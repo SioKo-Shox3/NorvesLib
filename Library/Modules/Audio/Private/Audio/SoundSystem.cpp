@@ -472,7 +472,7 @@ namespace NorvesLib::Modules::Audio::Private
             // 再生できない 3D 音源のために既存のボイスを奪わない。
             instance.Clip = SelectClip(definition);
             if (!instance.Clip || !instance.Clip->IsValid() ||
-                !IsPlayableVoiceDesc(instance.Clip->GetFrameCount(), instance.VoiceDesc))
+                !IsPlayableVoiceDesc(instance.Clip->GetFrameCount(), instance.Clip->GetPcmBlob().GetSize(), instance.VoiceDesc))
             {
                 return AudioResult::InvalidState;
             }
