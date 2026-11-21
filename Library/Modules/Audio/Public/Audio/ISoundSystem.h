@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Audio/AudioSpatial.h"
 #include "Audio/IAudioService.h"
 #include "Audio/SoundBankTypes.h"
 #include "Container/String.h"
@@ -75,6 +76,8 @@ namespace NorvesLib::Modules::Audio
         float PitchSemitones = 0.0f;
         SoundFade FadeIn;
         uint64_t OwnerKey = 0; // 0 は持ち主なし。
+        AudioSpatialization Spatialization = AudioSpatialization::None; ///< World3D なら PlayAt を 3D で鳴らす。
+        AudioEmitterSpatialSettings Spatial; ///< World3D を指定したときの音源設定。
     };
 
     struct SoundSystemDiagnostics
@@ -112,7 +115,17 @@ namespace NorvesLib::Modules::Audio
         virtual AudioResult ReleaseOwner(uint64_t ownerKey, const SoundFade& fade) = 0;
         virtual AudioResult SetVolume(SoundInstanceHandle handle, float volume) = 0;
         virtual AudioResult SetPitch(SoundInstanceHandle handle, float semitones) = 0;
+        /**
+         * @brief GameThread 専用。3D 音源の位置を次の Update で反映し、位置の差分と経過秒数から速度を求める。
+         * @return 古いハンドルは StaleHandle、2D 音源・非有限の位置・ボイスの停止発行後は InvalidState。
+         */
+        virtual AudioResult SetEmitterPosition(SoundInstanceHandle handle, const Math::Vector3& position) = 0;
         [[nodiscard]] virtual bool IsPlaying(SoundInstanceHandle handle) const = 0;
+        /**
+         * ハンドルが有効で、物理ボイスに停止を発行するまでは真を返す。
+         * フェードアウト中も真を返し、音源の位置同期を続けるかの判定に使う。
+         */
+        [[nodiscard]] virtual bool IsAudible(SoundInstanceHandle handle) const = 0;
         virtual void SetMasterVolume(float volume) = 0;
         [[nodiscard]] virtual float GetMasterVolume() const = 0;
         virtual void SetCategoryVolume(SoundCategory category, float volume) = 0;

@@ -481,7 +481,7 @@ namespace NorvesLib::Core::Rendering
             reactive = m_ZeroReactiveTexture;
         }
 
-        // 履歴は、同じ Viewport が前に描いたフレームで書き、同じカメラで、露出が有限で、velocity の基準
+        // 履歴は、同じ Viewport が前に描いたフレームで書き、同じカメラ（カットをまたがない）で、露出が有限で、velocity の基準
         // （物体の前の変換と前のカメラ）が履歴を書いたフレームのときだけ使う。描画がゲームのフレームを
         // 飛ばしたときは、RenderingCoordinator が物体の前の変換を、SceneView が前のカメラを、最後に描いた
         // （履歴を書いた）フレームのものへ付け替えている。

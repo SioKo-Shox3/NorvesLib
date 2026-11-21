@@ -526,6 +526,14 @@ namespace NorvesLib::Core::Rendering
          * （ApplyPathTracingSequenceCarry）、パストレーサーの連番の経路は同じフレームとして累積し続ける。
          */
         uint64_t SequenceFrame = 0;
+        /**
+         * @brief カメラの不連続の通し番号（カットのたびに 1 増える。既定 0）
+         *
+         * 前のフレームのカメラ・TAA の履歴・パストレーサーの連番の前の値は、この値と SourceCameraId が前のフレームの
+         * カメラと同じときだけ使う。1 フレームだけ立てる印ではなく通し番号なので、カットのパケットが描かれずに
+         * 捨てられても、次に描くパケットで違いが分かる。規約は Docs/Architecture/CameraDiscontinuity.md。
+         */
+        uint32_t CutSerial = 0;
 
         // ビュー行列用
         float PositionX = 0.0f, PositionY = 0.0f, PositionZ = 0.0f;
