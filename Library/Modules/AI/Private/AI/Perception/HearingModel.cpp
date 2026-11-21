@@ -43,8 +43,8 @@ namespace NorvesLib::Modules::AI::Perception
             return result;
         }
 
-        const float referenceDistance = evaluator.GetSettings().GetClass(query.SoundClass).ReferenceDistanceM;
-        result.ThresholdDb = Core::Scene::ComputeHearingRadiusThresholdDb(referenceDistance, query.LoudnessRadiusMeters);
+        const auto& classSettings = evaluator.GetSettings().GetClass(query.SoundClass);
+        result.ThresholdDb = Core::Scene::ComputeHearingRadiusThresholdDb(classSettings.ReferenceDistanceM, query.LoudnessRadiusMeters);
 
         Core::Scene::AcousticPathQuery pathQuery;
         pathQuery.Source = query.Source;
@@ -74,7 +74,9 @@ namespace NorvesLib::Modules::AI::Perception
 
         const double excessDb = static_cast<double>(result.GainDb) - result.ThresholdDb;
         const double levelDb = tuning.AudibleLevelDb + excessDb + 10.0 * std::log10(static_cast<double>(result.WindFactor));
-        const double masking = 1.0 / (1.0 + std::pow(10.0, (result.NoiseFloorDb - levelDb) / 10.0));
+        const double masking = classSettings.bExemptFromMasking
+            ? 1.0
+            : 1.0 / (1.0 + std::pow(10.0, (result.NoiseFloorDb - levelDb) / 10.0));
         result.MaskingFactor = static_cast<float>(masking);
         const double amount = std::pow(10.0, excessDb / 10.0) * result.WindFactor * masking;
         result.Amount = static_cast<float>(std::min(amount, static_cast<double>(std::numeric_limits<float>::max())));

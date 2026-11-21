@@ -39,7 +39,7 @@ namespace NorvesLib::Modules::AI::Perception
         float ThresholdDb = 0.0f;
         float NoiseFloorDb = Core::Scene::kAcousticSilenceDb;
         float WindFactor = 1.0f;
-        float MaskingFactor = 1.0f;
+        float MaskingFactor = 1.0f;                ///< マスキング免除の音クラスでは 1。
         Math::Vector3 PerceivedDirection;          ///< 聞き手から感じた音源への水平単位ベクトル。水平距離 0 なら零。
         float DirectionUncertaintyRadians = 0.0f;  ///< 方向の誤差の上限（rad）。
     };
