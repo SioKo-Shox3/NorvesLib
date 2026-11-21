@@ -31,6 +31,11 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t AcesFilmicOperatorType = 1u;
         constexpr uint32_t NeutralLinearOperatorType = 5u;
 
+        // ディザにはグレインと別の開始値を使い、同じフレームでも模様を分ける。
+        constexpr uint32_t DitherBaseSeed = 0xD1B54A35u;
+        // プロファイルのグレインは View の設定に依存しない開始値を使う。
+        constexpr uint32_t ProfileFilmGrainBaseSeed = 0xA511E9B3u;
+
         // Scripts/BakeAcesOutputLut.py が書く見出し（32 byte、little-endian）
         constexpr char Aces20LutMagic[8] = {'N', 'L', 'U', 'T', '3', 'D', '0', '1'};
         // Scripts/BakeLookLut.py が書く見た目のLUTの見出し（並びは ACES のLUTと同じで、shaper の値は使わない）。
@@ -167,10 +172,47 @@ namespace NorvesLib::Core::Rendering
             return lutTexture;
         }
 
+        const char* GetLegacyLookLutPath(const CameraProxy* camera)
+        {
+            if (camera && std::isfinite(camera->LookLut.Intensity) && camera->LookLut.Intensity > 0.0f)
+            {
+                return camera->LookLut.AssetPath;
+            }
+            return nullptr;
+        }
+
+        void SetProfileGradeParams(GPUToneMappingParams& params, const PostProcessGrade& grade)
+        {
+            params.gradeExposureScale = std::exp2(grade.ExposureBias);
+            params.gradeContrast = grade.Contrast;
+            params.gradeContrastPivot = grade.ContrastPivot;
+            params.gradeSaturation = grade.Saturation;
+
+            const float temperature = grade.WhiteBalance.Temperature;
+            const float tint = grade.WhiteBalance.Tint;
+            const float gain[3] = {1.0f + 0.2f * temperature, 1.0f - 0.2f * tint, 1.0f - 0.2f * temperature};
+            // 中立では倍率を厳密に 1 に保ち、それ以外では Rec.709 の輝度で正規化する。
+            const float luminance = temperature == 0.0f && tint == 0.0f
+                                        ? 1.0f
+                                        : 0.2126f * gain[0] + 0.7152f * gain[1] + 0.0722f * gain[2];
+            for (uint32_t i = 0; i < 3; ++i)
+            {
+                params.gradeWhiteBalanceGain[i] = gain[i] / luminance;
+                params.gradeShadowTint[i] = grade.ShadowTint[i];
+                params.gradeHighlightTint[i] = grade.HighlightTint[i];
+            }
+            params.gradeShadowLiftFloor = grade.ShadowLift.Amount * grade.ContrastPivot * std::exp2(-grade.ShadowLift.RangeEV);
+            params.gradeHighlightRolloffStart = grade.HighlightRolloff.Start;
+            params.gradeHighlightRolloffStrength = grade.HighlightRolloff.Strength;
+            params.gradeProtectedHueKeep = grade.ProtectedHue.bEnabled ? grade.ProtectedHue.Keep : 0.0f;
+            params.gradeProtectedHueCenterDeg = grade.ProtectedHue.CenterDeg;
+            params.gradeProtectedHueHalfWidthDeg = grade.ProtectedHue.WidthDeg * 0.5f;
+        }
+
         // binding 0: SceneColor（combined image sampler）
         // binding 1: ToneMappingParams UBO
         // binding 2: 表示変換の3D LUT（combined image sampler）
-        // binding 3: 見た目の3D LUT（combined image sampler）
+        // binding 3・4: 見た目の3D LUT A・B とサンプラー
         RHI::DescriptorSetDesc CreateToneMappingDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc dsDesc;
@@ -198,6 +240,12 @@ namespace NorvesLib::Core::Rendering
             lookLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             lookLutBinding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(lookLutBinding);
+
+            RHI::DescriptorBinding lookLutBindingB;
+            lookLutBindingB.binding = 4;
+            lookLutBindingB.type = RHI::ResourceBindType::CombinedImageSampler;
+            lookLutBindingB.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(lookLutBindingB);
             return dsDesc;
         }
     } // namespace
@@ -331,9 +379,11 @@ namespace NorvesLib::Core::Rendering
         m_ColorLutFallbackTexture.reset();
         m_ColorLutSampler.reset();
         m_bColorLutLoadFailed = false;
-        m_LookLutTexture.reset();
-        m_LookLutPath.clear();
-        m_bLookLutLoadFailed = false;
+        m_LookLutA = {};
+        m_LookLutB = {};
+        m_PreparedLookLut.reset();
+        m_PreparedLookLutB.reset();
+        m_bLutsPreparedForRecord = false;
         m_DisplayRampTexture.reset();
         m_DisplayRampWidth = 0;
         m_DisplayRampHeight = 0;
@@ -712,6 +762,7 @@ namespace NorvesLib::Core::Rendering
     {
         m_bLutsPreparedForRecord = false;
         m_PreparedLookLut.reset();
+        m_PreparedLookLutB.reset();
         // Parallel の判定は初期化済みが前提（初期化の無いフレームは Serial の Execute が初期化する）
         if (!m_bInitialized)
         {
@@ -728,9 +779,19 @@ namespace NorvesLib::Core::Rendering
         // 3D LUT の作成・転送は単発のコマンドの提出・待ちとバリアを伴うので、ここで直列に行う
         const CameraProxy* activeCamera = context.GetActiveCamera();
         m_PreparedViewOperatorType = PrepareColorLut();
-        if (ResolveOperatorType(activeCamera, m_PreparedViewOperatorType) != Aces20LutOperatorType)
+        if (activeCamera && activeCamera->PostProcess.bValid)
         {
-            m_PreparedLookLut = PrepareLookLut(activeCamera);
+            PostProcessSettings pp = activeCamera->PostProcess;
+            pp.Sanitize();
+            if (pp.Look.Intensity > 0.0f)
+            {
+                m_PreparedLookLut = PrepareLookLut(m_LookLutA, pp.Look.LutA);
+                m_PreparedLookLutB = PrepareLookLut(m_LookLutB, pp.Look.LutB);
+            }
+        }
+        else if (ResolveOperatorType(activeCamera, m_PreparedViewOperatorType) != Aces20LutOperatorType)
+        {
+            m_PreparedLookLut = PrepareLookLut(m_LookLutA, GetLegacyLookLutPath(activeCamera));
         }
         PrepareDisplayRamp();
         m_bLutsPreparedForRecord = true;
@@ -770,63 +831,94 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 見た目のLUTはグレーディングと同じく、表示変換そのものの ACES 2.0 SDR LUT には掛けない
-        RHI::TexturePtr lookLut = operatorType == Aces20LutOperatorType ? RHI::TexturePtr{}
-                                  : bLutsPrepared                       ? m_PreparedLookLut
-                                                                        : PrepareLookLut(activeCamera);
-        m_PreparedLookLut.reset();
-        const float lookLutIntensity = lookLut ? std::clamp(activeCamera->LookLut.Intensity, 0.0f, 1.0f) : 0.0f;
-        if (!lookLut)
-        {
-            lookLut = m_ColorLutFallbackTexture;
-        }
-
         // パラメータバッファ更新
         GPUToneMappingParams params = {};
         params.operatorType = operatorType;
         const bool bDebugPostProcessBypass =
             IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
         params.bBypass = bDebugPostProcessBypass ? 1u : 0u;
-        params.filmGrainSeed = m_Settings.FilmGrainStrength > 0.0f
-                                   ? MakeFilmGrainFrameSeed(m_Settings.FilmGrainSeed, context.FrameNumber)
-                                   : 0u;
-        // Vignette
-        params.vignetteIntensity = m_Settings.VignetteIntensity;
-        params.vignetteRadius = m_Settings.VignetteRadius;
-        params.vignetteSoftness = m_Settings.VignetteSoftness;
-        params.filmGrainStrength = m_Settings.FilmGrainStrength > 0.0f ? m_Settings.FilmGrainStrength : 0.0f;
-        params.gradingMode = 0u;
-        // Color Grading
-        params.colorFilter[0] = m_Settings.ColorFilter[0];
-        params.colorFilter[1] = m_Settings.ColorFilter[1];
-        params.colorFilter[2] = m_Settings.ColorFilter[2];
-        params.colorFilter[3] = m_Settings.ColorFilterIntensity;
-        // カメラがコントラストを指定していればそれを使う（起動画面など、検証シーンの既定を変えずに切り替える）。
-        params.contrast = activeCamera != nullptr && std::isfinite(activeCamera->GradingContrast) &&
-                                  activeCamera->GradingContrast >= 0.0f
-                              ? activeCamera->GradingContrast
-                              : m_Settings.Contrast;
-        params.saturation = m_Settings.Saturation;
-        params.brightness = m_Settings.Brightness;
-        params.temperature = m_Settings.Temperature;
-        // カメラがグレーディングを差し替えていれば、コントラスト・彩度・色温度をその値と式にする
-        // （有限でない値は差し替えない）。
-        if (activeCamera != nullptr && activeCamera->GradingOverride.bEnabled)
+        RHI::TexturePtr lookLut;
+        RHI::TexturePtr lookLutB;
+        if (activeCamera && activeCamera->PostProcess.bValid)
         {
-            const CameraGradingOverride& grading = activeCamera->GradingOverride;
-            if (std::isfinite(grading.Contrast) && grading.Contrast > 0.0f &&
-                std::isfinite(grading.ContrastPivot) && grading.ContrastPivot > 0.0f &&
-                std::isfinite(grading.Saturation) && grading.Saturation >= 0.0f &&
-                std::isfinite(grading.Temperature))
+            PostProcessSettings pp = activeCamera->PostProcess;
+            pp.Sanitize();
+            params.gradingMode = 2u;
+            for (float& component : params.colorFilter)
             {
-                params.gradingMode = 1u;
-                params.contrast = grading.Contrast;
-                params.contrastPivot = std::clamp(grading.ContrastPivot, 1.0e-4f, 1.0f);
-                params.saturation = grading.Saturation;
-                params.temperature = std::clamp(grading.Temperature, -1.0f, 1.0f);
+                component = 1.0f;
+            }
+            params.contrast = 1.0f;
+            params.saturation = 1.0f;
+            params.contrastPivot = 0.18f;
+            SetProfileGradeParams(params, pp.Grade);
+
+            if (pp.Look.Intensity > 0.0f)
+            {
+                lookLut = bLutsPrepared ? m_PreparedLookLut : PrepareLookLut(m_LookLutA, pp.Look.LutA);
+                lookLutB = bLutsPrepared ? m_PreparedLookLutB : PrepareLookLut(m_LookLutB, pp.Look.LutB);
+            }
+            params.lookLutWeightA = lookLut ? 1.0f - pp.Look.Blend : 0.0f;
+            params.lookLutWeightB = lookLutB ? pp.Look.Blend : 0.0f;
+            params.lookLutIntensity = (lookLut || lookLutB) ? std::clamp(pp.Look.Intensity, 0.0f, 1.0f) : 0.0f;
+
+            params.vignetteIntensity = pp.Lens.Vignette.Intensity;
+            params.vignetteRadius = pp.Lens.Vignette.Radius;
+            params.vignetteSoftness = pp.Lens.Vignette.Softness;
+            params.filmGrainStrength = pp.Lens.Grain;
+            params.filmGrainSeed = params.filmGrainStrength > 0.0f
+                                       ? MakeFilmGrainFrameSeed(ProfileFilmGrainBaseSeed, context.FrameNumber)
+                                       : 0u;
+            params.ditherStrength = pp.DitherStrength;
+            params.ditherSeed = MakeFilmGrainFrameSeed(DitherBaseSeed, context.FrameNumber);
+        }
+        else
+        {
+            if (operatorType != Aces20LutOperatorType)
+            {
+                lookLut = bLutsPrepared ? m_PreparedLookLut : PrepareLookLut(m_LookLutA, GetLegacyLookLutPath(activeCamera));
+            }
+            params.lookLutIntensity = lookLut ? std::clamp(activeCamera->LookLut.Intensity, 0.0f, 1.0f) : 0.0f;
+            params.vignetteIntensity = m_Settings.VignetteIntensity;
+            params.vignetteRadius = m_Settings.VignetteRadius;
+            params.vignetteSoftness = m_Settings.VignetteSoftness;
+            params.filmGrainStrength = m_Settings.FilmGrainStrength > 0.0f ? m_Settings.FilmGrainStrength : 0.0f;
+            params.filmGrainSeed = params.filmGrainStrength > 0.0f
+                                       ? MakeFilmGrainFrameSeed(m_Settings.FilmGrainSeed, context.FrameNumber)
+                                       : 0u;
+            params.gradingMode = 0u;
+            params.colorFilter[0] = m_Settings.ColorFilter[0];
+            params.colorFilter[1] = m_Settings.ColorFilter[1];
+            params.colorFilter[2] = m_Settings.ColorFilter[2];
+            params.colorFilter[3] = m_Settings.ColorFilterIntensity;
+            // カメラがコントラストを指定していればそれを使う（起動画面など、検証シーンの既定を変えずに切り替える）。
+            params.contrast = activeCamera != nullptr && std::isfinite(activeCamera->GradingContrast) &&
+                                      activeCamera->GradingContrast >= 0.0f
+                                  ? activeCamera->GradingContrast
+                                  : m_Settings.Contrast;
+            params.saturation = m_Settings.Saturation;
+            params.brightness = m_Settings.Brightness;
+            params.temperature = m_Settings.Temperature;
+            // カメラがグレーディングを差し替えていれば、コントラスト・彩度・色温度をその値と式にする
+            // （有限でない値は差し替えない）。
+            if (activeCamera != nullptr && activeCamera->GradingOverride.bEnabled)
+            {
+                const CameraGradingOverride& grading = activeCamera->GradingOverride;
+                if (std::isfinite(grading.Contrast) && grading.Contrast > 0.0f &&
+                    std::isfinite(grading.ContrastPivot) && grading.ContrastPivot > 0.0f &&
+                    std::isfinite(grading.Saturation) && grading.Saturation >= 0.0f &&
+                    std::isfinite(grading.Temperature))
+                {
+                    params.gradingMode = 1u;
+                    params.contrast = grading.Contrast;
+                    params.contrastPivot = std::clamp(grading.ContrastPivot, 1.0e-4f, 1.0f);
+                    params.saturation = grading.Saturation;
+                    params.temperature = std::clamp(grading.Temperature, -1.0f, 1.0f);
+                }
             }
         }
-        params.lookLutIntensity = lookLutIntensity;
+        m_PreparedLookLut.reset();
+        m_PreparedLookLutB.reset();
 
         // 表示変換の照合の色の階段を、シーンの色の代わりに結ぶ（準備段の無いフレームはここで用意する）
         if (!bLutsPrepared)
@@ -906,8 +998,10 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindSampler(0, m_SceneColorSampler);
         descriptorSet->BindTexture(2, colorLut);
         descriptorSet->BindSampler(2, m_ColorLutSampler);
-        descriptorSet->BindTexture(3, lookLut);
+        descriptorSet->BindTexture(3, lookLut ? lookLut : m_ColorLutFallbackTexture);
         descriptorSet->BindSampler(3, m_ColorLutSampler);
+        descriptorSet->BindTexture(4, lookLutB ? lookLutB : m_ColorLutFallbackTexture);
+        descriptorSet->BindSampler(4, m_ColorLutSampler);
         descriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
@@ -1091,33 +1185,31 @@ namespace NorvesLib::Core::Rendering
         return lutTexture;
     }
 
-    RHI::TexturePtr ToneMappingPass::PrepareLookLut(const CameraProxy* camera)
+    RHI::TexturePtr ToneMappingPass::PrepareLookLut(LookLutSlot& slot, const char* assetPath)
     {
-        if (!m_Device || camera == nullptr || camera->LookLut.AssetPath == nullptr ||
-            camera->LookLut.AssetPath[0] == '\0' || !std::isfinite(camera->LookLut.Intensity) ||
-            camera->LookLut.Intensity <= 0.0f)
+        if (!m_Device || assetPath == nullptr || assetPath[0] == '\0')
         {
             return nullptr;
         }
 
         // パスが変わったら読み直す（失敗したパスは、パスが変わるまで読み直さない）
-        if (m_LookLutPath != camera->LookLut.AssetPath)
+        if (slot.Path != assetPath)
         {
-            m_LookLutPath = camera->LookLut.AssetPath;
-            m_LookLutTexture.reset();
-            m_bLookLutLoadFailed = false;
+            slot.Path = assetPath;
+            slot.Texture.reset();
+            slot.bLoadFailed = false;
         }
-        if (!m_LookLutTexture && !m_bLookLutLoadFailed)
+        if (!slot.Texture && !slot.bLoadFailed)
         {
-            m_LookLutTexture = LoadLookLut(m_LookLutPath.c_str());
-            m_bLookLutLoadFailed = !m_LookLutTexture;
-            if (m_bLookLutLoadFailed)
+            slot.Texture = LoadLookLut(slot.Path.c_str());
+            slot.bLoadFailed = !slot.Texture;
+            if (slot.bLoadFailed)
             {
                 NORVES_LOG_ERROR("ToneMappingPass", "見た目のLUTを使えないため、掛けずに描画します: %s",
-                                 m_LookLutPath.c_str());
+                                 slot.Path.c_str());
             }
         }
-        return m_LookLutTexture;
+        return slot.Texture;
     }
 
     RHI::TexturePtr ToneMappingPass::LoadLookLut(const char* assetPath) const

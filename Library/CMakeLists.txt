@@ -3,29 +3,21 @@
 # ImGui デバッグオーバーレイ(既定 ON・ゲート)。option は本ファイル 1 箇所のみ。
 # ON のときだけ imgui 本体(第三者)を専用 static lib NorvesThirdParty_ImGui としてビルドし、
 # ImGui モジュール(Library/Modules/ImGui)のみが PRIVATE 依存する(Core は ImGui を参照/リンクしない)。
-# OFF(-DNORVES_ENABLE_IMGUI=OFF)のときは imgui を 1 ファイルもビルドせず Core も非リンク
-# =素ビルド byte-for-byte 不変。実行時に ImGui を表示するには Game を --imgui で起動する
-# (モジュール登録ゲート。ビルドゲート ON だけでは描画されない)。
+# OFF のときは ImGui をビルドしない。実行時に表示するには Game を --imgui で起動する。
 option(NORVES_ENABLE_IMGUI "Enable ImGui debug overlay" ON)
-option(NORVES_ENABLE_CORE_TEXT "Enable Core text rendering" ${NORVES_ENABLE_IMGUI})
+option(NORVES_ENABLE_CORE_TEXT "Core の文字描画(FreeType のフォントアトラス・組版)を有効にする" ON)
 if(NORVES_ENABLE_IMGUI OR NORVES_ENABLE_CORE_TEXT)
-    # ImGui ON は FreeType を vendoring した git submodule(Library/ThirdParty/freetype)に
-    # 依存する。未取得(fresh clone で submodule 未初期化)だと add_subdirectory が分かりにくく
-    # 失敗するため、先に存在を確認し明確なメッセージで止める。
+    # ImGui と Core の文字描画はどちらも FreeType を使うため、必要なときに取得済みか確認する。
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/freetype/CMakeLists.txt")
         message(FATAL_ERROR
-            "NORVES_ENABLE_IMGUI または NORVES_ENABLE_CORE_TEXT が ON ですが FreeType submodule が未取得です。"
+            "ImGui と Core の文字描画に必要な FreeType サブモジュールが未取得です。"
             "`git submodule update --init Library/ThirdParty/freetype` を実行するか、"
-            "ImGui 不要なら -DNORVES_ENABLE_IMGUI=OFF で構成してください。")
+            "両方とも不要なら -DNORVES_ENABLE_IMGUI=OFF -DNORVES_ENABLE_CORE_TEXT=OFF で構成してください。")
     endif()
 
-    # FreeType フォントラスタライザ(2B-ii-b)。imgui の既定 stb_truetype より crisp な
-    # グリフを生成し、imgui_freetype.cpp(IMGUI_ENABLE_FREETYPE 経由)が build 時に選ぶ。
+    # ImGui と Core の文字描画で、フォントのラスタライズに FreeType を使う。
     # 外部依存(zlib/bzip2/png/harfbuzz/brotli)は全て無効化して素の TTF/OTF ラスタライズ
-    # のみに絞る(余分な探索/リンクを持ち込まない)。freetype ターゲットは PUBLIC で
-    # ft2build.h 等の include ディレクトリを提供するので、これに PRIVATE リンクする
-    # imgui_freetype.cpp がヘッダを解決できる。NORVES_ENABLE_IMGUI OFF 時は本ブロックが
-    # 走らず freetype は 1 ファイルもビルドされない=素ビルド byte-for-byte 不変。
+    # のみに絞る(余分な探索/リンクを持ち込まない)。
     set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
     set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
     set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
