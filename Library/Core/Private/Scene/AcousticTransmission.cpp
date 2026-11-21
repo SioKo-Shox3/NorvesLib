@@ -21,6 +21,8 @@ namespace NorvesLib::Core::Scene
     {
         constexpr size_t kMaximumTextBytes = 256 * 1024;
         constexpr double kMaxFloat = std::numeric_limits<float>::max();
+        constexpr uint32_t kAcousticStaticGeometryQueryHits = 8;
+        constexpr size_t kAcousticMaxCountedWalls = 4;
         constexpr const char* kClassNames[] = {"Cue", "Ambient", "Footstep", "Voice", "Rain", "Creature"};
         static_assert(sizeof(kClassNames) / sizeof(kClassNames[0]) == static_cast<size_t>(ESoundClass::Count));
 
@@ -518,13 +520,13 @@ namespace NorvesLib::Core::Scene
         ray.MaxDistance = context.DistanceM;
         ray.Filter = context.Query.Filter;
         ray.Filter.TriggerPolicy = EPhysicsQueryTriggerPolicy::Exclude;
-        ray.MaxHits = 4;
+        ray.MaxHits = kAcousticStaticGeometryQueryHits;
         if (m_SceneQuery->ExecuteQuery(ray, m_Hits) != EPhysicsSceneQueryResult::Success)
         {
             return;
         }
 
-        // 通常は最大 4 件。隣接交換で距離順にし、同距離の順序と配列の領域を保つ。
+        // 隣接交換で距離順にし、同距離の順序と配列の領域を保つ。
         for (size_t i = 1; i < m_Hits.size(); ++i)
         {
             for (size_t j = i; j > 0 && m_Hits[j].Distance < m_Hits[j - 1].Distance; --j)
@@ -534,12 +536,13 @@ namespace NorvesLib::Core::Scene
         }
         double loss = 0.0;
         const size_t count = std::min<size_t>(ray.MaxHits, m_Hits.size());
-        for (size_t i = 0; i < count; ++i)
+        size_t countedWalls = 0;
+        for (size_t i = 0; i < count && countedWalls < kAcousticMaxCountedWalls; ++i)
         {
             const auto& hit = m_Hits[i];
             Rendering::Terrain::GroundSample ground;
             if (m_Terrain && m_Terrain->SampleGround(hit.Point.x, hit.Point.z, ground) && ground.bValid &&
-                std::abs(ground.Height - hit.Point.y) <= 0.05f)
+                std::abs(ground.Height - hit.Point.y) <= 0.05f && Math::Vector3::Dot(hit.Normal, ground.Normal) >= 0.98f)
             {
                 continue;
             }
@@ -555,6 +558,7 @@ namespace NorvesLib::Core::Scene
                 }
             }
             loss += wallLoss;
+            ++countedWalls;
             outContribution.bBlocksLineOfSight = true;
         }
         SetOcclusionLoss(outContribution, loss, context.Settings);
@@ -571,6 +575,8 @@ namespace NorvesLib::Core::Scene
         }
         const int count = PathSampleCount(context.Query);
         const double segment = static_cast<double>(context.DistanceM) / count;
+        const double sourceY = context.Query.Source.y;
+        const double listenerY = context.Query.Listener.y;
         double loss = 0.0;
         for (int i = 0; i < count; ++i)
         {
@@ -580,11 +586,22 @@ namespace NorvesLib::Core::Scene
             {
                 continue;
             }
-            const float top = field->QueryTopHeight(point.x, point.z);
-            if (top - sample.HeightMeters <= point.y && point.y < top)
+            const double top = field->QueryTopHeight(point.x, point.z);
+            const double ground = top - sample.HeightMeters;
+            const double y0 = std::lerp(sourceY, listenerY, static_cast<double>(i) / count);
+            const double y1 = std::lerp(sourceY, listenerY, static_cast<double>(i + 1) / count);
+            const double lo = std::min(y0, y1);
+            const double hi = std::max(y0, y1);
+            double fraction;
+            if (hi - lo > 1.0e-6)
             {
-                loss += sample.Density * segment * context.Settings.VegetationAbsorptionDbPerMeter;
+                fraction = std::max(0.0, std::min(hi, top) - std::max(lo, ground)) / (hi - lo);
             }
+            else
+            {
+                fraction = ground <= y0 && y0 < top ? 1.0 : 0.0;
+            }
+            loss += sample.Density * fraction * segment * context.Settings.VegetationAbsorptionDbPerMeter;
         }
         SetOcclusionLoss(outContribution, loss, context.Settings);
     }
@@ -599,13 +616,45 @@ namespace NorvesLib::Core::Scene
         }
         const int count = PathSampleCount(context.Query);
         double maxDepth = 0.0;
-        for (int i = 0; i < count; ++i)
+        const auto sampleDepth = [&](const Math::Vector3& point)
         {
-            const auto point = PathMidpoint(context.Query, i, count);
             Rendering::Terrain::GroundSample sample;
             if (m_Terrain->SampleGround(point.x, point.z, sample) && sample.bValid)
             {
                 maxDepth = std::max(maxDepth, static_cast<double>(sample.Height) - point.y);
+            }
+        };
+        for (int i = 0; i < count; ++i)
+        {
+            sampleDepth(PathMidpoint(context.Query, i, count));
+        }
+
+        // 中点の間を横切る尾根は、経路の両側から地表との交点を求めて深さを拾う。
+        const float margin = std::min(0.05f, context.DistanceM / 4.0f);
+        const float rayLength = context.DistanceM - 2.0f * margin;
+        if (rayLength > 0.0f)
+        {
+            const auto offset = context.Direction * margin;
+            const Math::Ray forward(context.Query.Source + offset, context.Direction);
+            Rendering::Terrain::GroundHit hit;
+            if (m_Terrain->RaycastGround(forward, rayLength, hit) && hit.bValid)
+            {
+                const float tIn = margin + hit.Distance;
+                float tOut = context.DistanceM - margin;
+                const Math::Ray backward(context.Query.Listener - offset, context.Direction * -1.0f);
+                if (m_Terrain->RaycastGround(backward, rayLength, hit) && hit.bValid)
+                {
+                    tOut -= hit.Distance;
+                }
+                if (tIn < tOut)
+                {
+                    constexpr int kDepthIntervals = 8;
+                    for (int i = 0; i <= kDepthIntervals; ++i)
+                    {
+                        const float t = std::lerp(tIn, tOut, static_cast<float>(i) / kDepthIntervals);
+                        sampleDepth(context.Query.Source + context.Direction * t);
+                    }
+                }
             }
         }
         const auto& settings = context.Settings;
