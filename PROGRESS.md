@@ -13084,3 +13084,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U8 押印の再評価の契機を足す(上下の移動・公開プロパティの直書き・タイルの読み込み): 着地(直し 0 回)
 - U10 平滑化が動的なコストを増やす短絡をしない: 着地(直し 0 回)
 - U11 AI の文書の既知の限界と押し直しの節を直し、タスクの verify を回す: 着地(直し 0 回)
+- 差し戻しの直し（反復 2 の評価）: 押し直しの移動量と速さに上下の変位を含め、高さの帯を抜けた箱の地上の押印を外す。部品は前回の評価に使った 8 つの PROPERTY の値を控え、公開の参照アクセサで直接書かれても次の固定歩で違いを見て押し直す。タイルの読み込み・置換・解放（`NavGrid::GetVersion()` の変化）で全障害物を再評価し、塗り直したセル列・モード・倍率が今の世代の押印と同じなら Revoke/Apply を飛ばして動的な版を進めない。探索中に押印の通し番号が進み、A* か平滑化が失敗した要求は `Failed` にせず、待ち行列の先頭に残して今の版で探し直す（同じ `RunBudget` の中ではオーバーレイが変わらないので 2 回目で必ず確定する）。平滑化は、短絡する線分が触れるセル（角で触れるセルを含む・始点のセルを除く）の動的な割増の和が元のセル列の同じ区間より大きければ折れ点を残す（隣のセルへの線分と割増の無い経路は今までどおり）。`Docs/Architecture/AIModule.md` の動く障害物の節と既知の限界を今の振る舞いにそろえた。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target Game -- /m:1` が exit_code=0・`warning C`/`error` 0 件（`AIModule.cpp`・`NavGridQueries.cpp`・`NavObstacleComponent.cpp`・`NavObstacleSystem.cpp`・`NavPathSmoothing.cpp`・`NavigationService.cpp` などを再コンパイルし、`NorvesModule_AI.lib`・`Game.exe` を生成。`.harness/runs/20261122-015215/verify-G13-GR21-NAV-OBSTACLES-U11-build.txt`）。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らず・回さず、Game.exe は起動していない（決まりによる）。
+- 人が見るときの見どころ（追加）: `Game.exe --ai-nav-smoke` で、往復する箱が代役の経路を塞いだ後に離れても、代役が止まったままにならず目標へ着くこと。
+- Next: 場面の起動の確かめ（G13-GR22-AI-SMOKE-CHECK）、地形からのベイク（G13-GR21-NVNAV-COOK）、タイルの出し入れ（G13-GR21-NAV-STREAMING）。
+- Notes: 既知の限界: 平滑化の後に端点をセル中心から要求の始点・目標へ差し替えるときは通行可否だけを見るので、その最初と最後の線分では動的な割増を比べない。探索が何歩もまたぐ間に押印が毎回変わって失敗し続けると、先頭の要求の探し直しが続いて後ろの要求が待たされうる。
