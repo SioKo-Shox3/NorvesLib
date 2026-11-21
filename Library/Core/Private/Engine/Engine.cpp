@@ -2,6 +2,7 @@
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
 #include "Application/IApplicationHandler.h"
+#include "Module/ModuleRegistry.h"
 #include <cmath>
 
 namespace NorvesLib::Core::Engine
@@ -53,6 +54,10 @@ namespace NorvesLib::Core::Engine
         // 同一Engineの正本/配線と単一ownerがctorで確定している。
         (void)m_InputDebugOverlay.Attach();
         (void)m_InputRebindCapture.Attach();
+        m_SimulationPauseState.OnChanged.Add([](uint32_t reasons)
+        {
+            Module::GetModuleRegistry().DispatchPauseStateChanged(reasons);
+        });
     }
 
     void Engine::UpdateWorldFieldInteractors()

@@ -246,6 +246,8 @@ set(PRIVATE_SOURCES
     Private/Engine/TimeScaleFadeMath.h
     Private/Engine/TimeSystem.cpp
     Public/Engine/TimeSystem.h
+    Private/Engine/SimulationPauseState.cpp
+    Public/Engine/SimulationPauseState.h
     Public/Engine/FixedStepFrameTiming.h
     Public/Engine/TimeChannels.h
     Private/Scripting/AngelScriptEngineOwner.cpp
