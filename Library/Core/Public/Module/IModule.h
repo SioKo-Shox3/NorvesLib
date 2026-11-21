@@ -63,6 +63,8 @@ namespace NorvesLib::Core::Module
         virtual void FixedTick(float fixedDeltaTime) {}
         // 物理後のWorld LateTickに続き、描画同期前に呼ぶ。停止中は進めない。
         virtual void LateTick(float deltaTime) {}
+        // ゲーム内ポーズの理由のビットが変わったときだけ呼ばれる。
+        virtual void OnPauseStateChanged(uint32_t reasons) {}
         // Initialize の逆。RenderThread 静止後に駆動される(寿命順序は Registry が保証)。
         virtual void Shutdown() = 0;
         // Install の逆。最小実装では空で良い。

@@ -53,6 +53,9 @@ namespace NorvesLib::Core::Module
          */
         void TickAll(float deltaTime);
 
+        // 実行中のモジュールへ登録順にポーズ理由を通知する。
+        void DispatchPauseStateChanged(uint32_t reasons);
+
         /**
          * @brief 逆順に UnregisterReflectedTypes→Shutdown→Uninstall する(冪等)
          *

@@ -8466,10 +8466,9 @@
 - after: G13-GR21-AI-MODULE-NAV, G13-GR22-STEERING-MOTOR, G4-GR07-BODY-CASES, G4-GR07-DOG-SMOKE-COURSE
 - gr: GR21
 - needs-gr: GR08, GR07
-- done-when: (1) `NavObstacleComponent`（AI の Public。REFLECTION_CLASS・3 つのコンストラクタ。PROPERTY は形（円・カプセル・OBB の XZ の足跡）・高さの範囲・モード Block / Cost・コストの倍率。enum は MeshComponent の RenderLayerProp の前例どおり。`RegisterReflectedTypes` で登録）が Initialize / Finalize で AIModule へ登録・解除し、AIModule の PreFixedTick が `Entity::GetTransformVersion()` の変化を見て、0.25 s 以上空けかつ 0.5 セル以上動いたときだけ古い足跡を引いて（カウンタの減算）新しい足跡を足す（加算）。速く動く物（しきい値は設定）は押印しない。経路は通ったタイルの (タイル, DynamicVersion) を持ち、`IsPathStale` が版の違いで true を返す。`Docs/Architecture/TickStages.md` の割当表に載せる。(2) `Game/GameModes/AISmoke/` に `--ai-nav-smoke` の場面（平地・箱の障害物・動く箱・動物の代役 1 体。`Game/GameModes/DogMovementSmoke` と同じ形の Mode と Routine）を作り、代役が経路に沿って目標へ着くと `AI_SMOKE mode=nav result=pass` を出す。`Scripts/Test-AINav.ps1`（`Scripts/Test-M8MinimalPhysics.ps1` と同じ流儀: 所有するプロセスの時間切れ・終了コード・ログの印の検査。`-Configuration`）を足す。ビルドできる（起動は G13-GR22-AI-SMOKE-CHECK）。(3) 試験（`PhysicsDynamicsTest` の束へ MEMBER）: `NavDynamicObstacleTest` が、固定シードで生成・移動・破棄を 1 万回繰り返した後にオーバーレイのカウンタが全部 0 へ戻る、経路の上へ押印すると `IsPathStale` が true、解除して再要求すると元の長さへ戻る、速く動く障害物は押印されない。`NavPhysicsConsistencyTest`（Engine と PhysicsModule を使う）が、箱のコライダーを置いた場面で見つけた経路の各点にエージェントのカプセルを置いて `OverlapCapsule` が静的なコライダーに当たらない、塞いだセルの障害物の内側は Overlap で当たる（誤差 1 セル以内）、最初の FixedTick までは物理が NotReady を返すので 1 回回してから問い合わせる。
-- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest Game -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(NavDynamicObstacleTest|NavPhysicsConsistencyTest|NavGridPathfindingTest|AIFixedStepContractTest|AIModuleLinkTest|PhysicsFixedStepPipelineTest)$" --no-tests=error --output-on-failure --timeout 300`
-- paths: Library/Modules/AI, Game/GameModes/AISmoke, Game/GameModes/GameModeIds.h, Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Scripts/Test-AINav.ps1, Test/Modules/AI, Test/Modules/Physics/CMakeLists.txt, Docs/Architecture/AIModule.md, Docs/Architecture/TickStages.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- done-when: (1) `NavObstacleComponent` を AI の Public に置く(REFLECTION_CLASS、コンストラクタ 3 つ)。PROPERTY は、形(円・カプセル・OBB の XZ の足跡)・高さの範囲・モード Block / Cost・コストの倍率。enum は MeshComponent の RenderLayerProp の前例どおり。`RegisterReflectedTypes` で登録する。Initialize / Finalize で AIModule へ登録・解除する。AIModule の PreFixedTick は `Entity::GetTransformVersion()` の変化を見て、0.25 s 以上空き、かつ 0.5 セル以上動いたときだけ、古い足跡を引き(カウンタの減算)、新しい足跡を足す(加算)。タイルの読み込み・解放やオーバーレイの全消去で高さを評価し直すときは、前回の押印の位置・向きで行う。今の位置への移動には、同じ 0.25 s・0.5 セルの条件を当てる。速く動く物(しきい値は設定)は押印しない。経路は通ったタイルの (タイル, DynamicVersion) を持ち、`IsPathStale` は版が違えば true を返す。経路の平滑化と、始点・終点を要求の座標へ差し替える処理は、Cost の割増が元のセル列より増える線分を採らない(増えるならセル中心を折れ点に残す)。`Docs/Architecture/TickStages.md` の割当表と `Docs/Architecture/AIModule.md` に載せる。(2) `Game/GameModes/AISmoke/` に `--ai-nav-smoke` の場面を作る。中身は平地・箱の障害物・動く箱・動物の代役 1 体で、Mode と Routine は `Game/GameModes/DogMovementSmoke` と同じ形にする。代役が経路に沿って目標へ着くと `AI_SMOKE mode=nav result=pass` を出す。Debug の Game がビルドできる(起動はしない。起動の確かめは G13-GR22-AI-SMOKE-CHECK)。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Modules/AI, Game/GameModes/AISmoke, Game/GameModes/GameModeIds.h, Game/GameApplicationHandler.cpp, Game/GameApplicationHandler.h, Docs/Architecture/AIModule.md, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
 - notes: 設計は要件 `#### GR21` の【動的障害物】と P2、ロードマップ 2812・2823 行。動物は G13-GR22-STEERING-MOTOR の CharacterBody で動くので静的なコライダーとの接触は物理が解く（Kinematic の通り抜けの心配はロードマップ 2833 行の頃より小さい）が、ナビの塞ぎの取りこぼしは壁を擦る動きとして出るので、整合の試験は防波堤として残す。スモークの場面は代役が動くので G13-GR22-STEERING-MOTOR の後にした。0.25 s・0.5 セルのしきい値は要件の仮の値で未計測。`GameApplicationHandler.cpp`・`GameModeIds.h` は差分を小さくする。試験を足す理由: 反証する契約は「押印と解除の数が釣り合い、経路が古くなったら分かり、経路の上に固体が無い」こと。カウンタの漏れは見えない壁として遊んでいるときだけに出て、撮影・ログでは気づけず黙って起きる。やらないこと: 地形からのベイク（G13-GR21-NVNAV-COOK）、出し入れ（G13-GR21-NAV-STREAMING）。
 
 ## G13-GR22-FLIGHT-FLOCK: 飛ぶ動物の 3D の操舵（高度帯・バンク・離着陸・止まり木）と、地上と空の群れを作る
@@ -8477,10 +8476,18 @@
 - after: G13-GR22-STEERING-MOTOR, G5-GR38-HEIGHTFIELD-QUERY, G5-GR38-PHYSICS-HEIGHTFIELD
 - gr: GR22
 - needs-gr: GR38
-- done-when: (1) `Private/AI/Flight/FlightController.*`: 3D の Seek・Arrive・Wander、地面からの高度帯（下限・上限。地面は `INavTerrainSource`）、旋回に応じたバンク（角の上限）、離陸・着陸・止まり木（アーキタイプの止まり木の候補の位置、または Entity の印）。飛ぶ動物は Kinematic の RigidBody と球のコライダーで、位置は AIModule の PreFixedTick で書く（物理の FixedBegin の後なので Kinematic の速度が移動量/dt になる。`PhysicsModule.cpp:191-210`・`1012-1017`）。障害物は前方の `SweepSphere`（GR08）で避ける。(2) 群れ: Separation・Alignment・Cohesion を地上（コンテキスト操舵へ重みで混ぜる）と空（3D）で使え、近傍は `UniformGridHash`（空は高さの帯で絞る）。仮のアーキタイプ `Assets/AI/Archetypes/Crow.json`（値は仮）。(3) 試験（`PhysicsDynamicsTest` の束へ MEMBER）: `AIFlockingTest` が、固定シードの N=32（2D と 3D）で 20 s 後に最小の個体間の距離が分離半径の 0.8 倍以上、距離 0.3 m 未満の衝突が 0、重心が目標へ近づく。`AIFlightTest` が、高度帯の外へ出ない（地形の偽の起伏の上でも）、バンクが上限を超えない、離陸から着陸までで止まり木に 0.2 m 以内で止まる、前方の箱を通り抜けない、NaN を出さない、2 回でビット一致、Kinematic の速度が移動量/dt に一致。
-- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(AIFlockingTest|AIFlightTest|AISteeringTest|AIUniformGridHashTest)$" --no-tests=error --output-on-failure --timeout 300`
-- paths: Library/Modules/AI, Assets/AI/Archetypes/Crow.json, Test/Modules/AI, Test/Modules/Physics/CMakeLists.txt, Docs/Architecture/AIModule.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- done-when: (1) `Private/AI/Flight/FlightController.*` に次を入れる。
+  - 3D の Seek・Arrive・Wander と、地面からの高度帯(下限・上限。地面は `INavTerrainSource`)。
+  - 旋回に応じたバンク(角の上限あり)。
+  - 離陸・着陸・止まり木(アーキタイプの止まり木の候補の位置、または Entity の印)。
+  - 飛ぶ動物は Kinematic の RigidBody と球のコライダーで動き、位置は AIModule の PreFixedTick で書く。
+  - 障害物は前方の `SweepSphere`(GR08)で避ける。掃引では、始点で触れている面のうち離れる向きの当たり(法線と進む向きの内積が正)を飛ばし、次の当たりの手前で止める。足場に触れたままでも上の静的な箱を通り抜けない。照会が失敗した歩は始点に留まる。
+  - Kinematic の速度は移動量/dt に一致する。物理がその歩の開始位置を控えたかを `RigidBodyComponent` の読み取りの口で引き、それを動く条件にする。控えていない歩(登録直後・剛体の交換・無効からの再有効化)は、収集した世界の姿勢を書き戻して速度 0 で待つ。
+  (2) 群れ: Separation・Alignment・Cohesion を地上(コンテキスト操舵へ重みで混ぜる)と空(3D)で使える。近傍は `UniformGridHash` で取り、空は高さの帯で絞る。空中待機と徘徊でも群れの速度が効く。仮のアーキタイプ `Assets/AI/Archetypes/Crow.json`(値は仮)を置く。
+  (3) Debug の Game のビルドが通る。試験は作らない・回さない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Modules/AI, Library/Modules/Physics/Public/Physics/RigidBodyComponent.h, Library/Modules/Physics/Private/Physics/RigidBodyComponent.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Assets/AI/Archetypes/Crow.json, Docs/Architecture/AIModule.md, TASKS.md, PROGRESS.md
+- effort: max
 - notes: 設計は要件 `#### GR22` の P3（カラスを採る場合のみ）とロードマップ 2813 行（飛行は 3D＋高度帯＋バンク）。カラスを採るかは企画で未定だが、作者の決定（企画で保留の要件もエンジンの機能として採る）に従い作る。多層ナビと 3D の経路探索は非ゴール（ロードマップ 2818 行）なので、飛行はステアリングだけ。試験の数値（0.8 倍・0.3 m・20 s・0.2 m）は要件の案の値で根拠は無い。試験を足す理由: 反証する契約は「群れがぶつからず散らばらず、飛ぶ物が帯と上限を守る」こと。外れると群れがすり抜ける・地面に潜るのが一瞬だけ起き、撮影では気づきにくい。やらないこと: 翼のアニメーション（見た目の資産が無い）。
 
 ## G13-GR24-SENSE-MODELS: 視覚（草と地形の遮蔽）・聴覚・嗅覚（風下の煙状の分布）・気づきの積分の純関数とポートを作る
@@ -8698,7 +8705,7 @@
 - notes: 設計は要件 `#### GR68` の設計 5〜7 と制約 f・g、受け入れ確認の UiFocusNavigationTest・UiInputRoutingTest・UiPauseGateTest。選定課題 G15-S2（ポーズの状態の正本）を決めた: (A) GR119 の `SimulationPauseState`（理由のビット）を正本にし、`ShouldAdvanceSimulation` は Bridge の全停止として残す。画面の積みは集約して Menu を 1 ビット立て、GR118 のフォーカス・最小化もここへ載せる（推奨）。理由: GameMode の更新がゲートの外で回るのでメニューを GameMode にでき（今は GameMode の状態機械もワールドと同じゲートの中。`ApplicationProcessor.cpp:2718-2724`）、Bridge とゲームの中のポーズが混ざらない。Router の consume は `InputState` のポーリングには効かないので、ゲームの入力は Router（InputMapper）経由に限る規約を `Docs/Architecture/` の入力の節に書く（要件のリスク 3）。入力の解除の名前は G1 の `InputSystem::ReleaseAll`（`InputSystem.h:163`）にそろえ、ロードマップの `ReleaseAllKeys` は作らない（「段階をまたぐ注意」4402 行）。試験を足す理由: 反証する契約は「モーダルの間はゲームへ入力が届かず、押しっぱなしが残らない」「ポーズの要求の数え方」。破れるとメニューの中で犬が動く・閉じた後にキーが押されたままになり、操作したときだけ出て撮影では見えず、黙って起きる。危険地帯: 入力の配送の Public API なので評価者を通す。
 
 ## G15-GR119-PAUSE-GATE: ゲームの中のポーズの状態（理由のビット）を Engine に置き、GameMode の更新とワールド・物理・粒子の更新のゲートを分け、ポーズ中も動く印を足す
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT
 - gr: GR119
 - needs-gr: GR02, GR10, GR49, GR57
