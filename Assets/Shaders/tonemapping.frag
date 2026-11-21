@@ -64,7 +64,9 @@ layout(location = 0) out vec4 outColor;
 const uint ACES20_LUT_OPERATOR = 4u;
 const uint NEUTRAL_LINEAR_OPERATOR = 5u;
 const uint GRADING_MODE_PROFILE = 2u;
-const float GRADE_VALUE_MAX = 65504.0;
+const float GRADE_INPUT_MAX = 65504.0;
+const float GRADE_COUPLED_MAX = 1e30;
+const float GRADE_DISPLAY_INPUT_MAX = 1e18;
 const float ACES20_LUT_SHAPER_OFFSET = 0.00390625;
 const float ACES20_LUT_SHAPER_MAX = 256.0;
 const float ACES20_LUT_SHAPER_SPAN = log2(ACES20_LUT_SHAPER_MAX / ACES20_LUT_SHAPER_OFFSET + 1.0);
@@ -241,15 +243,19 @@ float GradeContrastChannel(float value, float pivot, float contrast)
     return base > 0.0 ? pivot * pow(base, contrast) : 0.0;
 }
 
-// 半精度の上限を超えたときだけ、RGB を同じ倍率で縮める。
+// 輝度で成分が結びつく段の前で、最大成分が 1e30 を超えるときだけ RGB の比を保って縮める。
 vec3 LimitGradeColor(vec3 c)
 {
-    // 正の無限大を有限値にして、縮めるときの無限大と 0 の積を防ぐ。
-    c = min(c, vec3(1e30));
-    float m = max(max(c.r, c.g), c.b);
-    if (m > GRADE_VALUE_MAX)
+    bvec3 infinite = isinf(c);
+    if (any(infinite))
     {
-        c *= GRADE_VALUE_MAX / m;
+        // 無限大の成分を符号付きの上限に写すと、有限成分の比は 0 に収束する。
+        return mix(vec3(0.0), sign(c) * GRADE_COUPLED_MAX, infinite);
+    }
+    float m = max(max(c.r, c.g), c.b);
+    if (m > GRADE_COUPLED_MAX)
+    {
+        c *= GRADE_COUPLED_MAX / m;
     }
     return c;
 }
@@ -258,6 +264,8 @@ vec3 LimitGradeColor(vec3 c)
 vec3 ApplyGrade(vec3 c)
 {
     const vec3 luma = vec3(0.2126, 0.7152, 0.0722);
+    // 入力の無限大だけを同符号の半精度最大値に置き換え、暗部の持ち上げで無限大同士を引くのを防ぐ。
+    c = mix(c, sign(c) * GRADE_INPUT_MAX, isinf(c));
     c *= params.gradeExposureScale;
     c *= params.gradeWhiteBalanceGain.rgb;
 
@@ -277,12 +285,10 @@ vec3 ApplyGrade(vec3 c)
                  GradeContrastChannel(c.b, pivot, contrast));
     }
 
-    // RGB の比を保って半精度の上限に収め、彩度計算で無限大同士を引くのを防ぎ、元の比を肩に渡す。
-    c = LimitGradeColor(c);
-
     float saturation = params.gradeSaturation;
     if (saturation != 1.0)
     {
+        c = LimitGradeColor(c);
         if (params.gradeProtectedHueKeep > 0.0 && params.gradeProtectedHueHalfWidthDeg > 0.0)
         {
             saturation = mix(saturation, 1.0, ProtectedHueWeight(max(c, vec3(0.0))));
@@ -294,6 +300,7 @@ vec3 ApplyGrade(vec3 c)
     float strength = params.gradeHighlightRolloffStrength;
     if (strength > 0.0)
     {
+        c = LimitGradeColor(c);
         float y = dot(c, luma);
         float start = max(params.gradeHighlightRolloffStart, 1e-4);
         if (y > start)
@@ -307,8 +314,10 @@ vec3 ApplyGrade(vec3 c)
     float y = dot(max(c, vec3(0.0)), luma);
     float t = smoothstep(-2.0, 2.0, log2(max(y, 1e-6) / pivot));
     vec3 tint = params.gradeShadowTint.rgb + (params.gradeHighlightTint.rgb - params.gradeShadowTint.rgb) * t;
-    // 色を掛けた後の RGB の比を保って半精度の上限に収め、表示変換の二次式があふれるのを防ぐ。
-    return LimitGradeColor(c * tint);
+    // 無限大だけを有限値に置き換え、色の倍率が 0 のときに NaN が生じるのを防ぐ。
+    c = mix(c, sign(c) * GRADE_COUPLED_MAX, isinf(c));
+    // 小さい色倍率を先に反映し、表示変換が飽和する範囲で各成分を切って二次式のあふれを防ぐ。
+    return clamp(c * tint, vec3(-GRADE_DISPLAY_INPUT_MAX), vec3(GRADE_DISPLAY_INPUT_MAX));
 }
 
 // フィルムグレイン: 画素・フレームごとのseedから決まる、平均0・分散1の三角分布の雑音（PCGのhash）。
