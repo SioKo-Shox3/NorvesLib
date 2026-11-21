@@ -13114,3 +13114,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠（差し戻しの直し）: `.harness/runs/20261121-182206/verify-G14-GR62-LENS-SHUTTER-U7.txt`（直しを全部入れた先頭で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`exit_code=0` で `Game.vcxproj -> ...Game.exe`。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致）。
 - 人が見るときの見どころ（差し戻しの直し）: FOV モードの既定では見た目は変わらない（`ResolveCameraLens` は FocalLengthMm=0 で何もしない）。CameraComponent の LensMode を Physical にして焦点距離を変えると、起動画面（Rendering3DTest）の画角が焦点距離どおりに変わり、カメラを動かしてもモーションブラー・TAA が画面全体で筋を引かないこと。エディタのピッキングがそのときも狙った物に当たること。
 - Notes（差し戻しの直し）: 採った判断: m_MainCamera・登録されたカメラ・`Viewport::SetCamera` には確定前の値を残し、縦横比が決まる使う所（パケット・描画計画・ピッキング）で確定する（同じカメラに 2 度掛けても変わらない）。既知の限界: 今の描画経路から呼ばれていない旧い `SceneView::Render()`（引数なし、`CullProxies(Viewport*)`）と `Viewport::UpdateMatrices` の行列は確定前の画角のままで、PT はシャッターの割合を 1 で頭打ちにする（VirtualFrameRate が実フレーム率より低いときラスタの最大 2 倍と揃わない）。`CameraPicking.cpp` は paths の外だが、ピッキングの画角を描画と揃える直しで 6 行だけ触った。
+## G14-GR62-LENS-SHUTTER 人の判断での再開の仕上げ（2026-11-22）
+- Done: 統合ブランチ feature/scene-launcher を取り込んだ（衝突は PROGRESS.md の追記だけで、両方の追記を残した）。判断役の判断に従い、2 周目の指摘（全画面でないビューポートでの前のカメラの画角のずれ）はコードを変えずに既知の限界として記録した。`MotionBlurTileMax.frag` のシャッターの割合のコメントは既に `MotionBlur.frag` の「最大 2」と揃っている。
+- 証拠: `.harness/runs/20261122-011236/verify-G14-GR62-LENS-SHUTTER-merge.txt`（取り込んだ先頭で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`exit_code=0` で `Game.vcxproj -> ...Game.exe`。警告は LNK4099・C4996・C4244 だけ）。
+- 試験: 試験は作らず回していない（人の決まり）。done-when の試験の条件は判断役の書き換えで外れている。
+- 人が見るときの見どころ: 起動画面（Rendering3DTest）を引数なしで動かし、今と見た目が変わらないこと。`--camera-shutter-angle=180` を付けてカメラを回すと、天球・地面・岩に動きの向きの筋が出ること。CameraComponent の LensMode を Physical にすると焦点距離どおりに画角が変わり、カメラを動かしても画面全体に筋が出ないこと。
+- Next: ランナーの評価者の反証（Public API の `CameraProxy`・RenderThread・PT = 危険地帯）。Bokeh・Framing の値を使う側は G14-GR62-DOF-WIDE と G14-GR62-DIRECTOR。
+- Notes: 既知の限界: 物理レンズ（GateFit が Vertical 以外）を全画面でないビューポートで使うと、前のカメラはパケットで描画先全体の縦横比から確定するので、velocity・TAA・動きぼけの前後の画角がずれる。ピッキングもカメラの Viewport の矩形を使う。今は `Viewport::SetRect` の呼び出しが無く、起きない（前と今のカメラの画角の一致は、メインのビューポートが全画面の構成に限った）。分割画面など全画面でないビューポートを入れるときは、下の要起票を先に済ませる。
+- 要起票: 前のカメラの履歴をビューポートごとに確定済みで持ち、全画面でないビューポートでも物理レンズの前後の画角を揃え、ピッキングにもビューの矩形を渡す（今の前のカメラは `RenderingCoordinator.cpp` でパケットの `Scene.MainCamera` を描画先全体の縦横比で確定した値、`CameraPicking.cpp` はカメラの `Viewport` の矩形を使う）。
