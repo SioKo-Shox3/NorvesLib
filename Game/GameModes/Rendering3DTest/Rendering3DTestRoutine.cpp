@@ -1625,6 +1625,11 @@ namespace Game::GameModes
             data.m_pCameraComponent->SetShutterSpeed(1.0f / 100.0f);
             data.m_pCameraComponent->SetISO(100.0f);
             data.m_pCameraComponent->SetExposureCompensation(0.0f);
+            // 動きぼけを確かめるため、起動引数で正のシャッター角を指定したときだけ適用する。
+            if (data.m_StartupCameraShutterAngleDegrees > 0.0f)
+            {
+                data.m_pCameraComponent->SetShutterAngleDegrees(data.m_StartupCameraShutterAngleDegrees);
+            }
             // --exposure-ev100 の指定があれば、絞り・ISO を保ったままシャッター速度で合わせる。
             data.m_ExposureEV100 = ComputeEV100(data.m_pCameraComponent->GetAperture(),
                                                 data.m_pCameraComponent->GetShutterSpeed(),

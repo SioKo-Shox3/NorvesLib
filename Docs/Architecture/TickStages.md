@@ -50,10 +50,12 @@
 | `SpringArmComponent` | Camera（主群） | 固定更新後の位置を読み、追従姿勢を更新 | Unscaled | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1938` |
 | `HoldSlotComponent` | PostPhysics（主群） | 保持状態の整理 | World | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1950` |
 | `SocketAttachmentComponent` | PostPhysics（主群） | 評価済みの姿勢からソケットの追従を更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1960` |
+| `GroundContactComponent` | PostPhysics（主群・優先度 -1） | 固定ステップの公開番号が変わったときに、体と足ごとの接地のレイと表面の照会で同じ群の消費者（`FootSplashComponent` など優先度 0）より先に接地の状態を更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Component/GroundContactComponent.cpp:171` |
 | `AnimatorComponent` | Animation（主群）・PoseFinalize | Animation でアニメを進め、PoseFinalize で評価とイベント配信 | Animation | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1978` |
 | `SkinnedMeshComponent` | Animation（主群）・PoseFinalize | 自前の Animation 時刻更新と PoseFinalize での姿勢評価 | Animation | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1992` |
 | `ScriptComponent` | Default（主群） | Script の更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Component/ScriptComponent.cpp:56` |
 | `CharacterBodyComponent` | Movement（主群）・PoseFinalize | 設定に応じ一方の群で可変更新の移動を要求 | World | 非ポーズ時のsimulation | `Library/Modules/Physics/Private/Physics/PhysicsModule.cpp:103` |
+| `SteeringAgentComponent` | 群なし（AI モジュールに登録） | `AIModule::PreFixedTick` で操舵し、固定駆動では `Physics.CharacterFixed` の `BeforeSimulation` で運動を要求。`PostLateTick.ModuleLateTick` で Animator へ公開し、有効時は操舵を描画 | 固定刻み（Physics）。可変駆動の運動は Body の World。公開・描画は delta を使わない | 非ポーズ時のsimulation | `Library/Modules/AI/Private/AI/Steering/SteeringAgentComponent.cpp` の `Initialize` |
 | `EnemyComponent` | Default（主群） | 状態の遷移、攻撃の窓の開閉、アニメの要求。同じフレームの Animation 群に効く | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/Enemy/EnemyComponent.cpp` |
 | `ShishaComponent` | Default（主群） | EnemyComponent と同じ本体を、型の完全一致のため自身の型で登録 | World | 非ポーズ時のsimulation | `Game/Gameplay/Shisha/ShishaComponent.cpp` の `Initialize` |
 | `HitboxComponent` | 群なし（Module Late で評価） | 攻撃判定の窓と命中を評価し、OnHit を通知 | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp` の `LateTick` |
@@ -114,7 +116,7 @@
 | CPU 粒子と GPU 粒子の時計（GR57） | `bWorldAdvance` | `PostTick.Particles` → `ParticleSystem::Tick`。その中で `VfxEffectSystem::Tick` が GPU 粒子の経過時間を加算するため、`Unscaled` の GPU 粒子も停止する。 |
 | 気象の時間更新（GR49） | `bWorldAdvance` | `PostTick.Environment` → `EnvironmentSystem::Tick`。経過時間は `World` から取る。 |
 | 固定ステップ | `bWorldAdvance` | `AdvanceFixedSimulation` がワールドの `FixedBegin` / `FixedTick` / `FixedEnd` とモジュールの `PreFixedTick` / `FixedTick` を駆動する。停止中は累積値を保持し、その間の経過時間を加算しない。 |
-| AI の経路探索 | `bWorldAdvance` | 固定ステップ前半の `AIModule::PreFixedTick` が `m_Navigation.RunBudget()` を呼ぶ。 |
+| AI の経路探索と操舵 | `bWorldAdvance` | 固定ステップ前半の `AIModule::PreFixedTick` が操舵の歩を始め、`m_Navigation.RunBudget()` の後に操舵速度を求める。運動結果の Animator への公開と操舵の描画は `PostLateTick.ModuleLateTick` の `AIModule::LateTick`。 |
 | 物理後のワールド更新 | `bWorldAdvance` | `TickSimulation` → `World::LateTick`（`PostPhysics`、`Camera`、`PreRender`） |
 | モジュールとハンドラの後段更新 | `bWorldAdvance` | `PostLateTick.ModuleLateTick` → `IModule::LateTick`、続いて `PostLateTick.HandlerLateUpdate` → `IApplicationHandler::OnLateUpdate` |
 | チャンネルの経過時間（GR02） | `bWorldAdvance`（`Unscaled` を除く） | `TickSimulation` は毎フレーム `TimeSystem::BeginFrame` に進行条件を渡す。停止中は `Unscaled` 以外の経過時間が 0 になり、内部の実時間は進む。 |
@@ -141,8 +143,8 @@
 
 1. gate 外で入力を評価し、`PreUpdate` の `PreUpdate.HandlerUpdate`（骨格資産の反映と Handler の `OnUpdate`）→ `PreUpdate.ScriptBegin` を実行する。
 2. `bBridgeAdvance` が開いていれば `PreSimulation.GameModeStateMachine` を実行する。続いて `bWorldAdvance` が開いていれば `World::Tick`（`Input`〜`PoseFinalize`）→ `Vegetation::Tick` → `PostTick.Particles` → `PostTick.Environment` → `PostTick.Streaming` の順に実行する。ゲーム内ポーズ中はこの通常更新に代えて `World::TickWhenPaused` → `StreamingSystem::Update` の順に呼ぶ。
-3. `bWorldAdvance` が開いていれば固定ステップを 0 回以上実行する。各回はワールドの `FixedBegin`（変換の確定・補間準備と `Physics.FixedPre`）→ `FixedModulePre.PreFixedTick` → ワールドの `FixedTick`（`Physics.CharacterFixed`、`Physics.FixedStep` 等）→ `FixedModulePost.FixedTick` → ワールドの `FixedEnd`（変換の確定・補間履歴の記録・破棄予約の回収）の順。
-4. `bWorldAdvance` が開いていれば、固定ステップが 0 回でも `World::LateTick`（`PostPhysics` → `Camera` → `PreRender`）を 1 回実行する。ゲート外で `UpdateWorldFieldInteractors` → `PublishTo` → `UpdateRainNear` を呼び、同じ `bWorldAdvance` が開いていれば `PostLateTick.ModuleLateTick` → `PostLateTick.HandlerLateUpdate` を実行する。レジストリが `Running` のとき、モジュールは登録順に呼ばれる。
+3. `bWorldAdvance` が開いていれば固定ステップを 0 回以上実行する。各回はワールドの `FixedBegin`（変換の確定・補間準備と `Physics.FixedPre`）→ `FixedModulePre.PreFixedTick` → ワールドの `FixedTick`（`Physics.CharacterFixed`、`Physics.FixedStep` 等）→ `FixedModulePost.FixedTick` → ワールドの `FixedEnd`（変換の確定・補間履歴の記録・破棄予約の回収）の順。AI は `FixedModulePre.PreFixedTick` で操舵速度を確定し、固定駆動の CharacterBody は同じ歩の `Physics.CharacterFixed` でその値を消費する。可変駆動では手順 2 の Movement または PoseFinalize で直近の固定歩の値を使う。
+4. `bWorldAdvance` が開いていれば、固定ステップが 0 回でも `World::LateTick`（`PostPhysics` → `Camera` → `PreRender`）を 1 回実行する。ゲート外で `UpdateWorldFieldInteractors` → `PublishTo` → `UpdateRainNear` を呼び、同じ `bWorldAdvance` が開いていれば `PostLateTick.ModuleLateTick` → `PostLateTick.HandlerLateUpdate` を実行する。レジストリが `Running` のとき、モジュールは登録順に呼ばれる。`AIModule::LateTick` は直近の運動結果を Animator へ公開し、操舵の描画が有効ならデバッグ描画を積む。
 5. gate 外で振動更新、World の描画同期、SceneQuery の通常 world-AABB 更新を行い、`PostUpdate.ScriptEnd` → `PostUpdate.ModuleTick`（通常の `TickAll`）→ Handler の `OnPreRender` → 描画へ進む。Handler はフレーム内で共有所有し、callback による差し替えでもそのフレームの対象を生存させる。
 
 `PostTick.Streaming` は焦点を受けたセルの状態遷移、Prepare の仕事の投入と完了の回収、予算つきのコミットとアンロードを GameThread で進める。

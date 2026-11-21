@@ -83,6 +83,8 @@ namespace NorvesLib::Core::Scene
         float NoiseLevelDb = 0.0f;
         // 遮蔽の損失（GR116）。
         float TransmissionLossDb = 0.0f;
+        // audio に transmissionLossDb の鍵があれば true。false のときは親の表面か音の評価器の既定の壁の損失を使う（GR116）。
+        bool bHasTransmissionLossDb = false;
     };
 
     struct SurfaceVisualDesc
@@ -119,6 +121,8 @@ namespace NorvesLib::Core::Scene
         SurfaceAudioDesc Audio;
         SurfaceVisualDesc Visual;
         SurfacePhysicalDesc Physical;
+        // 草の場の密度がこの値を超えたら、この表面を草の表面として選ぶ（GR42。草の provider が引く対象の表面だけで使う）。
+        float VegetationDensityThreshold = 0.35f;
     };
 
     enum class SurfaceQueryFlags : uint8_t

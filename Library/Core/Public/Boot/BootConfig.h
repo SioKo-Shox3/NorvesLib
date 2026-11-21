@@ -32,12 +32,16 @@ namespace NorvesLib::Core::Boot
         Container::String WindowTitle = TEXT("NorvesLib Application");
 
         /**
-         * @brief ウィンドウ幅（ピクセル）
+         * @brief 起動時のクライアント領域の幅（物理 px）。
+         * Per-Monitor V2 では DPI によらず、表示倍率が 100% を超えても指定した幅で描画する。
+         * DPI の異なるモニターへ移動すると、OS が提案した矩形に合わせて幅も変わる。
          */
         int WindowWidth = 1280;
 
         /**
-         * @brief ウィンドウ高さ（ピクセル）
+         * @brief 起動時のクライアント領域の高さ（物理 px）。
+         * Per-Monitor V2 では DPI によらず、表示倍率が 100% を超えても指定した高さで描画する。
+         * DPI の異なるモニターへ移動すると、OS が提案した矩形に合わせて高さも変わる。
          */
         int WindowHeight = 720;
 
@@ -62,6 +66,13 @@ namespace NorvesLib::Core::Boot
          * @brief 垂直同期（VSync）有効
          */
         bool bVSync = true;
+
+        /**
+         * @brief 画面空間の Canvas（製品の UI の描き先）を起動時に作るか。
+         * 起動引数 --enable-canvas-view と同じ経路で作る。
+         * --capture-png の撮影では、--capture-ui が無ければ作らない（撮影は最終出力だけを写す）。
+         */
+        bool bEnableCanvasView = false;
 
         /**
          * @brief レンダースレッドを有効にするか
@@ -145,6 +156,15 @@ namespace NorvesLib::Core::Boot
          * ゲーム側の CreateApplicationBootConfig では設定不要です。
          */
         Container::VariableArray<Container::String> Arguments;
+
+        using ArgumentsConfigurator = void (*)(BootConfig &config);
+
+        /**
+         * @brief 起動引数（Arguments）を読んで起動設定を整える関数（任意）。
+         * エントリポイントが Arguments を設定した後、ApplicationProcessor の初期化の前に 1 回だけ呼ばれる。
+         * CreateApplicationBootConfig の中では Arguments がまだ空なので、引数で決める設定はここで行う。
+         */
+        ArgumentsConfigurator ConfigureFromArguments = nullptr;
 
         // ========== ハンドラ作成 ==========
 

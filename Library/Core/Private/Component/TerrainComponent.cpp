@@ -504,6 +504,26 @@ namespace NorvesLib::Core::Component
             LOG_WARNING("TERRAIN_COMPONENT_LAYERS_SKIPPED path=%s 層の表を読めません: %s", tablePath.c_str(), error.c_str());
             return;
         }
+        if (!Engine::GEngine)
+        {
+            return;
+        }
+
+        // 足元の照会が表の表面名を使えるよう、描画デバイスの有無にかかわらず地形の provider に結ぶ。
+        auto& provider = Engine::GEngine->GetTerrainSurfaceProvider();
+        if (!provider.SetLayerSurfaceNames(m_HeightField, desc))
+        {
+            LOG_WARNING("TERRAIN_COMPONENT_SURFACE_NAMES_SKIPPED path=%s 主地形に層の表面名を結べません", tablePath.c_str());
+        }
+        for (const auto& outer : m_OuterTerrains)
+        {
+            if (outer.HeightField && outer.HeightField->GetSplatLayerCount() == sourceLayerCount &&
+                !provider.SetLayerSurfaceNames(outer.HeightField, desc))
+            {
+                LOG_WARNING("TERRAIN_COMPONENT_SURFACE_NAMES_SKIPPED path=%s 外周の帯に層の表面名を結べません", tablePath.c_str());
+            }
+        }
+
         if (bNeedsOuterMaterial)
         {
             const auto layout = heightField.GetGridLayout();
