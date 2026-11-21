@@ -22,7 +22,9 @@ namespace NorvesLib::Core::Rendering
      *
      * 焦点距離はカメラの撮像面の高さ（既定 24 mm）とFOVから求め（PTと同じ）、CoCの直径（出力画素）は
      * CocScale × |z - FocusDistance| / z（zは視線方向の深度）。PTはピントを合わせた像面の倍率で
-     * 画角を1 - f/ピント距離倍に狭めるため、ラスタも同じ倍率で最終画像を拡大する（FilmScale）。bFocusBreathing が false なら FilmScale は 1。
+     * 画角を1 - f/ピント距離倍に狭めるため、ラスタも同じ倍率で最終画像を拡大する（FilmScale）。
+     * bFocusBreathing が false なら、PT の光線と同じく像面を焦点距離に固定する。FilmScale は 1 となり、
+     * CocScale の分母にはピント距離を使う。
      */
     struct DepthOfFieldLens
     {
@@ -52,7 +54,9 @@ namespace NorvesLib::Core::Rendering
             return lens;
         }
         const float diameter = focalLength / camera.Aperture;
-        const float cocScale = diameter * focalLength / (camera.FocusDistance - focalLength) *
+        const float focusDenominator = camera.Cinematic.Lens.bFocusBreathing
+            ? camera.FocusDistance - focalLength : camera.FocusDistance;
+        const float cocScale = diameter * focalLength / focusDenominator *
                                static_cast<float>(imageHeight) / sensorHeight;
         if (!std::isfinite(cocScale) || cocScale <= 0.0f)
         {

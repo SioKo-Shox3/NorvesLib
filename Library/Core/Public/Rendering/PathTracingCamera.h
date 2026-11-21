@@ -295,6 +295,7 @@ namespace NorvesLib::Core::Rendering
         return result;
     }
 
+    /** @brief CoC の直径を画素単位で求める。ピント呼吸が無効なら分母は被写体距離とピント距離の積になる。 */
     inline float ComputePathTracingCocPixels(const CameraProxy& camera,
                                               float objectDistance,
                                               uint32_t imageHeight)
@@ -310,9 +311,11 @@ namespace NorvesLib::Core::Rendering
             return 0.0f;
         }
         const float diameter = focalLength / camera.Aperture;
+        const float focusDenominator = camera.Cinematic.Lens.bFocusBreathing
+            ? camera.FocusDistance - focalLength : camera.FocusDistance;
         return diameter * focalLength *
                std::abs(objectDistance - camera.FocusDistance) /
-               (objectDistance * (camera.FocusDistance - focalLength)) *
+               (objectDistance * focusDenominator) *
                static_cast<float>(imageHeight) / sensorHeight;
     }
 
