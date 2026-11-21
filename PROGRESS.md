@@ -13065,8 +13065,18 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 経路（コードの読みで確かめた）: 固定歩の間に体 A を外して同じ `ComponentId` の体 B を足すと、A の終了処理が購読を消し、B の行が予約中の歩はモーターが接続を外して保留し、行ができた次の `PreFixedTick` で B に 1 件だけ購読する。段の外の入れ替えは次の `PreFixedTick` で行の違いを見て `Detach` → 購読の順に結び直す。体だけを外すと `StepMotor`・`MoveDelta` は 0 回。操舵 Component の即時の取り外しと 2 個目への引き継ぎは前回どおり（保存したハンドルで外し、古い呼び出しは接続番号で退ける）。
 - Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
 - Notes: 判断: 体の行が予約中の歩はモーターを結ばない（所有 Entity のハンドルの保留と同じ扱い。行ができる次の固定歩から結ぶ）。
+## G13-GR21-NAV-OBSTACLES（2026-11-22）
 - U1 動的なオーバーレイ(セルごとの塞ぎ・コストのカウンタとタイルの版)と足跡の塗り: 着地(直し 0 回)
 - U4 `--ai-nav-smoke` の場面(平地・箱の障害物・動く箱・動物の代役): 着地(直し 0 回)
 - U7 探索・平滑化・照会がオーバーレイを読み、経路がタイルの動的な版を持つ(レビュー済みの差分を当て直す): 着地(直し 0 回)
 - U3 NavObstacleComponent と AIModule の PreFixedTick での押印の更新: 着地(直し 1 回)
 - U6 動く箱に NavObstacleComponent を付けて場面を仕上げ、文書を足す: 着地(直し 1 回)
+- Done: 動的なオーバーレイ `NavDynamicOverlay`（セルごとの塞ぎの数とコストの加算量のカウンタ。押印の記録の Apply（加算）・Revoke（減算）で必ず釣り合い、上限を超える押印は全体を取り消し、全消去より前の記録は世代で捨てる。カウンタを変えたタイルの版を全体の通し番号で進める）と、円・カプセル・OBB の XZ の足跡をセルへ塗る `RasterizeNavDynamicFootprint`。
+- Done: A* の通行（始点のセルを除く）とコスト、平滑化の Raycast、照会（IsWalkable・NavRaycast・FindNearestWalkable・SampleCost）が塞ぎを読む。経路は通ったタイルの (タイル, 世代, DynamicVersion) を持ち、`IsPathStale` は世代か動的な版の違いで真、探索中に版が変わった経路は完成時点で古い。操舵は古い経路を引き直す。
+- Done: Public の `NavObstacleComponent`（REFLECTION_CLASS・3 つのコンストラクタ。PROPERTY: Shape・Radius・HalfLength・HalfExtents・MinHeight・MaxHeight・Mode（Block / Cost）・CostMultiplier。`RegisterReflectedTypes` に登録。Initialize で AIModule へ登録し、EndPlay・Finalize・デストラクタで押印を解除）。`NavObstacleSystem` が `AIModule::PreFixedTick` の先頭（操舵の `BeginStep` の前）で `Entity::GetTransformVersion()` の変化を見て、0.25 s 以上空けかつ 0.5 セル以上（向きの変化は外接半径の弧長）動いたときだけ古い足跡を引いて新しい足跡を足し、3 m/s を超える間は押印を外す。設定は `IAIModule::SetNavObstacleSettings` / `GetNavObstacleSettings`（`NavObstacleSettings`）。
+- Done: `Game/GameModes/AISmoke/` の `--ai-nav-smoke`（平地・箱の障害物 2 つ・往復する動く箱・CharacterBody と SteeringAgentComponent の代役 1 体）。動く箱に Block の OBB の `NavObstacleComponent` を付け、代役が目標へ着くと `AI_SMOKE mode=nav result=pass time=… distance=… obstacle_cells=… obstacle_cells_max=…` を出す。押印を一度も見ずに着いたら `result=fail reason=obstacle`。文書は `Docs/Architecture/AIModule.md` の「動く障害物」の節（既知の限界つき）と `Docs/Architecture/TickStages.md` の割当表の行。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が exit_code=0・error 0 件（`NorvesModule_AI.lib`・`Game.exe` を生成。`.harness/runs/20261122-015215/verify-G13-GR21-NAV-OBSTACLES-U6-build.txt`）。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- done-when (3) の試験（`NavDynamicObstacleTest`・`NavPhysicsConsistencyTest`）、`Test/Modules/Physics/CMakeLists.txt`・`Docs/Testing.md` の更新、ゲームを起動する `Scripts/Test-AINav.ps1` は、試験を作らない・回さない決まりにより作っていない。verify の ctest の行は回していない。
+- 人が見るときの見どころ: `Game.exe --ai-nav-smoke`（ナビと操舵のデバッグ描画は場面が有効にする）。青い動く箱が始点 (4.5, 16.5) と目標 (27.5, 16.5) を結ぶ直線を Z 方向に横切るので、黄色の代役の経路（緑の折れ線）が箱の手前で引き直されて箱を避けること、ログの `stage=ready … obstacle_cells=` と `result=pass … obstacle_cells_max=` が 0 でないことを見る。動的な塞ぎのセル自体はナビの格子の描画には出ない。撮影・計測の確かめは回さない決まり。
+- Next: 場面の起動の確かめ（G13-GR22-AI-SMOKE-CHECK）、地形からのベイク（G13-GR21-NVNAV-COOK）、タイルの出し入れ（G13-GR21-NAV-STREAMING）。
+- Notes: 判断: オーバーレイはエージェントの半径で膨らませないので、押印の足跡を全体で 1 つの余白 `AgentPadding`（既定 0.5 m = Medium の半径）で広げる。高さの帯 `HeightBand` は 2 m、速さのしきい値は 3 m/s（場面の箱は 0.5 m/s）。0.25 s・0.5 セルを含めすべて未計測の仮の値。既知の限界（平滑化が Cost のセルを横切りうる・`uint32_t` の通し番号の周回・Large の縁を擦りうる・可変 Tick で動かすと速さを歩の数の倍に見積もりうる・版がタイル単位）は `AIModule.md` に書いた。
