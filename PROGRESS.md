@@ -12673,3 +12673,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 3): `.harness/runs/20261121-055840/build-G16-GR73-SPATIAL-LISTENER.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで)。
 - Notes: 要起票: `Scripts/Test-M9World.ps1 -ContractOnly` の verify 行が todo と backlog のタスクに残り、どれも同じ理由で BLOCKED になる。行を外すか、ランナーの試験の行の判定で回さない扱いにする
 - U8 評価の指摘を直す — パンの両端と方位角・ドップラーの特異点・距離の範囲の統一(純関数): 着地(直し 0 回)
+- U9 評価の指摘を直す — リスナーのフォールバックを既定の姿勢へ統一し速度の履歴を切る: 着地(直し 0 回)

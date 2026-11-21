@@ -43,6 +43,7 @@ namespace NorvesLib::Modules::Audio
             const AudioListenerComponent* m_PreviousSelection = nullptr;
             bool m_bHasPreviousPosition = false;
             bool m_bPreviousWasCamera = false;
+            bool m_bPreviousWasFallback = false;
             uint32_t m_FallbackLogCount = 0;
         };
     }

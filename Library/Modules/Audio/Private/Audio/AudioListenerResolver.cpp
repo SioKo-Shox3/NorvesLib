@@ -96,12 +96,11 @@ namespace NorvesLib::Modules::Audio::Private
         {
             reason = "no_camera";
         }
-        if (mode != AudioListenerMode::MainCamera)
+        else if (mode != AudioListenerMode::MainCamera)
         {
             const auto* owner = selected->GetOwner();
             if (!owner)
             {
-                pose.Position = Math::Vector3::Zero;
                 reason = "entity_missing";
             }
             else if (mode == AudioListenerMode::Hybrid)
@@ -113,14 +112,22 @@ namespace NorvesLib::Modules::Audio::Private
                 pose = MakeAudioListenerPose(owner->GetWorldTransform());
             }
         }
-        if (reason && m_FallbackLogCount == 0)
+        const bool fallback = reason != nullptr;
+        if (fallback)
         {
-            LOG_WARNING("AUDIO_LISTENER fallback=origin reason=%s", reason);
-            m_FallbackLogCount = 1;
+            // 必要な入力が欠けたら位置と基底をまとめて既定値に戻す。
+            pose = AudioListenerState{};
+            if (m_FallbackLogCount == 0)
+            {
+                LOG_WARNING("AUDIO_LISTENER fallback=origin reason=%s", reason);
+                m_FallbackLogCount = 1;
+            }
         }
 
         pose.Velocity = Math::Vector3::Zero;
-        if (m_bHasPreviousPosition && selected == m_PreviousSelection && implicitCamera == m_bPreviousWasCamera &&
+        // 同じリスナーで有効な姿勢が続いたときだけ速度を求める。
+        if (m_bHasPreviousPosition && !m_bPreviousWasFallback && !fallback &&
+            selected == m_PreviousSelection && implicitCamera == m_bPreviousWasCamera &&
             deltaSeconds > 0.0f && std::isfinite(deltaSeconds))
         {
             // 小さな正の時間でも逆数があふれないように、各成分の差と除算を倍精度で求める。
@@ -135,6 +142,7 @@ namespace NorvesLib::Modules::Audio::Private
         m_PreviousPosition = pose.Position;
         m_PreviousSelection = selected;
         m_bPreviousWasCamera = implicitCamera;
+        m_bPreviousWasFallback = fallback;
         m_bHasPreviousPosition = true;
         return pose;
     }
@@ -150,5 +158,6 @@ namespace NorvesLib::Modules::Audio::Private
         m_PreviousSelection = nullptr;
         m_bHasPreviousPosition = false;
         m_bPreviousWasCamera = false;
+        m_bPreviousWasFallback = false;
     }
 }
