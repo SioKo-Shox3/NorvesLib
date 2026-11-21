@@ -91,6 +91,11 @@ namespace NorvesLib::Modules::AI
         return {m_Agents.data(), m_Agents.size()};
     }
 
+    Core::Locomotion::QuadrupedLocomotionParams AIModule::GetLocomotionProfile(Core::Container::AnsiStringView path)
+    {
+        return IsOwnerThread() ? m_LocomotionProfiles.Get(path) : Core::Locomotion::QuadrupedLocomotionParams{};
+    }
+
     bool AIModule::Initialize()
     {
         if (!IsOwnerThread() || m_Engine == nullptr)
@@ -190,6 +195,7 @@ namespace NorvesLib::Modules::AI
                 agent->m_bRegistered = false;
             }
             m_Agents.clear();
+            m_LocomotionProfiles.Clear();
             m_Navigation.Reset();
             m_bInitialized = false;
         }

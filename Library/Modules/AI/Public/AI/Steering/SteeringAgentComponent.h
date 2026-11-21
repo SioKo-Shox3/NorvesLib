@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Component/Component.h"
+#include "Container/PointerTypes.h"
 #include "Container/String.h"
 #include "Math/Vector3.h"
 #include "Math/Vector4.h"
@@ -8,8 +9,15 @@
 
 #include <cstdint>
 
+namespace NorvesLib::Core::Locomotion
+{
+    struct LocomotionOutput;
+}
+
 namespace NorvesLib::Modules::AI
 {
+    class AnimalMotor;
+
     enum class ESteeringDimension : uint8_t
     {
         Ground,
@@ -61,6 +69,7 @@ namespace NorvesLib::Modules::AI
         void Initialize() override;
         void EndPlay() override;
         void Finalize() override;
+        void OnPropertyApplied(const Core::ClassProperty& property) override;
 
         // GameThread で要求する。入力が不正な場合は false を返し、直前の要求を保つ。
         bool RequestIdle();
@@ -76,14 +85,23 @@ namespace NorvesLib::Modules::AI
         /// AIModule が固定ステップで決めたワールド座標系の操舵速度（m/s）。
         const Math::Vector3& GetSteeringVelocity() const { return m_SteeringVelocity; }
         bool IsRegisteredToModule() const { return m_bRegistered; }
+        bool IsMotorBound() const;
+        const Core::Locomotion::LocomotionOutput* GetMotorOutput() const;
 
     private:
         friend class AIModule;
+        friend class AnimalMotor;
         bool AcceptRequest(SteeringRequest request);
-        void UnregisterFromModule();
+        void DetachMotorAndUnregister();
         void SetSteeringVelocity(const Math::Vector3& velocity);
+        AnimalMotor& GetOrCreateMotor();
+        bool EnsureMotorBinding();
+        void StepMotor(float dt);
+        void PublishMotorVisual();
+        void ReloadMotorProfile();
 
         SteeringRequest m_Request;
+        Core::Container::TUniquePtr<AnimalMotor> m_Motor;
         Math::Vector3 m_SteeringVelocity;
         bool m_bRegistered = false;
     };

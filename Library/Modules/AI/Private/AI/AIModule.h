@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "AI/IAIModule.h"
+#include "AI/Motor/LocomotionProfileCache.h"
 #include "AI/Navigation/NavigationService.h"
 #include "Container/Span.h"
 #include "Container/VariableArray.h"
@@ -34,6 +35,7 @@ namespace NorvesLib::Modules::AI
         void RegisterAgent(SteeringAgentComponent& agent);
         void UnregisterAgent(SteeringAgentComponent& agent);
         uint32_t GetAgentCount() const;
+        Core::Locomotion::QuadrupedLocomotionParams GetLocomotionProfile(Core::Container::AnsiStringView path);
         // 登録順に参照する。登録・解除・終了処理でビューは無効になる。
         Core::Container::Span<SteeringAgentComponent* const> GetAgents() const;
 
@@ -43,6 +45,7 @@ namespace NorvesLib::Modules::AI
         const Thread::Thread::ThreadId m_OwnerThreadId = Thread::Thread::GetCurrentThreadId();
         Core::Engine::Engine* m_Engine = nullptr;
         NavigationService m_Navigation;
+        LocomotionProfileCache m_LocomotionProfiles;
         Core::Container::VariableArray<SteeringAgentComponent*> m_Agents;
         bool m_bInitialized = false;
 #if NORVES_ENABLE_DEBUG_OUTPUT

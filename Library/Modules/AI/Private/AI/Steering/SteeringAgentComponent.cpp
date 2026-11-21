@@ -1,6 +1,7 @@
 ﻿#include "AI/Steering/SteeringAgentComponent.h"
 
 #include "AI/AIModule.h"
+#include "AI/Motor/AnimalMotor.h"
 #include "Module/ModuleRegistry.h"
 
 #include <cmath>
@@ -40,7 +41,7 @@ namespace NorvesLib::Modules::AI
 
     SteeringAgentComponent::~SteeringAgentComponent()
     {
-        UnregisterFromModule();
+        DetachMotorAndUnregister();
     }
 
     void SteeringAgentComponent::Initialize()
@@ -50,10 +51,16 @@ namespace NorvesLib::Modules::AI
         {
             module->RegisterAgent(*this);
         }
+        ReloadMotorProfile();
+        EnsureMotorBinding();
     }
 
-    void SteeringAgentComponent::UnregisterFromModule()
+    void SteeringAgentComponent::DetachMotorAndUnregister()
     {
+        if (m_Motor)
+        {
+            m_Motor->Detach(GetOwner());
+        }
         if (m_bRegistered)
         {
             if (auto* module = Module())
@@ -65,14 +72,75 @@ namespace NorvesLib::Modules::AI
 
     void SteeringAgentComponent::EndPlay()
     {
-        UnregisterFromModule();
+        DetachMotorAndUnregister();
         Core::Component::Component::EndPlay();
     }
 
     void SteeringAgentComponent::Finalize()
     {
-        UnregisterFromModule();
+        DetachMotorAndUnregister();
         Core::Component::Component::Finalize();
+    }
+
+    void SteeringAgentComponent::OnPropertyApplied(const Core::ClassProperty& property)
+    {
+        Core::Component::Component::OnPropertyApplied(property);
+        if (&property == s_PropertyPtr_MotorProfilePath)
+        {
+            ReloadMotorProfile();
+        }
+    }
+
+    AnimalMotor& SteeringAgentComponent::GetOrCreateMotor()
+    {
+        if (!m_Motor)
+        {
+            m_Motor = Core::Container::MakeUnique<AnimalMotor>();
+        }
+        return *m_Motor;
+    }
+
+    bool SteeringAgentComponent::EnsureMotorBinding()
+    {
+        auto* owner = GetOwner();
+        return owner && GetOrCreateMotor().EnsureBinding(*owner, *this);
+    }
+
+    void SteeringAgentComponent::StepMotor(float dt)
+    {
+        auto* owner = GetOwner();
+        if (m_Motor && owner)
+        {
+            m_Motor->Step(*owner, dt, m_SteeringVelocity);
+        }
+    }
+
+    void SteeringAgentComponent::PublishMotorVisual()
+    {
+        auto* owner = GetOwner();
+        if (m_Motor && owner)
+        {
+            m_Motor->PublishAnimator(*owner);
+        }
+    }
+
+    void SteeringAgentComponent::ReloadMotorProfile()
+    {
+        if (auto* module = Module())
+        {
+            GetOrCreateMotor().SetParams(module->GetLocomotionProfile(MotorProfilePath.Get()));
+        }
+    }
+
+    bool SteeringAgentComponent::IsMotorBound() const
+    {
+        const auto* owner = GetOwner();
+        return m_Motor && owner && m_Motor->IsBoundTo(*owner);
+    }
+
+    const Core::Locomotion::LocomotionOutput* SteeringAgentComponent::GetMotorOutput() const
+    {
+        return IsMotorBound() ? &m_Motor->GetOutput() : nullptr;
     }
 
     bool SteeringAgentComponent::AcceptRequest(SteeringRequest request)
