@@ -12835,3 +12835,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(反復 5): ランナーの評価者の反証(前回の指摘 3 件への対応の差分)。人が聴くときの見どころは反復 2 の Next のとおり。
 - Notes(反復 5): 採った判断: 2D の音は開始の時点で休眠にならないので、クリップの選び方の順(奪取の後)は変えず `CreateVoice` の検査に任せた。3D の物理の開始も、不正な定義では既存の voice を奪う前に拒むようになった。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
 - U5 1 voice の PCM のバイト数の上限を共通の検査に足す: 着地(直し 0 回)
+- Done(反復 1、run 20261121-180853): 判断役の決定で差し替えた done-when (3) を入れた。1 voice に渡せる PCM のバイト数の上限 `kAudioMaxVoicePcmBytes`(2 GiB。`AudioDomain.h`)を置き、`IsPlayableVoiceDesc` が PCM のバイト数も受けて 0 バイトと上限超えを拒む(説明のコメントも付けた)。サービスの `CreateVoice` と 3D の `Play`(奪取とスロットの確保の前)が同じ検査を通るので、上限を超える PCM は開始の距離に関わらず `InvalidState` で拒まれ、休眠のハンドルは出ない。`XAudio2Backend.cpp` の `static_assert` で、定数が `XAUDIO2_MAX_BUFFER_BYTES` を超えないようにした。`Docs/Architecture/AudioFlow.md` の休眠の節に上限を書いた。
+- 証拠(反復 1): `.harness/runs/20261121-180853/verify-G16-GR73-VIRTUAL-VOICE-iter1-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が cmake exit code 0 で Game.exe まで。`AudioDomain.cpp`・`SoundSystem.cpp`・`XAudio2Backend.cpp` を再コンパイル。エラーは 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。
+- Next(反復 1): ランナーの評価者の反証(前回の指摘 1 件への対応の差分)。人が聴くときの見どころは反復 2 の Next のとおり。
+- Notes(反復 1): 採った判断: 上限の定数は `AudioDomain.h` に置き、XAudio2 のバックエンドがそれを include して static_assert で照らす。サービスの共通の検査なので、Null のバックエンドでも同じ上限で拒む。範囲の外に残したもの: 2D の音の奪取と検査の順、ロードし直しでの形式の変化の検出、復帰の失敗を毎 Update 試し直すこと(文書に書いた既知の限界)。done-when (3) の試験は判断役の決定で外れた。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
