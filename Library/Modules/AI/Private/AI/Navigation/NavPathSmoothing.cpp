@@ -5,7 +5,7 @@
 namespace NorvesLib::Modules::AI
 {
     bool SmoothNavPath(const NavGrid& grid, Core::Container::Span<const NavCellCoord> cells, float radius,
-                       Core::Container::VariableArray<Math::Vector3>& outPoints)
+                       Core::Container::VariableArray<Math::Vector3>& outPoints, const NavDynamicOverlay* overlay)
     {
         outPoints.clear();
         if (cells.empty())
@@ -23,7 +23,7 @@ namespace NorvesLib::Modules::AI
             for (size_t j = anchor + 1; j < cells.size(); ++j)
             {
                 const Math::Vector3 end = grid.GetCellCenter(cells[j]);
-                if (NavGridQueries::Raycast(grid, start, end, radius).bHit)
+                if (NavGridQueries::Raycast(grid, start, end, radius, overlay).bHit)
                 {
                     break;
                 }
@@ -31,7 +31,7 @@ namespace NorvesLib::Modules::AI
                 next = j;
             }
 
-            // A* の隣接セルは直進なら両端、斜めなら角を挟む 2 セルも通れるので、必ず先へ進める。
+            // 探索後の押印で隣接セルへの線分も塞がれた場合は、経路全体を破棄する。
             if (next == anchor)
             {
                 outPoints.clear();

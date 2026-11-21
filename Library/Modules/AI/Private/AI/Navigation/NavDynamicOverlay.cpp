@@ -161,7 +161,6 @@ namespace NorvesLib::Modules::AI
     {
         Clear();
         m_Coordinates = NavGrid(desc);
-        m_Serial = 0;
     }
 
     void NavDynamicOverlay::Clear()

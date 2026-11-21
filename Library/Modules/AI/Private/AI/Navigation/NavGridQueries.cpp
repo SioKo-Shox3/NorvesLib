@@ -1,5 +1,7 @@
 ﻿#include "AI/Navigation/NavGridQueries.h"
 
+#include "AI/Navigation/NavDynamicOverlay.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -12,9 +14,10 @@ namespace NorvesLib::Modules::AI::NavGridQueries
         constexpr int64_t kMaxCell = INT32_MAX;
         constexpr double kInfinity = std::numeric_limits<double>::infinity();
 
-        bool IsPassable(NavCellRef ref, uint16_t thresholdQ)
+        bool IsPassable(NavCellRef ref, NavCellCoord cell, uint16_t thresholdQ, const NavDynamicOverlay* overlay)
         {
-            return ref && IsNavCellPassable(ref.Tile->Flags[ref.Index], ref.Tile->ClearanceQ[ref.Index], thresholdQ);
+            return ref && IsNavCellPassable(ref.Tile->Flags[ref.Index], ref.Tile->ClearanceQ[ref.Index], thresholdQ)
+                && !(overlay && overlay->IsBlocked(cell));
         }
 
         // 次の輪も含めた外側のセル中心までの、一軸方向の距離の下限。中心は GetCellCenter と同じ精度に丸める。
@@ -91,19 +94,21 @@ namespace NorvesLib::Modules::AI::NavGridQueries
         }
     } // namespace
 
-    bool IsCellPassable(const NavGrid& grid, NavCellCoord cell, uint16_t thresholdQ)
+    bool IsCellPassable(const NavGrid& grid, NavCellCoord cell, uint16_t thresholdQ,
+                        const NavDynamicOverlay* overlay)
     {
-        return IsPassable(grid.FindCell(cell), thresholdQ);
+        return IsPassable(grid.FindCell(cell), cell, thresholdQ, overlay);
     }
 
-    bool IsWalkable(const NavGrid& grid, const Math::Vector3& position, float radius)
+    bool IsWalkable(const NavGrid& grid, const Math::Vector3& position, float radius,
+                    const NavDynamicOverlay* overlay)
     {
         return IsCellPassable(grid, grid.WorldToCell(position.x, position.z),
-                              NavClearanceThresholdQ(radius, grid.GetDesc().CellSize));
+                              NavClearanceThresholdQ(radius, grid.GetDesc().CellSize), overlay);
     }
 
     bool FindNearestWalkable(const NavGrid& grid, const Math::Vector3& position, float radius,
-                             float searchRadius, Math::Vector3& outPosition)
+                             float searchRadius, Math::Vector3& outPosition, const NavDynamicOverlay* overlay)
     {
         if (grid.GetLoadedTileCount() == 0 || !std::isfinite(position.x) || !std::isfinite(position.z))
         {
@@ -123,7 +128,7 @@ namespace NorvesLib::Modules::AI::NavGridQueries
         const auto visit = [&](int64_t x, int64_t z)
         {
             const NavCellCoord cell{static_cast<int32_t>(x), static_cast<int32_t>(z)};
-            if (!IsCellPassable(grid, cell, threshold))
+            if (!IsCellPassable(grid, cell, threshold, overlay))
             {
                 return;
             }
@@ -195,9 +200,11 @@ namespace NorvesLib::Modules::AI::NavGridQueries
     }
 
     static NavRaycastResult RaycastImpl(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to,
-                                       float radius, Core::Container::VariableArray<NavTileCoord>* outTestedTiles)
+                                       float radius, Core::Container::VariableArray<NavTileCoord>* outTestedTiles,
+                                       const NavDynamicOverlay* overlay)
     {
-        NavCellCoord cell = grid.WorldToCell(from.x, from.z);
+        const NavCellCoord startCell = grid.WorldToCell(from.x, from.z);
+        NavCellCoord cell = startCell;
         const NavGridDesc& desc = grid.GetDesc();
         if (!IsFinite(from) || !IsFinite(to) || !std::isfinite(radius) ||
             !std::isfinite(desc.OriginX) || !std::isfinite(desc.OriginZ))
@@ -223,7 +230,7 @@ namespace NorvesLib::Modules::AI::NavGridQueries
                 }
             }
             constexpr uint32_t kMaxVisited = 1u << 20;
-            if (visited++ < kMaxVisited && IsCellPassable(grid, candidate, threshold))
+            if (visited++ < kMaxVisited && IsCellPassable(grid, candidate, threshold, candidate == startCell ? nullptr : overlay))
             {
                 return false;
             }
@@ -293,24 +300,29 @@ namespace NorvesLib::Modules::AI::NavGridQueries
         }
     }
 
-    NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius)
+    NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius,
+                             const NavDynamicOverlay* overlay)
     {
-        return RaycastImpl(grid, from, to, radius, nullptr);
+        return RaycastImpl(grid, from, to, radius, nullptr, overlay);
     }
 
     NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius,
-                             Core::Container::VariableArray<NavTileCoord>& outTestedTiles)
+                             Core::Container::VariableArray<NavTileCoord>& outTestedTiles, const NavDynamicOverlay* overlay)
     {
-        return RaycastImpl(grid, from, to, radius, &outTestedTiles);
+        return RaycastImpl(grid, from, to, radius, &outTestedTiles, overlay);
     }
 
-    uint32_t SampleCost(const NavGrid& grid, const Math::Vector3& position, const NavAgentProfile& profile)
+    uint32_t SampleCost(const NavGrid& grid, const Math::Vector3& position, const NavAgentProfile& profile,
+                        const NavDynamicOverlay* overlay)
     {
-        const NavCellRef ref = grid.FindCell(grid.WorldToCell(position.x, position.z));
-        if (!IsPassable(ref, NavClearanceThresholdQ(profile.Radius, grid.GetDesc().CellSize)))
+        const NavCellCoord cell = grid.WorldToCell(position.x, position.z);
+        const NavCellRef ref = grid.FindCell(cell);
+        if (!IsPassable(ref, cell, NavClearanceThresholdQ(profile.Radius, grid.GetDesc().CellSize), overlay))
         {
             return kNavCostImpassable;
         }
-        return NavStepCost(false, NavCellExtraPer128(profile, ref.Tile->Flags[ref.Index], ref.Tile->GrassQ[ref.Index]));
+        const uint32_t terrain = NavCellExtraPer128(profile, ref.Tile->Flags[ref.Index], ref.Tile->GrassQ[ref.Index]);
+        const uint32_t dynamic = overlay ? overlay->GetCostExtraPer128(cell) : 0;
+        return NavStepCost(false, terrain + (std::min)(dynamic, UINT32_MAX - terrain));
     }
 } // namespace NorvesLib::Modules::AI::NavGridQueries

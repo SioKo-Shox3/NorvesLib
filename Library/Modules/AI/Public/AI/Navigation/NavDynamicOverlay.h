@@ -51,7 +51,7 @@ namespace NorvesLib::Modules::AI
     class NavDynamicOverlay
     {
     public:
-        /// 格子設定を取り替え、通し番号を 0 に戻す。
+        /// 通し番号を保ったまま格子設定を取り替え、既存の押印を消去する。
         void Reset(const NavGridDesc& desc);
         /// 通し番号を保ったまま全タイルを捨て、既存の押印記録を無効にする。
         void Clear();
