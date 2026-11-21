@@ -12817,3 +12817,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 人が見ること（設計の選択として残した）: `CanSteer` が偽の相手は速度を零として読むので `Pursue` の予測が外れる。帯の幅が 0 の `KeepDistance` は接近と後退を繰り返す余地がある。先頭の操舵 Component が操舵できなくても 2 個目へは切り替えない。
 - Notes: 要起票: QuadrupedLocomotionComponent を RemoveComponent で外すと GetOwner() が null になり、体の BeforeSimulation に購読が残る（`Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:172-181` の `Detach` が所有者 null のとき `Remove` を飛ばす。`RemoveInner` が `Finalize` より先に Outer を消すため）。
 - U20 運動の結び付きを体の ECS の行（番号と世代）で照合し、同じ ComponentId の別の体へ替わっても結び直す（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 1 の評価）: `AnimalMotor` は体の同一性を体の `ComponentId` ではなく ECS の行（`Component::GetEcsEntity()` の番号と世代）で見る。結ぶときに行を保存し、`EnsureBinding` の再利用の判定・`GetBoundBody`・コールバックで今の体の行と比べる。体の行が null（段の最中に足されて作成が予約中）の間は購読を保留し、行ができた最初の固定歩で結ぶ。`AIModule.md` の運動の節を合わせた。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0・error 0 件（`AnimalMotor.cpp`・`SteeringAgentComponent.cpp`・`SteeringSystem.cpp` を再コンパイルし、`NorvesModule_AI.lib`・`Game.exe` を生成）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより `ctest` と `PhysicsDynamicsTest`（ターゲットなし）は回していない。
+- 経路（コードの読みで確かめた）: 固定歩の間に体 A を外して同じ `ComponentId` の体 B を足すと、A の終了処理が購読を消し、B の行が予約中の歩はモーターが接続を外して保留し、行ができた次の `PreFixedTick` で B に 1 件だけ購読する。段の外の入れ替えは次の `PreFixedTick` で行の違いを見て `Detach` → 購読の順に結び直す。体だけを外すと `StepMotor`・`MoveDelta` は 0 回。操舵 Component の即時の取り外しと 2 個目への引き継ぎは前回どおり（保存したハンドルで外し、古い呼び出しは接続番号で退ける）。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 判断: 体の行が予約中の歩はモーターを結ばない（所有 Entity のハンドルの保留と同じ扱い。行ができる次の固定歩から結ぶ）。
