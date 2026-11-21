@@ -30,10 +30,10 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
-     * @brief Stage-2 pass that publishes the final composite color.
+     * @brief シーンの上にキャンバスをアルファ合成し、Composite.Color として出力する。
      *
-     * F1 imports physical per-view frame outputs. It safely aliases scene to
-     * Composite.Color; later board phases can replace Execute with alpha-over.
+     * 出力はキャンバスと同じ画面寸法とし、RenderScale を適用したシーンを UV で画面全体に引き伸ばす。
+     * キャンバスが無い場合はシーンをそのまま Composite.Color として出力する。
      */
     class CompositePass final : public IRenderGraphPass
     {

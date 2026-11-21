@@ -131,6 +131,9 @@ namespace NorvesLib::Core::Rendering
      *
      * カメラが見た目の3D LUT（CameraProxy::LookLut）を指定していれば、グレーディングの後・ビネットの前に掛ける
      * （Aces20Lut の演算子には掛けない）。
+     * CameraProxy::PostProcess.bValid が真のときは、プロファイルの値で見た目を決める。
+     * 全演算子でトーンマップ前に Grade を掛け、変換後に Look の LUT A・B を混ぜる。
+     * 最後にビネット、グレイン、ディザの順で掛ける。
      */
     class ToneMappingPass : public IViewPass, public IRenderGraphPass
     {
@@ -273,14 +276,21 @@ namespace NorvesLib::Core::Rendering
         // カメラの曲線の差し替え（NeutralLinear）を反映した演算子の番号
         static uint32_t ResolveOperatorType(const CameraProxy* camera, uint32_t viewOperatorType);
 
+        struct LookLutSlot
+        {
+            RHI::TexturePtr Texture;
+            Container::String Path;
+            bool bLoadFailed = false;
+        };
+
         /**
-         * @brief binding 3 に結ぶ見た目の3D LUTを用意する
+         * @brief binding 3 または 4 に結ぶ見た目の3D LUTを用意する
          *
          * カメラが指定したパスのLUTを読み込み、同じパスの間は使い回す。読み込みに失敗したパスは
          * パスが変わるまで読み直さない。
-         * @return 掛けるLUT。掛けない（指定なし・強さ0・読み込み失敗）ときは nullptr
+         * @return 掛けるLUT。掛けない（指定なし・読み込み失敗）ときは nullptr
          */
-        RHI::TexturePtr PrepareLookLut(const CameraProxy* camera);
+        RHI::TexturePtr PrepareLookLut(LookLutSlot& slot, const char* assetPath);
         RHI::TexturePtr LoadLookLut(const char* assetPath) const;
         // 色の階段の入力（SetDisplayRampInput）を出力の大きさで用意する。作成・転送は直列の段でだけ呼ぶ
         void PrepareDisplayRamp();
@@ -313,14 +323,14 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_ColorLutSampler;
         bool m_bColorLutLoadFailed = false;
 
-        // 見た目の3D LUT（binding 3）。掛けないときは 1×1×1 の代替を結ぶ
-        RHI::TexturePtr m_LookLutTexture;
-        Container::String m_LookLutPath;
-        bool m_bLookLutLoadFailed = false;
+        // 見た目の3D LUT（binding 3・4）。掛けない側には 1×1×1 の代替を結ぶ
+        LookLutSlot m_LookLutA;
+        LookLutSlot m_LookLutB;
 
         // PrepareParallelRecord が直列で用意した、そのフレームの演算子と見た目の LUT（次の Execute が 1 回だけ使う）
         uint32_t m_PreparedViewOperatorType = 0;
         RHI::TexturePtr m_PreparedLookLut;
+        RHI::TexturePtr m_PreparedLookLutB;
         bool m_bLutsPreparedForRecord = false;
 
         // 表示変換の照合の色の階段（SetDisplayRampInput）。出力の大きさが変わったら作り直す

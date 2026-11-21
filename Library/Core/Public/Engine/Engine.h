@@ -16,6 +16,7 @@
 #include "Scene/SceneQuery.h"
 #include "Scene/SurfaceRegistry.h"
 #include "Scene/AcousticTransmission.h"
+#include "Text/StringTable.h"
 #include "Input/InputSystem.h"
 #include "Input/IInputDevice.h"
 #include "Input/HapticsService.h"
@@ -487,6 +488,22 @@ namespace NorvesLib::Core::Engine
             return m_Acoustics;
         }
 
+        /**
+         * @brief 言語ごとの文字列表を取得
+         */
+        StringTable &GetStringTable()
+        {
+            return m_StringTable;
+        }
+
+        /**
+         * @brief 言語ごとの文字列表を取得（const版）
+         */
+        const StringTable &GetStringTable() const
+        {
+            return m_StringTable;
+        }
+
         // ========== 入力システム ==========
 
         /**
@@ -626,6 +643,8 @@ namespace NorvesLib::Core::Engine
         // 音の通りにくさの評価器（GEngine 配下で実体保持。GameThread 専用）。
         // SceneQuery・表面の登録簿・草・地形・気象を借りるので、それらより後に宣言して先に破棄する。
         Scene::AcousticTransmissionEvaluator m_Acoustics;
+        // 言語ごとの文字列表
+        StringTable m_StringTable;
 
         // 入力システム（GEngine配下で実体保持）
         Input::InputSystem m_InputSystem;
