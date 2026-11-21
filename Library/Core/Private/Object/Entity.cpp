@@ -308,6 +308,19 @@ namespace NorvesLib::Core
         return nullptr;
     }
 
+    void Entity::SetTickWhenPaused(bool bEnabled)
+    {
+        if (m_bTickWhenPaused == bEnabled)
+        {
+            return;
+        }
+        m_bTickWhenPaused = bEnabled;
+        if (m_PausedTickWorld)
+        {
+            m_PausedTickWorld->SetPausedTickRegistration(*this, bEnabled);
+        }
+    }
+
     bool Entity::IsInWorld() const
     {
         return GetWorld() != nullptr;

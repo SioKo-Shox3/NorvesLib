@@ -327,6 +327,12 @@ namespace NorvesLib::Core
          */
         void Tick(float deltaTime);
         void Tick(const Engine::FrameTimes& times);
+
+        /// ポーズ中は登録一覧だけから対象を集め、未スケールの経過秒で更新し、最後に破棄予約を回収する。
+        void TickWhenPaused(float unscaledDeltaTime);
+        /// ポーズ中の更新を明示した Entity と Component の合計数。
+        size_t GetTickWhenPausedEntryCount() const { return m_PausedTickEntries.size(); }
+
         // 同じフレームの収集結果を用い、物理後の群を実行する。再収集はしない。
         void LateTick(float deltaTime);
         void LateTick(const Engine::FrameTimes& times);
@@ -561,6 +567,7 @@ namespace NorvesLib::Core
     private:
         friend class Engine::ApplicationProcessor;
         friend class Entity;
+        friend class Component::Component;
         friend struct WorldTickGroupTestAccess;
         bool IsDeferringObjectRemoval() const
         {
@@ -612,7 +619,9 @@ namespace NorvesLib::Core
         void SyncOrderedTicks();
         void CollectOrderedTicks(Entity& entity, size_t& ordinal);
         bool CanDispatchEntity(const Entity& entity) const;
+        struct TickTimeContext;
         const Engine::FrameTimes* m_ActiveTickTimes = nullptr;
+        bool m_bTickingWhenPaused = false;
         float m_ActiveTickDelta = 0;
         bool m_bHasActiveTickTime = false;
         bool TryResolveChannelDelta(const Entity& owner, Engine::TimeChannel channel, float& out) const;
@@ -672,6 +681,18 @@ namespace NorvesLib::Core
         void LateTickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
         void DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,
                                 const Engine::FrameTimes* times = nullptr);
+        /// Entity と Component の印を一つの列に保ち、種類をまたいだ登録順を維持する。
+        Container::VariableArray<IUnknown*> m_PausedTickEntries;
+        struct PausedTickCall
+        {
+            Entity* Owner;
+            Component::Component* Target;
+            Component::ComponentTickFn Body;
+        };
+        Container::VariableArray<PausedTickCall> m_PausedTickCalls[Component::TickGroupCount];
+        void SetPausedTickRegistration(IUnknown& object, bool bEnabled);
+        void CollectPausedTickCalls();
+        void UnbindPausedTickComponent(Component::Component& component);
         void InvalidateTickComponent(Component::Component& component);
         void InvalidateTickEntitySubtree(Entity& entity);
         void CollectPendingComponents(Entity& entity, Container::VariableArray<Component::Component*>& output);

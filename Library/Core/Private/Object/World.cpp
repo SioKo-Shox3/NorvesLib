@@ -256,6 +256,14 @@ namespace NorvesLib::Core
             }
         }
 
+        Component::TickGroupMask ParticipatingTickGroups(const Component::Component& target,
+                                                         const Component::ComponentTickRegistration& registration)
+        {
+            const auto groups = registration.bPrimaryGroupOnly ? Component::TickGroupBit(target.GetTickGroup())
+                                                                : registration.Groups;
+            return target.GetTickGroupMask() & groups;
+        }
+
         class ScopedWorldFlag
         {
         public:
@@ -1181,6 +1189,11 @@ namespace NorvesLib::Core
         m_TextBoardSeen.clear();
         m_bTextBoardOrderDirty = false;
 
+        m_PausedTickEntries.clear();
+        for (auto& calls : m_PausedTickCalls)
+        {
+            calls.clear();
+        }
         m_PendingDestroyEntities.clear();
         m_PendingDestroyComponents.clear();
 
@@ -1567,6 +1580,137 @@ namespace NorvesLib::Core
         return count;
     }
 
+    struct World::TickTimeContext
+    {
+        World& Owner;
+        const Engine::FrameTimes* PreviousTimes;
+        float PreviousDelta;
+        bool PreviousActive;
+        TickTimeContext(World& owner, const Engine::FrameTimes* times, float delta)
+            : Owner(owner), PreviousTimes(owner.m_ActiveTickTimes), PreviousDelta(owner.m_ActiveTickDelta),
+              PreviousActive(owner.m_bHasActiveTickTime)
+        {
+            owner.m_ActiveTickTimes = times;
+            owner.m_ActiveTickDelta = delta;
+            owner.m_bHasActiveTickTime = true;
+        }
+        ~TickTimeContext()
+        {
+            Owner.m_ActiveTickTimes = PreviousTimes;
+            Owner.m_ActiveTickDelta = PreviousDelta;
+            Owner.m_bHasActiveTickTime = PreviousActive;
+        }
+    };
+
+    void World::SetPausedTickRegistration(IUnknown& object, bool bEnabled)
+    {
+        const auto it = std::find(m_PausedTickEntries.begin(), m_PausedTickEntries.end(), &object);
+        if (bEnabled && it == m_PausedTickEntries.end())
+        {
+            m_PausedTickEntries.push_back(&object);
+        }
+        else if (!bEnabled && it != m_PausedTickEntries.end())
+        {
+            m_PausedTickEntries.erase(it);
+        }
+    }
+
+    void World::CollectPausedTickCalls()
+    {
+        for (auto& calls : m_PausedTickCalls)
+        {
+            calls.clear();
+        }
+        Container::UnorderedSet<Component::Component*> seen;
+        auto collect = [&](Entity& owner, Component::Component& target)
+        {
+            if (target.m_PausedTickWorld != this || !seen.insert(&target).second)
+            {
+                return;
+            }
+            const auto* registration = FindComponentTick(target.GetClass());
+            if (!registration)
+            {
+                return;
+            }
+            const auto groups = ParticipatingTickGroups(target, *registration);
+            for (uint8_t index = 0; index < Component::TickGroupCount; ++index)
+            {
+                const auto group = static_cast<Component::ETickGroup>(index);
+                const auto body = registration->BodyFor(group);
+                if (body && (groups & Component::TickGroupBit(group)) != 0)
+                {
+                    m_PausedTickCalls[index].push_back({&owner, &target, body});
+                }
+            }
+        };
+        for (IUnknown* entry : m_PausedTickEntries)
+        {
+            if (auto* entity = CastTo<Entity>(entry))
+            {
+                for (IUnknown* inner : entity->GetInners())
+                {
+                    if (auto* target = CastTo<Component::Component>(inner))
+                    {
+                        collect(*entity, *target);
+                    }
+                }
+            }
+            else if (auto* target = CastTo<Component::Component>(entry))
+            {
+                if (Entity* owner = target->GetOwner())
+                {
+                    collect(*owner, *target);
+                }
+            }
+        }
+    }
+
+    void World::TickWhenPaused(float unscaledDeltaTime)
+    {
+        if (!HasFlag(OF_Initialized) || IsDeferringObjectRemoval() ||
+            !std::isfinite(unscaledDeltaTime) || unscaledDeltaTime < 0)
+        {
+            return;
+        }
+        {
+            ScopedWorldFlag dispatch(m_bDispatchingTicks);
+            ScopedWorldFlag paused(m_bTickingWhenPaused);
+            // 物理の欄はナノ秒整数。問い合わせには丸める前の未スケールの秒を使う。
+            const double ns = std::round(static_cast<double>(unscaledDeltaTime) * 1e9);
+            const int64_t maxNs = std::numeric_limits<int64_t>::max();
+            const Engine::FrameTimes times{unscaledDeltaTime, unscaledDeltaTime, unscaledDeltaTime,
+                                           unscaledDeltaTime, unscaledDeltaTime,
+                                           ns >= static_cast<double>(maxNs) ? maxNs : static_cast<int64_t>(ns)};
+            TickTimeContext context(*this, &times, unscaledDeltaTime);
+            CollectPausedTickCalls();
+            for (auto& calls : m_PausedTickCalls)
+            {
+                if (calls.empty())
+                {
+                    continue;
+                }
+                UpdateWorldTransforms();
+                for (const PausedTickCall& call : calls)
+                {
+                    if (!call.Target)
+                    {
+                        continue;
+                    }
+                    auto& target = *call.Target;
+                    if (target.GetOwner() == call.Owner && CanDispatchEntity(*call.Owner) &&
+                        (call.Owner->IsTickWhenPaused() || target.IsTickWhenPaused()) &&
+                        target.IsActive() && target.IsTickEnabled() && !target.IsPendingDestroy())
+                    {
+                        call.Body(target, unscaledDeltaTime);
+                    }
+                }
+                calls.clear();
+            }
+        }
+        CleanupDestroyedObjects();
+    }
+
     void World::Tick(float deltaTime)
     {
         TickWithFrameTimes(nullptr, deltaTime);
@@ -1943,14 +2087,11 @@ namespace NorvesLib::Core
                 {
                     continue;
                 }
-                const auto primary = component->GetTickGroup();
-                const auto mask = component->GetTickGroupMask();
+                const auto groups = ParticipatingTickGroups(*component, *registration);
                 for (uint8_t index = 0; index < Component::TickGroupCount; ++index)
                 {
                     const auto group = static_cast<Component::ETickGroup>(index);
-                    if ((mask & Component::TickGroupBit(group)) == 0 ||
-                        (registration->bPrimaryGroupOnly ? group != primary
-                                                         : (registration->Groups & Component::TickGroupBit(group)) == 0) ||
+                    if ((groups & Component::TickGroupBit(group)) == 0 ||
                         registration->BodyFor(group) == nullptr)
                     {
                         continue;
@@ -1983,6 +2124,12 @@ namespace NorvesLib::Core
             return false;
         if (!Engine::IsValidTimeChannel(channel))
             return false;
+        if (m_bTickingWhenPaused)
+        {
+            // ポーズ中は持ち主の時間倍率も掛けず、全チャネルで本体と同じ秒数を返す。
+            out = m_ActiveTickTimes->Unscaled;
+            return true;
+        }
         const float base = m_ActiveTickTimes ? m_ActiveTickTimes->GetDelta(channel) : m_ActiveTickDelta;
         const bool local = channel == Engine::TimeChannel::World || channel == Engine::TimeChannel::Animation;
         const double delta = double(base) * (local ? owner.GetCustomTimeDilation() : 1.f);
@@ -2231,27 +2378,7 @@ namespace NorvesLib::Core
                                    const Engine::FrameTimes* times)
     {
         ScopedWorldFlag dispatch(m_bDispatchingTicks);
-        struct TickTimeContext
-        {
-            World& Owner;
-            const Engine::FrameTimes* PreviousTimes;
-            float PreviousDelta;
-            bool PreviousActive;
-            TickTimeContext(World& owner, const Engine::FrameTimes* times, float delta)
-                : Owner(owner), PreviousTimes(owner.m_ActiveTickTimes), PreviousDelta(owner.m_ActiveTickDelta),
-                  PreviousActive(owner.m_bHasActiveTickTime)
-            {
-                owner.m_ActiveTickTimes = times;
-                owner.m_ActiveTickDelta = delta;
-                owner.m_bHasActiveTickTime = true;
-            }
-            ~TickTimeContext()
-            {
-                Owner.m_ActiveTickTimes = PreviousTimes;
-                Owner.m_ActiveTickDelta = PreviousDelta;
-                Owner.m_bHasActiveTickTime = PreviousActive;
-            }
-        } context(*this, times, deltaTime);
+        TickTimeContext context(*this, times, deltaTime);
         auto publishedGroup = Component::ETickGroup::Count;
         auto publish = [&](Component::ETickGroup group)
         {
@@ -2638,8 +2765,33 @@ namespace NorvesLib::Core
         m_TickDupFailures = 0;
     }
 
+    void World::UnbindPausedTickComponent(Component::Component& component)
+    {
+        if (component.m_PausedTickWorld != this)
+        {
+            return;
+        }
+        component.m_PausedTickWorld = nullptr;
+        if (component.IsTickWhenPaused())
+        {
+            SetPausedTickRegistration(component, false);
+        }
+        // 持ち主の印だけで収集した呼び先も、切り離した時点で全群から無効にする。
+        for (auto& calls : m_PausedTickCalls)
+        {
+            for (auto& call : calls)
+            {
+                if (call.Target == &component)
+                {
+                    call = {};
+                }
+            }
+        }
+    }
+
     void World::InvalidateTickComponent(Component::Component& component)
     {
+        UnbindPausedTickComponent(component);
         if (m_FrameAsyncQueue)
         {
             m_FrameAsyncQueue->CancelOwner(FrameAsyncOwnerKeyOf(component));
@@ -5397,21 +5549,24 @@ namespace NorvesLib::Core
 
     void World::BindEntitySubtreeRows(Entity& entity)
     {
+        entity.m_PausedTickWorld = this;
+        if (entity.IsTickWhenPaused())
+        {
+            SetPausedTickRegistration(entity, true);
+        }
         // 木に部分木が加わった。Tick の呼び先と深さ優先の番号、Text の板の順を次の収集で付け直す
         m_bOrderedTicksDirty = true;
         m_bTextBoardOrderDirty = true;
-        if (m_EntityArchetype == Ecs::kInvalidEcsArchetype)
-        {
-            return;
-        }
-        Ecs::EcsWorld& ecs = *m_EcsWorld;
-        if (entity.m_EcsCreateSlot == kNoEntityCreateSlot && !ecs.IsAlive(entity.m_EcsEntity) && m_Scheduler->IsRunning())
+        const bool bNeedsRow = m_EntityArchetype != Ecs::kInvalidEcsArchetype &&
+                               entity.m_EcsCreateSlot == kNoEntityCreateSlot && !m_EcsWorld->IsAlive(entity.m_EcsEntity);
+        if (bNeedsRow && m_Scheduler->IsRunning())
         {
             // 段の最中は作成を予約し、行は段の終わりの同期点で作る
             ReserveEntityRowCreate(entity);
         }
-        else if (entity.m_EcsCreateSlot == kNoEntityCreateSlot && !ecs.IsAlive(entity.m_EcsEntity))
+        else if (bNeedsRow)
         {
+            Ecs::EcsWorld& ecs = *m_EcsWorld;
             const Ecs::EcsEntity row = ecs.CreateEntity(m_EntityArchetype);
             if (row.IsNull())
             {
@@ -5457,12 +5612,17 @@ namespace NorvesLib::Core
     {
         // 木の Entity に Component が加わった。Tick の呼び先と深さ優先の番号を次の収集で付け直す
         m_bOrderedTicksDirty = true;
-        if (ComponentArchetypeFor(component) == Ecs::kInvalidEcsArchetype || !m_EcsWorld)
+        Entity* owner = component.GetOwner();
+        if (!owner || owner->GetWorld() != this)
         {
             return;
         }
-        Entity* owner = component.GetOwner();
-        if (!owner || owner->GetWorld() != this)
+        component.m_PausedTickWorld = this;
+        if (component.IsTickWhenPaused())
+        {
+            SetPausedTickRegistration(component, true);
+        }
+        if (ComponentArchetypeFor(component) == Ecs::kInvalidEcsArchetype || !m_EcsWorld)
         {
             return;
         }
@@ -5725,6 +5885,11 @@ namespace NorvesLib::Core
 
     void World::ReleaseEntityRow(Entity& entity)
     {
+        entity.m_PausedTickWorld = nullptr;
+        if (entity.IsTickWhenPaused())
+        {
+            SetPausedTickRegistration(entity, false);
+        }
         if (entity.m_EcsCreateSlot != kNoEntityCreateSlot)
         {
             // 作成の予約がまだ再生されていない: 札を取り消す（行は無いので消すものも無い）
@@ -5772,6 +5937,7 @@ namespace NorvesLib::Core
 
     void World::ReleaseComponentRow(Component::Component& component, bool bUnlink)
     {
+        UnbindPausedTickComponent(component);
         if (component.m_EcsCreateSlot != kNoEntityCreateSlot)
         {
             // 作成の予約がまだ再生されていない: 札を取り消す（行は無いので消すものも無い）

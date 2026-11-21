@@ -104,6 +104,19 @@ namespace NorvesLib::Core::Component
         return Ecs::EcsRowRef{&world->GetEcsWorld(), m_EcsEntity};
     }
 
+    void Component::SetTickWhenPaused(bool bEnabled)
+    {
+        if (m_bTickWhenPaused == bEnabled)
+        {
+            return;
+        }
+        m_bTickWhenPaused = bEnabled;
+        if (m_PausedTickWorld)
+        {
+            m_PausedTickWorld->SetPausedTickRegistration(*this, bEnabled);
+        }
+    }
+
     TickGroupConfiguration Component::LoadTickConfiguration() const
     {
         Ecs::EcsTickConfig column{};
