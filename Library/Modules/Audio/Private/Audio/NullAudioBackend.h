@@ -10,6 +10,7 @@ namespace NorvesLib::Modules::Audio::Private
     {
     public:
         AudioResult Initialize(IAudioBackendEventSink& eventSink, uint64_t shutdownEpoch) override;
+        using IAudioBackend::CreateVoice;
         AudioResult CreateVoice(VoiceHandle handle, const AudioBackendVoiceDesc& desc,
                                 AudioBackendEventMailbox& mailbox) override;
         AudioResult CreateBus(AudioBusId bus, AudioBusId parent) override;

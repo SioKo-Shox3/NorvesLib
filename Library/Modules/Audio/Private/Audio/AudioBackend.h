@@ -198,6 +198,18 @@ namespace NorvesLib::Modules::Audio::Private
         virtual AudioResult CreateVoice(VoiceHandle handle,
                                         const AudioBackendVoiceDesc& desc,
                                         AudioBackendEventMailbox& mailbox) = 0;
+        /** @brief 既存の呼び出し向けの署名。送り先を Se にして記述構造体版へ渡す。 */
+        AudioResult CreateVoice(VoiceHandle handle,
+                                const AudioPcmFormat& format,
+                                float maxFrequencyRatio,
+                                AudioBackendEventMailbox& mailbox)
+        {
+            AudioBackendVoiceDesc desc;
+            desc.Format = format;
+            desc.MaxFrequencyRatio = maxFrequencyRatio;
+            desc.OutputBus = AudioBusId::Se;
+            return CreateVoice(handle, desc, mailbox);
+        }
         virtual AudioResult SubmitVoice(VoiceHandle handle,
                                         Core::Container::Span<const uint8_t> pcmBytes,
                                         const AudioBufferDesc& bufferDesc) = 0;

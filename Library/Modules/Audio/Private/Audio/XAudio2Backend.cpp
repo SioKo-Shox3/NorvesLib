@@ -148,6 +148,7 @@ namespace NorvesLib::Modules::Audio::Private
                     : AudioResult::BackendFailure;
             }
 
+            using IAudioBackend::CreateVoice;
             AudioResult CreateVoice(VoiceHandle handle,
                                     const AudioBackendVoiceDesc& desc,
                                     AudioBackendEventMailbox& mailbox) override
