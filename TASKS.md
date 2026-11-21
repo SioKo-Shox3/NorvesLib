@@ -8473,7 +8473,7 @@
 - notes: 設計は要件 `#### GR21` の【動的障害物】と P2、ロードマップ 2812・2823 行。動物は G13-GR22-STEERING-MOTOR の CharacterBody で動くので静的なコライダーとの接触は物理が解く（Kinematic の通り抜けの心配はロードマップ 2833 行の頃より小さい）が、ナビの塞ぎの取りこぼしは壁を擦る動きとして出るので、整合の試験は防波堤として残す。スモークの場面は代役が動くので G13-GR22-STEERING-MOTOR の後にした。0.25 s・0.5 セルのしきい値は要件の仮の値で未計測。`GameApplicationHandler.cpp`・`GameModeIds.h` は差分を小さくする。試験を足す理由: 反証する契約は「押印と解除の数が釣り合い、経路が古くなったら分かり、経路の上に固体が無い」こと。カウンタの漏れは見えない壁として遊んでいるときだけに出て、撮影・ログでは気づけず黙って起きる。やらないこと: 地形からのベイク（G13-GR21-NVNAV-COOK）、出し入れ（G13-GR21-NAV-STREAMING）。
 
 ## G13-GR22-FLIGHT-FLOCK: 飛ぶ動物の 3D の操舵（高度帯・バンク・離着陸・止まり木）と、地上と空の群れを作る
-- status: todo
+- status: blocked
 - after: G13-GR22-STEERING-MOTOR, G5-GR38-HEIGHTFIELD-QUERY, G5-GR38-PHYSICS-HEIGHTFIELD
 - gr: GR22
 - needs-gr: GR38
