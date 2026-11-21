@@ -22,7 +22,7 @@ namespace NorvesLib::Modules::AI
         void Register(NavObstacleComponent& obstacle);
         void Unregister(NavObstacleComponent& obstacle, NavigationService& nav);
         void Reset(NavigationService& nav);
-        void MarkAllForRestamp();
+        void MarkAllForReevaluate();
         void Step(float dt, NavigationService& nav, const Core::World& world, const NavObstacleSettings& settings);
 
         bool HasRegisteredObstacles() const { return !m_Obstacles.empty(); }

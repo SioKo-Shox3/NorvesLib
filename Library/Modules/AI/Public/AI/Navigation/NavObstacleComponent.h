@@ -71,7 +71,8 @@ namespace NorvesLib::Modules::AI
         uint64_t m_ObservedVersion = 0;
         double m_ObservedTime = 0.0;
         bool m_bHasObservation = false;
-        bool m_bNeedsRestamp = true;
+        bool m_bNeedsRestamp = true;      // 押印が無いため、現在の姿勢で押す。
+        bool m_bNeedsReevaluate = false;  // 既存の押印を前回の姿勢で評価し直す。
         bool m_bWaitingForInterval = false;
         bool m_bRegistered = false;
     };

@@ -85,7 +85,7 @@ namespace NorvesLib::Modules::AI
         if (m_ObstacleSettings != settings)
         {
             m_ObstacleSettings = settings;
-            m_Obstacles.MarkAllForRestamp();
+            m_Obstacles.MarkAllForReevaluate();
         }
         return true;
     }

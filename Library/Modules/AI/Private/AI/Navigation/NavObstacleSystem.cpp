@@ -32,28 +32,35 @@ namespace NorvesLib::Modules::AI
             return cells == stamp.Cells;
         }
 
+        bool SetFootprintPose(NavDynamicFootprint& footprint, const NavObstacleComponent& obstacle,
+                              const Math::Vector3& position, const Math::Vector2& axis)
+        {
+            footprint.Center = position;
+            footprint.AxisX = axis.x;
+            footprint.AxisZ = axis.y;
+            footprint.MinY = position.y + obstacle.getMinHeight();
+            footprint.MaxY = position.y + obstacle.getMaxHeight();
+            return std::isfinite(position.x) && std::isfinite(position.z) && std::isfinite(footprint.MinY) &&
+                   std::isfinite(footprint.MaxY) && footprint.MinY <= footprint.MaxY;
+        }
+
         bool MakeFootprint(const NavObstacleComponent& obstacle, const Math::Transform& transform,
                            float padding, NavDynamicFootprint& footprint, double& turningRadius)
         {
-            footprint.Center = transform.position;
-            footprint.MinY = transform.position.y + obstacle.getMinHeight();
-            footprint.MaxY = transform.position.y + obstacle.getMaxHeight();
-            if (!std::isfinite(footprint.Center.x) || !std::isfinite(footprint.Center.z) ||
-                !std::isfinite(footprint.MinY) || !std::isfinite(footprint.MaxY) || footprint.MinY > footprint.MaxY)
-            {
-                return false;
-            }
-
             const auto axis = transform.TransformDirection(Math::Vector3::UnitX);
             const double length = std::hypot(static_cast<double>(axis.x), static_cast<double>(axis.z));
             if (!std::isfinite(length))
             {
                 return false;
             }
+            Math::Vector2 unitAxis(footprint.AxisX, footprint.AxisZ);
             if (length > 1.0e-6)
             {
-                footprint.AxisX = static_cast<float>(axis.x / length);
-                footprint.AxisZ = static_cast<float>(axis.z / length);
+                unitAxis = Math::Vector2(static_cast<float>(axis.x / length), static_cast<float>(axis.z / length));
+            }
+            if (!SetFootprintPose(footprint, obstacle, transform.position, unitAxis))
+            {
+                return false;
             }
 
             footprint.Shape = obstacle.getShape();
@@ -134,11 +141,11 @@ namespace NorvesLib::Modules::AI
         m_OverlayGeneration = 0;
     }
 
-    void NavObstacleSystem::MarkAllForRestamp()
+    void NavObstacleSystem::MarkAllForReevaluate()
     {
         for (auto* obstacle : m_Obstacles)
         {
-            obstacle->m_bNeedsRestamp = true;
+            obstacle->m_bNeedsReevaluate = true;
         }
     }
 
@@ -176,7 +183,7 @@ namespace NorvesLib::Modules::AI
         {
             m_GridVersion = gridVersion;
             m_OverlayGeneration = generation;
-            MarkAllForRestamp();
+            MarkAllForReevaluate();
         }
         for (auto* obstacle : m_Obstacles)
         {
@@ -195,6 +202,7 @@ namespace NorvesLib::Modules::AI
             overlay.Revoke(stamp);
             obstacle.m_bHasObservation = false;
             obstacle.m_bNeedsRestamp = true;
+            obstacle.m_bNeedsReevaluate = false;
             obstacle.m_bWaitingForInterval = false;
             return;
         }
@@ -203,8 +211,8 @@ namespace NorvesLib::Modules::AI
         const bool changed = !obstacle.m_bHasObservation || version != obstacle.m_ObservedVersion;
         const bool intervalElapsed = m_Time - obstacle.m_StampedTime >= settings.MinRestampIntervalSeconds;
         const auto properties = obstacle.GetStampProperties();
-        const bool needsRestamp = obstacle.m_bNeedsRestamp || properties != obstacle.m_EvaluatedProperties;
-        if (!changed && !needsRestamp && !(obstacle.m_bWaitingForInterval && intervalElapsed))
+        const bool reevaluate = obstacle.m_bNeedsReevaluate || properties != obstacle.m_EvaluatedProperties;
+        if (!changed && !obstacle.m_bNeedsRestamp && !reevaluate && !(obstacle.m_bWaitingForInterval && intervalElapsed))
         {
             // 同じ位置にいた時刻も進め、静止後の最初の移動を正しい間隔で測る。
             obstacle.m_ObservedTime = m_Time;
@@ -220,6 +228,8 @@ namespace NorvesLib::Modules::AI
         obstacle.m_ObservedPosition = transform.position;
         obstacle.m_ObservedTime = m_Time;
         obstacle.m_bWaitingForInterval = false;
+        obstacle.m_EvaluatedProperties = properties;
+        obstacle.m_bNeedsReevaluate = false;
         if (tooFast)
         {
             overlay.Revoke(stamp);
@@ -228,8 +238,7 @@ namespace NorvesLib::Modules::AI
             return;
         }
 
-        const bool force = needsRestamp || !stamp.bApplied;
-        obstacle.m_EvaluatedProperties = properties;
+        const bool force = obstacle.m_bNeedsRestamp || !stamp.bApplied;
         obstacle.m_bNeedsRestamp = false;
         const ENavObstacleMode mode = properties.Mode;
         NavDynamicFootprint footprint;
@@ -242,6 +251,7 @@ namespace NorvesLib::Modules::AI
         }
 
         const Math::Vector2 axis(footprint.AxisX, footprint.AxisZ);
+        bool useCurrentPose = force;
         if (!force)
         {
             const auto& previous = obstacle.m_StampedAxis;
@@ -249,20 +259,28 @@ namespace NorvesLib::Modules::AI
                                             Math::Vector2::Dot(previous, axis));
             const double movement = (std::max)(PositionDistance(footprint.Center, obstacle.m_StampedPosition),
                                                angle * turningRadius);
-            if (movement < static_cast<double>(settings.MinRestampDistanceCells) * nav.GetGrid().GetDesc().CellSize)
+            const double minDistance = static_cast<double>(settings.MinRestampDistanceCells) * nav.GetGrid().GetDesc().CellSize;
+            const bool moved = movement >= minDistance;
+            useCurrentPose = moved && intervalElapsed;
+            obstacle.m_bWaitingForInterval = moved && !intervalElapsed;
+        }
+        if (!useCurrentPose)
+        {
+            if (!reevaluate)
             {
                 return;
             }
-            if (!intervalElapsed)
+            // 格子や設定の再評価では、移動条件がそろうまで前回の姿勢を保つ。
+            if (!SetFootprintPose(footprint, obstacle, obstacle.m_StampedPosition, obstacle.m_StampedAxis))
             {
-                obstacle.m_bWaitingForInterval = true;
+                overlay.Revoke(stamp);
                 return;
             }
         }
 
         RasterizeNavDynamicFootprint(nav.GetGrid(), footprint, settings.HeightBand, m_RasterCells);
         const uint32_t cost = NavCostMultiplierToExtraPer128(obstacle.CostMultiplier.Get());
-        const bool keepStamp = force && stamp.bApplied && stamp.OverlayGeneration == overlay.GetGeneration() &&
+        const bool keepStamp = stamp.bApplied && stamp.OverlayGeneration == overlay.GetGeneration() &&
             stamp.Mode == mode && stamp.CostExtraPer128 == cost && MatchesStampCells(m_RasterCells, stamp);
         if (!keepStamp)
         {
@@ -270,13 +288,15 @@ namespace NorvesLib::Modules::AI
             stamp.Cells.swap(m_RasterCells);
             if (stamp.Cells.empty())
             {
+                // 前回の姿勢で押印が消えたら、次の歩は現在の姿勢を一度調べる。
+                obstacle.m_bNeedsRestamp = !useCurrentPose;
                 return;
             }
             stamp.Mode = mode;
             stamp.CostExtraPer128 = cost;
             overlay.Apply(stamp);
         }
-        if (stamp.bApplied)
+        if (useCurrentPose && stamp.bApplied)
         {
             obstacle.m_Overlay = &overlay;
             obstacle.m_StampedTime = m_Time;

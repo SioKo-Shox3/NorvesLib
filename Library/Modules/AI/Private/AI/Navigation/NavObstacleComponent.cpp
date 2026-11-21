@@ -91,7 +91,7 @@ namespace NorvesLib::Modules::AI
             &property == s_PropertyPtr_MinHeight || &property == s_PropertyPtr_MaxHeight ||
             &property == s_PropertyPtr_Mode || &property == s_PropertyPtr_CostMultiplier)
         {
-            m_bNeedsRestamp = true;
+            m_bNeedsReevaluate = true;
         }
     }
 
