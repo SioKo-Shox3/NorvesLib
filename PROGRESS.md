@@ -12699,3 +12699,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 TAA の履歴の判定と再投影のカメラに CutSerial を足す: 着地(直し 0 回)
 - U3 RenderingCoordinator の前のカメラの受け渡しに、SourceCameraId と CutSerial の一致を足す: 着地(直し 0 回)
 - U4 パストレーサーの連番の持ち越しとカメラ標本で、カットの前の値を捨てる: 着地(直し 0 回)
+- U5 規約の文書 CameraDiscontinuity.md を書き、全体の Game のビルドで確かめる: 着地(直し 0 回)
