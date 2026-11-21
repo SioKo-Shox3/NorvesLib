@@ -12,6 +12,7 @@
       "fade_out_ms": 1000,
       "spatial": "2d",
       "category": "ambience",
+      "sound_class": "rain",
       "source_ref": "仮・合成(Scripts/GenerateProvisionalAudio.py)"
     },
     {
@@ -29,6 +30,7 @@
       "cooldown_ms": 0,
       "spatial": "2d",
       "category": "effect",
+      "sound_class": "footstep",
       "source_ref": "仮・合成(Scripts/GenerateProvisionalAudio.py)"
     }
   ]

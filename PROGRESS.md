@@ -13098,3 +13098,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 声への適用(G13-GR116-AUDIO-ACOUSTICS)と聴覚(GR24)からの呼び出し。
 - Notes: CPU から屋根の下かを引く口が無いので `IRainShelterSource` は既定(開けた空)のまま。評価の時間は未計測(案は 32 声・各 10 Hz で 1 フレーム 0.1 ms)。この評価器はまだどの声・AI からも呼ばれないので、ゲーム上の見どころは無い。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
 - U1 バックエンドにローパスの口、サービスに声ごとの遮蔽の口と遮蔽の公開の型を足す: 着地(直し 0 回)
+- U2 SoundDefinition に音の分類 sound_class を足し、バンクから読む: 着地(直し 0 回)
