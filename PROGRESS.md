@@ -12940,3 +12940,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(反復 2): ランナーの評価者の反証(危険地帯: Public API の `IWindow`・`BootConfig`・`InputRouter`)。画素の確かめは G15-GR68-UI-CHECK。
 - Notes(反復 2): 人が見るときの見どころ: (d) Game の窓を表示倍率の違うモニターへ動かすか、窓の端をドラッグして大きさを変えると、ログに `RenderWorld::Resize(w, h) - queued for next BeginFrame` と `RenderingCoordinator::Resize(w, h)` が出て、`--enable-canvas-view` の Canvas の UI が新しい寸法のまま崩れない(引き伸ばされない・切れない)。
 - U1 板のサンプラー・シェーダーの種類・板ごとの値の型を足し、BoardProxy と BoardComponent に口を足す: 着地(直し 0 回)
+- U2 board2d.vert に板ごとの値と板の中の UV を出し、円弧・リングと円のマスクのフラグメントシェーダーを足す: 着地(直し 0 回)
