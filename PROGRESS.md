@@ -13132,3 +13132,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 GrassField に刻みと枯れ度を指定する QueryOcclusion の多重定義を足す: 着地(直し 0 回)
 - U2 AI のポート IGrassFieldSource・IWindSource を足す: 着地(直し 0 回)
 - U6 聴覚の純関数 HearingModel を足す: 着地(直し 0 回)
+- U7 嗅覚の純関数 SmellModel と風向の低域フィルタを足す: 着地(直し 0 回)
