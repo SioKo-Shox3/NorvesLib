@@ -12710,3 +12710,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 UBO の拡張と tonemapping.frag の Grade・Look 2 枚・ディザ: 着地(直し 0 回)
 - U2 色収差・レンズダート・ビネットを bValid のときプロファイルから読む: 着地(直し 0 回)
 - U3 RenderingFlow.md にトーンマップとグレーディングの節を足す: 着地(直し 0 回)
+- U4 ToneMappingPass がプロファイルの値で UBO と LUT 2 枚を用意する: 着地(直し 0 回)
