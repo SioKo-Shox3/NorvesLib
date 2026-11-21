@@ -13065,3 +13065,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 経路（コードの読みで確かめた）: 固定歩の間に体 A を外して同じ `ComponentId` の体 B を足すと、A の終了処理が購読を消し、B の行が予約中の歩はモーターが接続を外して保留し、行ができた次の `PreFixedTick` で B に 1 件だけ購読する。段の外の入れ替えは次の `PreFixedTick` で行の違いを見て `Detach` → 購読の順に結び直す。体だけを外すと `StepMotor`・`MoveDelta` は 0 回。操舵 Component の即時の取り外しと 2 個目への引き継ぎは前回どおり（保存したハンドルで外し、古い呼び出しは接続番号で退ける）。
 - Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
 - Notes: 判断: 体の行が予約中の歩はモーターを結ばない（所有 Entity のハンドルの保留と同じ扱い。行ができる次の固定歩から結ぶ）。
+- U1 動的なオーバーレイ(セルごとの塞ぎ・コストのカウンタとタイルの版)と足跡の塗り: 着地(直し 0 回)
