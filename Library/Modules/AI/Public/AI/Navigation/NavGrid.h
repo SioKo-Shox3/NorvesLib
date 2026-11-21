@@ -33,10 +33,12 @@ namespace NorvesLib::Modules::AI
         /// 現在の格子設定を返す。
         const NavGridDesc& GetDesc() const;
 
-        /// タイルが 0 枚で設定が有効なときだけ更新する。
+        /// タイルが 0 枚で設定が有効なときだけ更新する。次に読み込んだタイルの格子設定で置き換わる。
         bool SetDesc(const NavGridDesc& desc);
 
         /// タイルを検証して読み込み、同じ座標のタイルがあれば置き換える。
+        /// 読み込み済みが 0 枚ならタイルの格子設定を採用し、以降は格子設定（原点・セル幅・一辺のセル数）が
+        /// 一致しないタイルを Mismatch で拒む。
         /// 読み込みごとに新しい世代番号を振り、番号を使い切ったら InvalidTile を返す。
         ENavTileResult LoadTile(NavTile&& tile);
 

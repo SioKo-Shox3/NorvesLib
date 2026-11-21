@@ -3,6 +3,7 @@
 #include "AI/Navigation/NavTypes.h"
 #include "Container/VariableArray.h"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -12,6 +13,7 @@ namespace NorvesLib::Modules::AI
     struct NavTile
     {
         NavTileCoord Coord;
+        NavGridDesc Grid;                                 // 焼いたときの格子設定。原点・セル幅・一辺のセル数
         uint32_t TileCells = 0;                          // タイルの一辺のセル数
         Core::Container::VariableArray<float> Height;     // セル中心の地面の高さ（m）
         Core::Container::VariableArray<uint8_t> Flags;    // ENavCellFlags のビット
@@ -23,12 +25,13 @@ namespace NorvesLib::Modules::AI
         Core::Container::VariableArray<uint16_t> Region;
         uint16_t RegionCount = 0;
 
-        /// 座標と一辺のセル数を設定し、全セルの属性と連結成分数を 0 に戻す。
-        void Reset(NavTileCoord coord, uint32_t tileCells)
+        /// 座標と格子設定を記録し、全セルの属性と連結成分数を 0 に戻す。
+        void Reset(NavTileCoord coord, const NavGridDesc& grid)
         {
             Coord = coord;
-            TileCells = tileCells;
-            const size_t cellCount = static_cast<size_t>(tileCells) * tileCells;
+            Grid = grid;
+            TileCells = grid.TileCells;
+            const size_t cellCount = static_cast<size_t>(TileCells) * TileCells;
             Height.assign(cellCount, 0.0f);
             Flags.assign(cellCount, 0);
             SlopeQ.assign(cellCount, 0);
@@ -50,9 +53,13 @@ namespace NorvesLib::Modules::AI
             return localZ * TileCells + localX;
         }
 
-        /// セル数が 32 ビットに収まり、全配列の長さがセル数に等しく、成分番号が RegionCount 以下かを調べる。
+        /// 格子設定と原点が有効で、一辺のセル数、各配列の長さ、成分番号が整合するかを調べる。
         bool IsConsistent() const
         {
+            if (!Grid.IsValid() || Grid.TileCells != TileCells || !std::isfinite(Grid.OriginX) || !std::isfinite(Grid.OriginZ))
+            {
+                return false;
+            }
             const uint64_t cellCount = static_cast<uint64_t>(TileCells) * TileCells;
             if (cellCount > 0xFFFFFFFFu || Height.size() != cellCount || Flags.size() != cellCount ||
                 SlopeQ.size() != cellCount || ClearanceQ.size() != cellCount || GrassQ.size() != cellCount ||

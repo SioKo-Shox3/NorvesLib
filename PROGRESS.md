@@ -12674,3 +12674,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 操舵（G13-GR22-STEERING-MOTOR。行動の決定と位置の書き戻しは PreFixedTick 側に置き、登録の順に依らないことを固める）、動く障害物（G13-GR21-NAV-OBSTACLES）、地形からのベイク（G13-GR21-NVNAV-COOK）。
 - Notes: 判断: AI のソースは `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)` で集める。1 セルだけの経路はセル中心の 1 点を返す。`Reset` の後も古い `PathHandle` は無効のまま。始点が通れなければ 2 m 以内の通れるセルへ寄せ、無ければ Failed。展開の予算 1500 は未計測の仮の値。
 - U13 照会のしきい値の上限・ゼロ変位の視線・経路の古さに視線が調べたタイルを含める: 着地(直し 0 回)
+- U14 焼きの採取範囲を量子化の上限まで広げ、セルの矩形で押印し、タイルに格子設定を持たせる: 着地(直し 0 回)

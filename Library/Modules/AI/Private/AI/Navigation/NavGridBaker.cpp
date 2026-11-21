@@ -12,6 +12,14 @@ namespace NorvesLib::Modules::AI
     {
         using Core::Container::VariableArray;
 
+        // 量子化の上限に半セルを足し、分母を 2 倍にそろえて整数セルに切り上げる。
+        constexpr uint32_t kMinClearanceApronCells = []
+        {
+            constexpr uint32_t numerator = 2u * 255u + kNavClearanceStepsPerCell;
+            constexpr uint32_t denominator = 2u * kNavClearanceStepsPerCell;
+            return (numerator + denominator - 1u) / denominator;
+        }();
+
         struct TerrainCell
         {
             float Height;
@@ -98,8 +106,9 @@ namespace NorvesLib::Modules::AI
             }
         }
 
+        // 足跡の外接矩形を半セル広げて候補を絞り、セルの正方形と箱が 4 軸すべてで重なるかを調べる。
         void MarkObstacle(const NavObstacleFootprint& box, const VariableArray<double>& centersX,
-                          const VariableArray<double>& centersZ, VariableArray<TerrainCell>& cells)
+                          const VariableArray<double>& centersZ, double halfCell, VariableArray<TerrainCell>& cells)
         {
             if (!std::isfinite(box.CenterX) || !std::isfinite(box.CenterZ) || !std::isfinite(box.YawRadians) ||
                 !IsNonnegativeFinite(box.HalfExtentX) || !IsNonnegativeFinite(box.HalfExtentZ))
@@ -108,8 +117,11 @@ namespace NorvesLib::Modules::AI
             }
             const double cosine = std::cos(static_cast<double>(box.YawRadians));
             const double sine = std::sin(static_cast<double>(box.YawRadians));
-            const double extentX = std::abs(cosine) * box.HalfExtentX + std::abs(sine) * box.HalfExtentZ;
-            const double extentZ = std::abs(sine) * box.HalfExtentX + std::abs(cosine) * box.HalfExtentZ;
+            const double absCos = std::abs(cosine);
+            const double absSin = std::abs(sine);
+            const double extentX = absCos * box.HalfExtentX + absSin * box.HalfExtentZ + halfCell;
+            const double extentZ = absSin * box.HalfExtentX + absCos * box.HalfExtentZ + halfCell;
+            const double cellProjection = halfCell * (absCos + absSin);
             const auto firstX = std::lower_bound(centersX.begin(), centersX.end(), box.CenterX - extentX);
             const auto endX = std::upper_bound(firstX, centersX.end(), box.CenterX + extentX);
             const auto firstZ = std::lower_bound(centersZ.begin(), centersZ.end(), box.CenterZ - extentZ);
@@ -123,7 +135,9 @@ namespace NorvesLib::Modules::AI
                     const double dx = *x - box.CenterX;
                     const double localX = dx * cosine - dz * sine;
                     const double localZ = dx * sine + dz * cosine;
-                    if (std::abs(localX) <= box.HalfExtentX && std::abs(localZ) <= box.HalfExtentZ)
+                    if (std::abs(dx) <= extentX && std::abs(dz) <= extentZ &&
+                        std::abs(localX) <= box.HalfExtentX + cellProjection &&
+                        std::abs(localZ) <= box.HalfExtentZ + cellProjection)
                     {
                         cells[row + (x - centersX.begin())].Flags |= static_cast<uint8_t>(ENavCellFlags::StaticBlocked);
                     }
@@ -245,7 +259,7 @@ namespace NorvesLib::Modules::AI
         }
 
         // タイルの四方に余白を足し、各軸のセル中心をワールド座標で求める。
-        const uint32_t apron = (std::min)(settings.ClearanceApronCells, 256u);
+        const uint32_t apron = std::clamp(settings.ClearanceApronCells, kMinClearanceApronCells, 256u);
         const uint32_t width = grid.TileCells + 2 * apron;
         VariableArray<double> centersX(width), centersZ(width);
         if (!BuildAxisCenters(centersX, grid.OriginX, grid.CellSize, input.Tile.X, grid.TileCells, apron) ||
@@ -276,10 +290,10 @@ namespace NorvesLib::Modules::AI
         }
         ClassifyTerrain(cells, width, grid.CellSize, settings);
 
-        // 足跡の外接矩形で候補を絞り、中心を箱のローカル座標に戻して内外を判定する。
+        const double halfCell = grid.CellSize * 0.5;
         for (const NavObstacleFootprint& box : input.StaticObstacles)
         {
-            MarkObstacle(box, centersX, centersZ, cells);
+            MarkObstacle(box, centersX, centersZ, halfCell, cells);
         }
 
         // 通行不能セルからの二乗距離を、行と列の順に厳密な距離変換で求める。負値は無限。
@@ -301,8 +315,9 @@ namespace NorvesLib::Modules::AI
         }
 
         // 余白を除くセルの属性を写し、中心間距離から半セル引いてクリアランスにする。
+        // 量子化の上限までの遮蔽は余白に含まれるため、計算範囲に種がなければ 255 になる。
         NavTile tile;
-        tile.Reset(input.Tile, grid.TileCells);
+        tile.Reset(input.Tile, grid);
         for (uint32_t z = 0; z < grid.TileCells; ++z)
         {
             for (uint32_t x = 0; x < grid.TileCells; ++x)

@@ -8,6 +8,12 @@ namespace NorvesLib::Modules::AI
 {
     namespace
     {
+        bool GridDescriptionsMatch(const NavGridDesc& left, const NavGridDesc& right)
+        {
+            return left.OriginX == right.OriginX && left.OriginZ == right.OriginZ &&
+                   left.CellSize == right.CellSize && left.TileCells == right.TileCells;
+        }
+
         /// タイル座標を Z、X の順に比較する。
         bool TileCoordLess(NavTileCoord left, NavTileCoord right)
         {
@@ -111,17 +117,18 @@ namespace NorvesLib::Modules::AI
 
     ENavTileResult NavGrid::LoadTile(NavTile&& tile)
     {
-        if (!m_Desc.IsValid())
-        {
-            return ENavTileResult::InvalidTile;
-        }
-        if (tile.TileCells != m_Desc.TileCells)
-        {
-            return ENavTileResult::Mismatch;
-        }
         if (!tile.IsConsistent() || m_LastTileGeneration == (std::numeric_limits<uint32_t>::max)())
         {
             return ENavTileResult::InvalidTile;
+        }
+        if (m_Tiles.empty())
+        {
+            m_Desc = tile.Grid;
+            m_CachedTileIndex = static_cast<size_t>(-1);
+        }
+        else if (!GridDescriptionsMatch(tile.Grid, m_Desc))
+        {
+            return ENavTileResult::Mismatch;
         }
 
         const size_t index = FindTileIndex(tile.Coord);

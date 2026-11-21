@@ -22,7 +22,8 @@ namespace NorvesLib::Modules::AI
         float CliffStepHeight = 1.0f;     // 隣のセルとの高低差の上限（m）
         float ShallowWaterDepth = 0.05f;  // 浅瀬とみなす最小水深（m）
         float DeepWaterDepth = 0.6f;      // 深水とみなす最小水深（m）
-        uint32_t ClearanceApronCells = 16; // 距離計算に含めるタイル外のセル数（各辺で最大 256）
+        // 距離計算に含めるタイル外のセル数。量子化の上限から決まる最小値（33）より小さい値は最小値に上げ、各辺で最大 256。
+        uint32_t ClearanceApronCells = 33;
     };
 
     struct NavBakeInput
