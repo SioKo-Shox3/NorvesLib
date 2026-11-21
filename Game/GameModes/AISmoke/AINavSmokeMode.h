@@ -10,6 +10,7 @@ namespace Game::GameModes
         uint64_t AgentId = 0;
         uint64_t MovingBoxId = 0;
         uint32_t WalkableCells = 0;
+        uint32_t MaxObstacleCells = 0;
         NorvesLib::Math::Vector3 PreviousPosition;
         double Elapsed = 0;
         double Distance = 0;

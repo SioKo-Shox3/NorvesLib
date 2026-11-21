@@ -55,6 +55,7 @@
 | `SkinnedMeshComponent` | Animation（主群）・PoseFinalize | 自前の Animation 時刻更新と PoseFinalize での姿勢評価 | Animation | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1992` |
 | `ScriptComponent` | Default（主群） | Script の更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Component/ScriptComponent.cpp:56` |
 | `CharacterBodyComponent` | Movement（主群）・PoseFinalize | 設定に応じ一方の群で可変更新の移動を要求 | World | 非ポーズ時のsimulation | `Library/Modules/Physics/Private/Physics/PhysicsModule.cpp:103` |
+| `NavObstacleComponent` | 群なし（AI モジュールに登録） | `AIModule::PreFixedTick` の先頭、操舵の `BeginStep` より前で足跡を動的オーバーレイへ押す。変換の版が変わり、間隔と移動量の条件を満たすと押し直す。速すぎる間は押印を外す | 固定刻み（Physics）。間隔は固定歩の `dt` を積算して測る | 非ポーズ時のsimulation | `Library/Modules/AI/Private/AI/Navigation/NavObstacleComponent.cpp` の `Initialize` |
 | `SteeringAgentComponent` | 群なし（AI モジュールに登録） | `AIModule::PreFixedTick` で操舵し、固定駆動では `Physics.CharacterFixed` の `BeforeSimulation` で運動を要求。`PostLateTick.ModuleLateTick` で Animator へ公開し、有効時は操舵を描画 | 固定刻み（Physics）。可変駆動の運動は Body の World。公開・描画は delta を使わない | 非ポーズ時のsimulation | `Library/Modules/AI/Private/AI/Steering/SteeringAgentComponent.cpp` の `Initialize` |
 | `EnemyComponent` | Default（主群） | 状態の遷移、攻撃の窓の開閉、アニメの要求。同じフレームの Animation 群に効く | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/Enemy/EnemyComponent.cpp` |
 | `ShishaComponent` | Default（主群） | EnemyComponent と同じ本体を、型の完全一致のため自身の型で登録 | World | 非ポーズ時のsimulation | `Game/Gameplay/Shisha/ShishaComponent.cpp` の `Initialize` |
@@ -101,7 +102,7 @@ Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテ�
 
 1. gate 外で入力を評価し、`PreUpdate` の `PreUpdate.HandlerUpdate`（骨格資産の反映と Handler の `OnUpdate`）→ `PreUpdate.ScriptBegin` を実行する。
 2. 進行 gate 内で `PreSimulation` の `PreSimulation.GameModeStateMachine` → World の `Tick`（Input〜PoseFinalize）→ `PostTick` の `PostTick.Particles` → `PostTick.Streaming` を実行する。
-3. 進行 gate 内で固定ステップを 0 回以上実行する。各回は World の `FixedBegin`（Transform 確定・補間準備と `Physics.FixedPre`）→ `FixedModulePre.PreFixedTick` → World の `FixedTick`（`Physics.CharacterFixed`、`Physics.FixedStep` 等）→ `FixedModulePost.FixedTick` → World の `FixedEnd`（Transform 確定・補間履歴の記録・cleanup）の順。AI は `FixedModulePre.PreFixedTick` で操舵速度を確定し、固定駆動の CharacterBody は同じ歩の `Physics.CharacterFixed` でその値を消費する。可変駆動では手順 2 の Movement または PoseFinalize で直近の固定歩の値を使う。固定ステップが 0 回でも次の後段は 1 回実行する。
+3. 進行 gate 内で固定ステップを 0 回以上実行する。各回は World の `FixedBegin`（Transform 確定・補間準備と `Physics.FixedPre`）→ `FixedModulePre.PreFixedTick` → World の `FixedTick`（`Physics.CharacterFixed`、`Physics.FixedStep` 等）→ `FixedModulePost.FixedTick` → World の `FixedEnd`（Transform 確定・補間履歴の記録・cleanup）の順。AI は `FixedModulePre.PreFixedTick` で動く障害物の押印を更新してから操舵速度を確定し、固定駆動の CharacterBody は同じ歩の `Physics.CharacterFixed` でその値を消費する。可変駆動では手順 2 の Movement または PoseFinalize で直近の固定歩の値を使う。固定ステップが 0 回でも次の後段は 1 回実行する。
 4. 進行 gate 内で World の `LateTick`（PostPhysics → Camera → PreRender）→ `PostLateTick.ModuleLateTick` → `PostLateTick.HandlerLateUpdate` を実行する。Module の呼び出しは Running の registry で登録順。`AIModule::LateTick` は直近の運動結果を Animator へ公開し、操舵の描画が有効ならデバッグ描画を積む。
 5. gate 外で振動更新、World の描画同期、SceneQuery の通常 world-AABB 更新を行い、`PostUpdate.ScriptEnd` → `PostUpdate.ModuleTick`（通常の `TickAll`）→ Handler の `OnPreRender` → 描画へ進む。Handler はフレーム内で共有所有し、callback による差し替えでもそのフレームの対象を生存させる。
 

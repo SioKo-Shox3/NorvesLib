@@ -2,6 +2,7 @@
 
 #include "AI/IAIModule.h"
 #include "AI/Navigation/NavGridBaker.h"
+#include "AI/Navigation/NavObstacleComponent.h"
 #include "AI/Steering/SteeringAgentComponent.h"
 #include "Component/CameraComponent.h"
 #include "Component/DirectionalLightComponent.h"
@@ -194,6 +195,14 @@ namespace Game::GameModes
             auto* rigid = ctx.WorldRef.CreateComponent<P::RigidBodyComponent>(moving);
             if (!rigid || rigid->SetBodyType(P::EPhysicsBodyType::Kinematic) != P::EPhysicsResult::Success)
                 return false;
+            auto* obstacle = ctx.WorldRef.CreateComponent<AI::NavObstacleComponent>(moving);
+            if (!obstacle || !obstacle->IsRegisteredToModule())
+                return false;
+            obstacle->getShape() = AI::ENavObstacleShape::Obb;
+            obstacle->getHalfExtents() = {MovingBox.HalfExtent.x, MovingBox.HalfExtent.z};
+            obstacle->getMinHeight() = -MovingBox.HalfExtent.y;
+            obstacle->getMaxHeight() = MovingBox.HalfExtent.y;
+            obstacle->getMode() = AI::ENavObstacleMode::Block;
             data.MovingBoxId = moving->GetObjectId();
             if (!CreateAgent(ctx, data, agentMaterial) || !CreateView(ctx))
                 return false;
@@ -243,14 +252,19 @@ namespace Game::GameModes
             return;
         data.Elapsed += dt;
         auto* moving = ctx.WorldRef.FindEntityByObjectId(data.MovingBoxId);
+        auto* obstacle = moving ? moving->GetComponent<AI::NavObstacleComponent>() : nullptr;
         auto* owner = ctx.WorldRef.FindEntityByObjectId(data.AgentId);
         auto* agent = owner ? owner->GetComponent<AI::SteeringAgentComponent>() : nullptr;
         auto* body = owner ? owner->GetComponent<P::CharacterBodyComponent>() : nullptr;
-        if (!moving || !agent || !body)
+        if (!obstacle || !agent || !body)
         {
             Fail(ctx, data, "setup");
             return;
         }
+        const uint32_t obstacleCells = obstacle->GetStampedCellCount();
+        if (obstacleCells > data.MaxObstacleCells)
+            data.MaxObstacleCells = obstacleCells;
+
         const double phase = std::fmod(data.Elapsed * MovingBoxSpeed, 2.0 * MovingBoxTravel);
         const float offset = static_cast<float>(MovingBoxTravel - std::abs(phase - MovingBoxTravel));
         moving->SetPosition(MovingBox.Center + M::Vector3(0, 0, offset));
@@ -263,17 +277,22 @@ namespace Game::GameModes
                 return;
             }
             data.Ready = true;
-            NORVES_LOG_INFO("AINavSmoke", "AI_SMOKE mode=nav stage=ready cells=%u start=%.1f,%.1f goal=%.1f,%.1f",
-                            data.WalkableCells, Start.x, Start.z, Goal.x, Goal.z);
+            NORVES_LOG_INFO("AINavSmoke", "AI_SMOKE mode=nav stage=ready cells=%u start=%.1f,%.1f goal=%.1f,%.1f obstacle_cells=%u",
+                            data.WalkableCells, Start.x, Start.z, Goal.x, Goal.z, obstacleCells);
         }
         const auto position = owner->GetWorldTransform().position;
         data.Distance += std::hypot(position.x - data.PreviousPosition.x, position.z - data.PreviousPosition.z);
         data.PreviousPosition = position;
         if (data.Ready && std::hypot(position.x - Goal.x, position.z - Goal.z) <= ArrivalRadius)
         {
+            if (data.MaxObstacleCells == 0)
+            {
+                Fail(ctx, data, "obstacle");
+                return;
+            }
             data.Finished = true;
-            NORVES_LOG_INFO("AINavSmoke", "AI_SMOKE mode=nav result=pass time=%.3f distance=%.3f",
-                            data.Elapsed, data.Distance);
+            NORVES_LOG_INFO("AINavSmoke", "AI_SMOKE mode=nav result=pass time=%.3f distance=%.3f obstacle_cells=%u obstacle_cells_max=%u",
+                            data.Elapsed, data.Distance, obstacleCells, data.MaxObstacleCells);
             ctx.EngineRef.RequestExit(0);
         }
         else if (data.Elapsed >= TimeoutSeconds)
