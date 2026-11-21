@@ -8519,15 +8519,26 @@
 - notes: 選定課題 G13-S3（行動の記述方式と GR17 の状態機械との共用。ロードマップ 4559 行）は推奨 (A) を採る: C++ で書いた状態＋JSON で書いた遷移・パラメータの階層状態機械。土台は G8 が Core の `GameMode/` にヘッダだけで置く `TStateMachine<TContext, TStateId>`（`G8-GR17-HEALTH-PROGRESSION` の done-when (2) と、notes の G8-S5「AI が Gameplay へリンクせずに同じ土台を使える」）。`TStateMachine` は 1 段で階層を持たないので、親の状態ごとに子の `TStateMachine` を持つ 2 段にし、状態の名前は読み込みで `TStateId`（uint16）へ解決する。遷移は「要求 → 安全点で適用」の規律をそのまま使う。理由: 再コンパイルなしで調整でき、`IBehavior` の境界の後ろへビヘイビアツリーやスクリプト（GR98、G18）を後から差せ、ついてくる・距離を保つ・逃げる・待つ程度の行動に過剰にならない。AngelScript で書く (C) は公開面が Vector3 と EntityRef だけで成立しない（4559 行）。「心を開いたように見える」の質は数値でなく視線・距離・間の問題で、実機の調整が大きい（ロードマップ 2837 行）ので、値は全部 JSON で替えられる形にし、試験の数値（2 m・20%・[10, 16] m・[2, 4] m・3 s）は要件の案の値で根拠は無い。危険地帯（新しい Public API）なので評価者を通す。試験を足す理由: 反証する契約は「遷移が決まった順で起き、再読込で状態が壊れず、信頼に対して距離が単調に縮む」こと。外れると動物の振る舞いが少しずつおかしいだけで、撮影では気づきにくく黙って起きる。やらないこと: AngelScript からの行動（GR98、G18）、ライブ調整の画面（GR99、G18。JSON の再読込で代える）。
 
 ## G14-GR61-GRADE-PASS: トーンマップにシーンリニアの Grade・見た目の LUT 2 枚の混ぜ・ディザを足し、カメラのプロファイルの値で描く
-- status: blocked
+- status: todo
 - after: G14-GR61-PROFILE-DATA
 - gr: GR61
 - done-when: (1) `Assets/Shaders/tonemapping.frag`: gradingMode 2(プロファイル)を、すべての演算子(ACES 2.0 LUT を含む)に掛ける。
   - トーンマップの前に Grade を掛ける。順は、露出バイアス → ホワイトバランス → 暗部の持ち上げ → log2 のコントラスト(pivot·(c/pivot)^contrast)→ 彩度(保護色相は有効時だけ)→ ハイライトの肩 → スプリットトーン。
   - トーンマップの後の Look は、LUT A・B(binding 3・4)を Blend で混ぜて Intensity を掛ける。
   - 最終段に三角分布のディザを掛ける。強さが 0 なら掛けない。
-  - Grade の中の値の上限は、RGB の比を保つ形(最大の成分で割って縮める。Inf を含んでも NaN を出さない)で掛け、成分ごとの `min` で色を失わない。
-  - 確かめる値: 入力 (4,2,1)・ExposureBias=3・Contrast=4・ContrastPivot=0.25・HighlightRolloff Start=0.25・Strength=1・ほかは中立のとき、肩の後がおよそ (1.941, 0.121, 0.0076)、ACES Filmic の出力がおよそ (0.911, 0.164, 0.003)。入力グレー 128・ExposureBias=8・Contrast=4 で、ACES Filmic と Uncharted2 が NaN も Inf も出さない。この値は使い捨ての計算で確かめて PROGRESS.md に書く。
+  - Grade の中の値の上限は今の形を保つ:
+    - 彩度と肩の前は、最大の成分が 1e30 を超えるときだけ、RGB の比を保って縮める。Inf を含んでも NaN を出さない。
+    - 表示変換の手前は、演算子が飽和する 1e18 で成分ごとに切る。
+    - 成分ごとの `min` で色相を変えない。
+    - 1e30 を超えたときに小さい成分が比例して縮むのは、比を保つ縮めの仕様とする。
+  - 彩度(保護色相の補間を含む)とスプリットトーンの色の補間は、端点で厳密になる形 `a·(1−t) + b·t` で書く。重みが 1 のとき、元の値と明部の倍率がそのまま通る(`a + (b−a)·t` の桁落ちで暗い成分を 0 にしない)。
+  - 確かめる値:
+    - 入力 (4,2,1)・ExposureBias=3・Contrast=4・ContrastPivot=0.25・HighlightRolloff Start=0.25・Strength=1・ほかは中立: 肩の後がおよそ (1.941, 0.121, 0.0076)、ACES Filmic の出力がおよそ (0.911, 0.164, 0.003)。
+    - 入力グレー 128・ExposureBias=8・Contrast=4: ACES Filmic と Uncharted2 が NaN も Inf も出さない。
+    - (i) Contrast=4・ディザ 0・入力 (0.25,0.25,64)・支点 0.25・彩度 0・青を完全に保護(中心 240°・幅 40°・Keep 1): ACES Filmic がおよそ (0.374, 0.374, 1)。
+    - (ii) Contrast=4・ディザ 0・入力 (32,0.25,0)・支点 0.25・明部の色倍率 (2⁻²⁶,1,1): ACES Filmic がおよそ (0.804, 0.374, 0)。
+    - これらの値は、シェーダーの演算を単精度に丸めた使い捨ての計算で確かめ、PROGRESS.md に書く。
+  - 単精度の丸めによる差は、上の確かめる値の外では問わない。評価は、書いた値と上限の形で行う。
   - `TonemapACES`・`Uncharted2Helper` と、gradingMode 0・1 の分岐は変えない。
   (2) `GPUToneMappingParams`(192 バイト・36 欄)の static_assert の大きさと offset、GLSL のブロックが一致したままである。
   (3) `GetActiveCamera()->PostProcess.bValid` のとき:
