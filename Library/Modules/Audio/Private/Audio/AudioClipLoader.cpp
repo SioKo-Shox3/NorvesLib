@@ -176,6 +176,7 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return AudioClipLoadResult::InvalidPayload;
         }
+        clip->SetCookedCategory(parsed.Audio.Category);
         outClip = std::move(clip);
         return AudioClipLoadResult::Success;
     }

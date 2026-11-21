@@ -6,6 +6,7 @@
 #include "Container/String.h"
 #include "Container/VariableArray.h"
 #include "Math/Vector3.h"
+#include "Scene/AcousticTransmission.h"
 #include "Text/IdentityPool.h"
 
 namespace NorvesLib::Core::Asset
@@ -43,8 +44,12 @@ namespace NorvesLib::Modules::Audio
         uint32_t FadeOutMs = 0;
         SoundSpatialMode Spatial = SoundSpatialMode::TwoD;
         SoundCategory Category = SoundCategory::Effect;
+        Core::Scene::ESoundClass SoundClass = Core::Scene::ESoundClass::Ambient; // 遮蔽の評価で使う音源の分類。
         float NoiseRadius = 0.0f; // GR75 用に値だけを保持する。
         Core::Container::String SourceRef; // 出所の記録。
+        bool bHasBus = false; // バンクで bus を明示したときだけ真。
+        AudioBusId Bus = AudioBusId::Se; // 明示した場合にボイスの送り先として最優先するバス。
+        Core::Identity DuckTag; // ダッキングルールが照合するタグ。空ならタグなし。
     };
 
     struct SoundInstanceHandle

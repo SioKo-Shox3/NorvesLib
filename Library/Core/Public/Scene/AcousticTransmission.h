@@ -74,7 +74,7 @@ namespace NorvesLib::Core::Scene
         Container::VariableArray<AcousticCurvePoint> WindNoiseFloorCurve; ///< 平均風速（m/s）と騒音床の対応。
         float MaskingCoefficient = 0.5f;              ///< マスキングによる高域損失の係数。
         float UpdateHz = 10.0f;                       ///< 音響経路を更新する頻度（Hz）。
-        uint32_t VoiceBudgetPerFrame = 32;            ///< 1 フレームに更新する音声数の上限。
+        uint32_t VoiceBudgetPerFrame = 4;            ///< 1 フレームに更新する音声数の上限。
         AcousticClassSettings Classes[static_cast<size_t>(ESoundClass::Count)]; ///< 分類順の設定。
 
         /// Acoustics.json と同じ曲線・分類別の値を含む既定設定を返す。

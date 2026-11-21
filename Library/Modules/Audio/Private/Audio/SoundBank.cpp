@@ -1,6 +1,7 @@
 ﻿#include "Audio/SoundBank.h"
 
 #include "Audio/AudioClipResource.h"
+#include "Audio/AudioMixer.h"
 #include "Text/JsonDocument.h"
 
 #include <cmath>
@@ -13,12 +14,40 @@ namespace NorvesLib::Modules::Audio::Private
     {
         using Core::JsonValue;
         using Core::Container::String;
+        using Core::Scene::ESoundClass;
 
         constexpr const char* DefinitionKeys[] = {
             "id", "clips", "volume_db", "volume_jitter_db", "pitch_jitter_semitones",
             "loop", "loop_begin_frame", "loop_length_frames", "priority", "max_instances",
             "limit_policy", "cooldown_ms", "dedupe_window_ms", "dedupe_radius",
-            "fade_in_ms", "fade_out_ms", "spatial", "category", "noise_radius", "source_ref"};
+            "fade_in_ms", "fade_out_ms", "spatial", "category", "sound_class", "noise_radius", "source_ref", "bus", "duck_tag"};
+
+        struct SoundClassEntry
+        {
+            const char* Name;
+            ESoundClass Value;
+        };
+
+        constexpr SoundClassEntry SoundClasses[] = {
+            {"cue", ESoundClass::Cue},
+            {"ambient", ESoundClass::Ambient},
+            {"footstep", ESoundClass::Footstep},
+            {"voice", ESoundClass::Voice},
+            {"rain", ESoundClass::Rain},
+            {"creature", ESoundClass::Creature}};
+
+        bool TryParseSoundClass(const String& name, ESoundClass& soundClass)
+        {
+            for (const auto& entry : SoundClasses)
+            {
+                if (name == entry.Name)
+                {
+                    soundClass = entry.Value;
+                    return true;
+                }
+            }
+            return false;
+        }
 
         template <size_t N>
         bool CheckKeys(JsonValue object, const char* const (&allowed)[N], SoundBankDiagnostic& diagnostic)
@@ -199,6 +228,35 @@ namespace NorvesLib::Modules::Audio::Private
                     return false;
                 }
                 definition.Category = category.AsString() == "effect" ? SoundCategory::Effect : SoundCategory::Ambience;
+            }
+            const auto bus = object.FindMember("bus");
+            if (bus.IsValid())
+            {
+                if (!bus.IsString() || !TryParseAudioBusName(bus.AsString(), definition.Bus))
+                {
+                    diagnostic.Detail = TEXT("bus");
+                    return false;
+                }
+                definition.bHasBus = true;
+            }
+            const auto duckTag = object.FindMember("duck_tag");
+            if (duckTag.IsValid())
+            {
+                if (!duckTag.IsString() || duckTag.AsString().empty())
+                {
+                    diagnostic.Detail = TEXT("duck_tag");
+                    return false;
+                }
+                definition.DuckTag = Core::Identity(duckTag.AsString());
+            }
+            const auto soundClass = object.FindMember("sound_class");
+            if (soundClass.IsValid())
+            {
+                if (!soundClass.IsString() || !TryParseSoundClass(soundClass.AsString(), definition.SoundClass))
+                {
+                    diagnostic.Detail = TEXT("sound_class");
+                    return false;
+                }
             }
             const auto source = object.FindMember("source_ref");
             if (source.IsValid())

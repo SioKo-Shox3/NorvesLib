@@ -1,11 +1,13 @@
 ﻿#include "Audio/AudioDomain.h"
 
 #include "Audio/AudioClipResource.h"
+#include "Audio/AudioOcclusionUpdater.h"
 #include "Container/VariableArray.h"
 #include "Math/MathTypes.h"
 #include "Thread/Atomic.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <utility>
 
@@ -13,7 +15,7 @@ namespace NorvesLib::Modules::Audio
 {
     bool IsPlayableVoiceDesc(uint64_t frameCount, uint64_t pcmBytes, const AudioVoiceDesc& desc) noexcept
     {
-        if (pcmBytes == 0 || pcmBytes > kAudioMaxVoicePcmBytes)
+        if (pcmBytes == 0 || pcmBytes > kAudioMaxVoicePcmBytes || static_cast<uint32_t>(desc.OutputBus) >= kAudioBusCount)
         {
             return false;
         }
@@ -46,6 +48,13 @@ namespace NorvesLib::Modules::Audio::Private
                    state == AudioVoiceState::Playing;
         }
 
+        [[nodiscard]] AudioResult BusOperationResult(AudioResult result) noexcept
+        {
+            return result == AudioResult::Success || result == AudioResult::AlreadyInState
+                ? result
+                : AudioResult::BackendFailure;
+        }
+
         struct BackendEvent
         {
             VoiceHandle Handle;
@@ -61,6 +70,8 @@ namespace NorvesLib::Modules::Audio::Private
             Core::Asset::AssetBlob PcmPayload;
             Core::Container::TUniquePtr<AudioBackendEventMailbox> Mailbox;
             float MaxFrequencyRatio = 2.0f;
+            float UserVolume = 1.0f;   ///< 呼び手が指定した線形音量。
+            float AcousticGain = 1.0f; ///< 遮蔽による線形利得。
             bool bPaused = false;
             bool bBackendVoiceCreated = false;
             bool bCountedActive = false;
@@ -136,10 +147,17 @@ namespace NorvesLib::Modules::Audio::Private
                 record.Clip = clip;
                 record.PcmPayload = clip->GetPcmBlob();
                 record.State = AudioVoiceState::Created;
+                record.UserVolume = 1.0f;
+                record.AcousticGain = 1.0f;
                 record.MaxFrequencyRatio = std::exp2(desc.MaxPitchSemitones / 12.0f);
                 const VoiceHandle handle{index, record.Generation};
 
-                if (m_Backend->CreateVoice(handle, clip->GetFormat(), record.MaxFrequencyRatio, *record.Mailbox) != AudioResult::Success)
+                const AudioBackendVoiceDesc backendDesc{
+                    .Format = clip->GetFormat(),
+                    .MaxFrequencyRatio = record.MaxFrequencyRatio,
+                    .OutputBus = desc.OutputBus,
+                };
+                if (m_Backend->CreateVoice(handle, backendDesc, *record.Mailbox) != AudioResult::Success)
                 {
                     ReleaseSlot(index);
                     return AudioResult::BackendFailure;
@@ -167,9 +185,29 @@ namespace NorvesLib::Modules::Audio::Private
                 return AudioResult::Success;
             }
 
+            AudioResult CreateBus(AudioBusId bus, AudioBusId parent) override
+            {
+                if (!m_bInitialized || m_bShutdown || static_cast<uint32_t>(bus) >= kAudioBusCount ||
+                    (bus != AudioBusId::Master && static_cast<uint32_t>(parent) >= kAudioBusCount))
+                {
+                    return AudioResult::InvalidState;
+                }
+                return BusOperationResult(m_Backend->CreateBus(bus, parent));
+            }
+
+            AudioResult SetBusVolume(AudioBusId bus, float gain) override
+            {
+                if (!m_bInitialized || m_bShutdown || static_cast<uint32_t>(bus) >= kAudioBusCount ||
+                    !std::isfinite(gain) || gain < 0.0f)
+                {
+                    return AudioResult::InvalidState;
+                }
+                return BusOperationResult(m_Backend->SetBusVolume(bus, gain));
+            }
+
             AudioResult SetVoiceVolume(VoiceHandle handle, float volume) override
             {
-                const ActiveVoiceRecord* record = Resolve(handle);
+                ActiveVoiceRecord* record = Resolve(handle);
                 if (record == nullptr)
                 {
                     return AudioResult::StaleHandle;
@@ -178,9 +216,38 @@ namespace NorvesLib::Modules::Audio::Private
                 {
                     return AudioResult::InvalidState;
                 }
-                return m_Backend->SetVoiceVolume(handle, volume) == AudioResult::Success
-                    ? AudioResult::Success
-                    : AudioResult::BackendFailure;
+                if (m_Backend->SetVoiceVolume(handle, volume * record->AcousticGain) != AudioResult::Success)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                record->UserVolume = volume;
+                return AudioResult::Success;
+            }
+
+            AudioResult SetVoiceAcoustics(VoiceHandle handle, const VoiceAcousticParams& params) override
+            {
+                ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (!std::isfinite(params.TargetGainDb) || !std::isfinite(params.LowpassCutoffHz) ||
+                    !CanSetVoiceParameters(record->State))
+                {
+                    return AudioResult::InvalidState;
+                }
+
+                const float gainDb = std::clamp(params.TargetGainDb, kVoiceAcousticMinGainDb, 0.0f);
+                const float gain = std::pow(10.0f, gainDb / 20.0f);
+                const float cutoff = std::clamp(params.LowpassCutoffHz, kVoiceAcousticMinCutoffHz, kVoiceAcousticMaxCutoffHz);
+                const AudioResult volumeResult = m_Backend->SetVoiceVolume(handle, record->UserVolume * gain);
+                const AudioResult filterResult = m_Backend->SetVoiceFilter(handle, cutoff, kVoiceLowpassOneOverQ);
+                if (volumeResult != AudioResult::Success || filterResult != AudioResult::Success)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                record->AcousticGain = gain;
+                return AudioResult::Success;
             }
 
             AudioResult SetVoicePitch(VoiceHandle handle, float semitones) override
@@ -437,6 +504,16 @@ namespace NorvesLib::Modules::Audio::Private
                 return AudioResult::Success;
             }
 
+            AudioOcclusionUpdater& GetOcclusionUpdater()
+            {
+                return m_Occlusion;
+            }
+
+            void SetAcousticsEvaluator(const Core::Scene::AcousticTransmissionEvaluator* evaluator)
+            {
+                m_AcousticsEvaluator = evaluator;
+            }
+
             void Tick() override
             {
                 for (ActiveVoiceRecord& voice : m_Voices)
@@ -491,6 +568,22 @@ namespace NorvesLib::Modules::Audio::Private
                         ++m_StaleEventCount;
                     }
                 }
+
+                if (m_bShutdown)
+                {
+                    return;
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+                float dt = 0.0f;
+                if (m_bOcclusionClockStarted)
+                {
+                    // 長い停止の後も遮蔽の利得と遮断周波数が目標へ跳ばないよう、経過時間に上限を設ける。
+                    dt = std::min(std::chrono::duration<float>(now - m_LastOcclusionTick).count(), 0.1f);
+                }
+                m_LastOcclusionTick = now;
+                m_bOcclusionClockStarted = true;
+                m_Occlusion.Tick(*this, m_AcousticsEvaluator, dt);
             }
 
             AudioResult Shutdown() override
@@ -500,6 +593,8 @@ namespace NorvesLib::Modules::Audio::Private
                     return AudioResult::AlreadyInState;
                 }
                 m_bShutdown = true;
+                m_Occlusion.Reset();
+                m_bOcclusionClockStarted = false;
                 if (!m_Backend)
                 {
                     return AudioResult::BackendFailure;
@@ -723,6 +818,10 @@ namespace NorvesLib::Modules::Audio::Private
             }
 
             Core::Container::TUniquePtr<IAudioBackend> m_Backend;
+            AudioOcclusionUpdater m_Occlusion;
+            const Core::Scene::AcousticTransmissionEvaluator* m_AcousticsEvaluator = nullptr;
+            std::chrono::steady_clock::time_point m_LastOcclusionTick{};
+            bool m_bOcclusionClockStarted = false;
             Core::Container::VariableArray<ActiveVoiceRecord> m_Voices;
             Core::Container::VariableArray<uint32_t> m_FreeIndices;
             Thread::Atomic<uint32_t> m_InFlightCallbacks{0};
@@ -747,6 +846,20 @@ namespace NorvesLib::Modules::Audio::Private
             return {};
         }
         return Core::Container::MakeUnique<AudioService>(std::move(backend));
+    }
+
+    AudioOcclusionUpdater* GetAudioServiceOcclusion(IAudioService& service)
+    {
+        auto* concrete = dynamic_cast<AudioService*>(&service);
+        return concrete ? &concrete->GetOcclusionUpdater() : nullptr;
+    }
+
+    void SetAudioServiceAcousticsEvaluator(IAudioService& service, const Core::Scene::AcousticTransmissionEvaluator* evaluator)
+    {
+        if (auto* concrete = dynamic_cast<AudioService*>(&service))
+        {
+            concrete->SetAcousticsEvaluator(evaluator);
+        }
     }
 
     bool AudioServiceTestAccess::PrepareVoiceGenerationWrap(IAudioService& service, VoiceHandle& handle)

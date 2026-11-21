@@ -59,6 +59,7 @@ namespace NorvesLib::Modules::Audio
         m_PcmBlob = Core::Asset::AssetBlob::Invalid();
         m_Format = {};
         m_FrameCount = 0;
+        m_CookedCategory = Core::Asset::CookedAudioCategory::Unspecified;
         SetResourceState(Core::ResourceState::Unloaded);
     }
 
@@ -86,6 +87,16 @@ namespace NorvesLib::Modules::Audio
     uint64_t AudioClipResource::GetFrameCount() const noexcept
     {
         return m_FrameCount;
+    }
+
+    void AudioClipResource::SetCookedCategory(Core::Asset::CookedAudioCategory category) noexcept
+    {
+        m_CookedCategory = category;
+    }
+
+    Core::Asset::CookedAudioCategory AudioClipResource::GetCookedCategory() const noexcept
+    {
+        return m_CookedCategory;
     }
 
     Core::Asset::AssetBlob AudioClipResource::GetPcmBlob() const
