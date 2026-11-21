@@ -12817,3 +12817,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next(反復 3): ランナーの評価者の反証。聴感の確かめは G16-GR73-SPATIAL-CHECK。
 - U1 voice の作成を位置付きの口に切り出し、再生の位置を仮想の時計で追う: 着地(直し 0 回)
 - U2 休眠の設計を音の流れの文書と GR73 の受入れ記録に書く: 着地(直し 0 回)
+- U3 休眠と復帰(距離のヒステリシス・呼び出し側の口・診断)を SoundSystem に入れる: 着地(直し 1 回)

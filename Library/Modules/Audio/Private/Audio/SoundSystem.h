@@ -43,6 +43,7 @@ namespace NorvesLib::Modules::Audio::Private
         AudioResult SetVolume(SoundInstanceHandle handle, float volume) override;
         AudioResult SetPitch(SoundInstanceHandle handle, float semitones) override;
         AudioResult SetEmitterPosition(SoundInstanceHandle handle, const Math::Vector3& position) override;
+        AudioResult SetInstanceAudible(SoundInstanceHandle handle, bool bAudible) override;
         [[nodiscard]] bool IsPlaying(SoundInstanceHandle handle) const override;
         [[nodiscard]] bool IsAudible(SoundInstanceHandle handle) const override;
         void SetMasterVolume(float volume) override;
@@ -58,6 +59,9 @@ namespace NorvesLib::Modules::Audio::Private
             bool bActive = false;
             bool bStopRequested = false;
             bool bStopVoiceIssued = false;
+            bool bVirtual = false; ///< 物理ボイスを手放して休眠している。
+            bool bVirtualByDistance = false; ///< 距離による休眠条件が成立している。
+            bool bVirtualRequested = false; ///< 呼び出し側が休眠を求めている。
             bool bGlobal = true;
             bool bLoop = false;
             VoiceHandle Voice;
@@ -129,6 +133,9 @@ namespace NorvesLib::Modules::Audio::Private
          * ストリームのボイス（G16-GR74-STREAM-VOICE）では、この位置をデコーダの Seek に渡す。
          */
         AudioResult StartInstanceVoice(Instance& instance, uint32_t startFrame);
+        void VirtualizeInstance(Instance& instance);
+        void TryDevirtualizeInstance(Instance& instance);
+        [[nodiscard]] uint32_t GetPhysicalVoiceCount() const;
         [[nodiscard]] float GetInstanceFrequencyRatio(const Instance& instance) const;
         bool AdvancePlayFrame(Instance& instance, float deltaSeconds) const;
         [[nodiscard]] uint32_t GetResumeFrame(const Instance& instance) const;

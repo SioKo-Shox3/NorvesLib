@@ -142,7 +142,7 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 
 `SetInstanceAudible` は古いハンドルに `StaleHandle`、停止要求後に `InvalidState`、呼び出し側の指定が今と同じなら `AlreadyInState`、変更を受け付けたら `Success` を返す。GR75 は −55 dB 未満で `false`、−52 dB を超えたら `true` を渡す。再生中は休眠しても `IsPlaying` と `IsAudible` は真である。
 
-`Update` は休眠を望む物理の voice に停止要求がなければ、`IAudioService::AbortVoice` でバックエンドの `StopVoice` と `DestroyVoice` を同期で順に行う。失敗時はサービスがその voice を隔離して寿命を管理する。どちらの場合もインスタンスは `Voice` を空にし、`bVirtual` を立てる。停止要求を受けてフェードアウト中の音は、そのまま停止まで進める。`PlayAt` の時点で d > MaxDistance × 1.05 の 3D 音源は、物理の voice を作らず休眠状態で開始する。
+`Update` は休眠を望む物理の voice に停止要求がなければ、`IAudioService::AbortVoice` でバックエンドの `StopVoice` と `DestroyVoice` を同期で順に行う。停止済みの voice の破棄やバッファの解放に失敗した場合はサービスが隔離する。破棄済みまたは隔離済みなら、インスタンスは `Voice` を空にして `bVirtual` を立てる。停止自体に失敗して voice がまだ鳴っている場合は、物理の voice を保持し、次の `Update` で休眠を再び試す。停止要求を受けてフェードアウト中の音は、そのまま停止まで進める。`PlayAt` の時点で d > MaxDistance × 1.05 の 3D 音源は、物理の voice を作らず休眠状態で開始する。
 
 再生位置 `PlayFrame` は clip のフレーム単位の `double` である。毎 `Update` で dt（秒）× サンプルレート × 周波数比だけ進める。周波数比は 2D ではピッチの比、3D ではピッチの比 × ドップラー比を、いずれも [1/1024, voice 作成時の上限] に収めた値とする。物理の voice がある間も同じ時計で再生位置を近似する。
 

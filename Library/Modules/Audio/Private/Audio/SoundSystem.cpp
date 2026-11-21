@@ -13,6 +13,7 @@ namespace NorvesLib::Modules::Audio::Private
 {
     namespace
     {
+        constexpr float kSoundVirtualEnterDistanceScale = 1.05f;
         constexpr float kMinimumFadeSeconds = 2.0f / 60.0f;
 
         bool IsValidFade(const SoundFade& fade)
@@ -292,11 +293,15 @@ namespace NorvesLib::Modules::Audio::Private
 
         uint32_t definitionCount = 0;
         uint32_t oldestIndex = SoundInstanceHandle::InvalidIndex;
-        for (uint32_t index = 0; index < m_Instances.size(); ++index)
+        if (!candidate.bVirtual && definition.MaxInstances > 0)
         {
-            const Instance& instance = m_Instances[index];
-            if (instance.bActive && instance.DefinitionId == definition.Id)
+            for (uint32_t index = 0; index < m_Instances.size(); ++index)
             {
+                const Instance& instance = m_Instances[index];
+                if (!instance.bActive || instance.bVirtual || instance.DefinitionId != definition.Id)
+                {
+                    continue;
+                }
                 ++definitionCount;
                 if (oldestIndex == SoundInstanceHandle::InvalidIndex ||
                     instance.PlaySequence < m_Instances[oldestIndex].PlaySequence)
@@ -329,7 +334,7 @@ namespace NorvesLib::Modules::Audio::Private
             outStealIndex = oldestIndex;
             return AudioResult::Success;
         }
-        if (m_Diagnostics.ActiveInstanceCount >= m_Config.MaxConcurrentVoices)
+        if (!candidate.bVirtual && GetPhysicalVoiceCount() >= m_Config.MaxConcurrentVoices)
         {
             // 新規は目標音量と最も新しい通し番号で、既存と同じ順序に入れる。
             const Instance* lowest = &candidate;
@@ -337,7 +342,7 @@ namespace NorvesLib::Modules::Audio::Private
             for (uint32_t index = 0; index < m_Instances.size(); ++index)
             {
                 const Instance& instance = m_Instances[index];
-                if (instance.bActive && IsLowerVoiceRank(instance, *lowest))
+                if (instance.bActive && !instance.bVirtual && IsLowerVoiceRank(instance, *lowest))
                 {
                     lowest = &instance;
                     lowestIndex = index;
@@ -445,6 +450,7 @@ namespace NorvesLib::Modules::Audio::Private
                 return AudioResult::InvalidState;
             }
             instance.ComputeSpatial(m_Listener);
+            instance.bVirtual = instance.bVirtualByDistance;
         }
         uint32_t stealIndex;
         const AudioResult admission = CheckPlayAdmission(definition, instance, stealIndex);
@@ -494,10 +500,13 @@ namespace NorvesLib::Modules::Audio::Private
         {
             instance.Clip = SelectClip(definition);
         }
-        const AudioResult result = StartInstanceVoice(instance, 0);
-        if (result != AudioResult::Success)
+        if (!instance.bVirtual)
         {
-            return result;
+            const AudioResult result = StartInstanceVoice(instance, 0);
+            if (result != AudioResult::Success)
+            {
+                return result;
+            }
         }
 
         const uint32_t index = AcquireSlot();
@@ -506,6 +515,10 @@ namespace NorvesLib::Modules::Audio::Private
         instance.PlaySequence = ++m_PlaySequence;
         m_Instances[index] = std::move(instance);
         ++m_Diagnostics.ActiveInstanceCount;
+        if (m_Instances[index].bVirtual)
+        {
+            ++m_Diagnostics.Voice.VirtualVoiceCount;
+        }
         outHandle = SoundInstanceHandle{index, m_Instances[index].Generation};
         RecordPlay(id, position, bGlobal);
         return AudioResult::Success;
@@ -557,6 +570,60 @@ namespace NorvesLib::Modules::Audio::Private
 
         instance.LastVoiceVolume = volume;
         return AudioResult::Success;
+    }
+
+    uint32_t SoundSystem::GetPhysicalVoiceCount() const
+    {
+        return m_Diagnostics.ActiveInstanceCount - m_Diagnostics.Voice.VirtualVoiceCount;
+    }
+
+    void SoundSystem::VirtualizeInstance(Instance& instance)
+    {
+        const AudioResult result = m_Service.AbortVoice(instance.Voice);
+        if (result != AudioResult::Success && result != AudioResult::StaleHandle)
+        {
+            AudioVoiceState state = AudioVoiceState::Destroyed;
+            if (m_Service.GetVoiceState(instance.Voice, state) == AudioResult::Success &&
+                state != AudioVoiceState::Quarantined)
+            {
+                // 停止に失敗して鳴り続けるボイスは保持し、次の Update で休眠を再び試す。
+                return;
+            }
+        }
+        instance.Voice = {};
+        instance.bVirtual = true;
+        ++m_Diagnostics.Voice.VirtualVoiceCount;
+        ++m_Diagnostics.Voice.VirtualizeCount;
+    }
+
+    void SoundSystem::TryDevirtualizeInstance(Instance& instance)
+    {
+        if (GetPhysicalVoiceCount() >= m_Config.MaxConcurrentVoices)
+        {
+            return;
+        }
+        const auto definition = m_Definitions.find(instance.DefinitionId);
+        if (definition != m_Definitions.end() && definition->second.MaxInstances > 0)
+        {
+            uint32_t definitionCount = 0;
+            for (const Instance& other : m_Instances)
+            {
+                if (other.bActive && !other.bVirtual && other.DefinitionId == instance.DefinitionId)
+                {
+                    ++definitionCount;
+                    if (definitionCount >= definition->second.MaxInstances)
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+        if (StartInstanceVoice(instance, GetResumeFrame(instance)) == AudioResult::Success)
+        {
+            instance.bVirtual = false;
+            --m_Diagnostics.Voice.VirtualVoiceCount;
+            ++m_Diagnostics.Voice.DevirtualizeCount;
+        }
     }
 
     float SoundSystem::GetInstanceFrequencyRatio(const Instance& instance) const
@@ -713,6 +780,10 @@ namespace NorvesLib::Modules::Audio::Private
 
     AudioResult SoundSystem::ApplyVolume(Instance& instance)
     {
+        if (instance.bVirtual)
+        {
+            return AudioResult::Success;
+        }
         const float volume = GetVoiceVolume(instance);
         if (!IsValidVolume(volume))
         {
@@ -735,6 +806,15 @@ namespace NorvesLib::Modules::Audio::Private
     AudioSpatialResult SoundSystem::Instance::ComputeSpatial(const AudioListenerState& listener)
     {
         const AudioSpatialResult spatial = ComputeAudioSpatial(listener, Position, Velocity, SpatialSettings);
+        // 帯の内側では直前の距離判定を維持する。
+        if (spatial.Distance > SpatialSettings.MaxDistance * kSoundVirtualEnterDistanceScale)
+        {
+            bVirtualByDistance = true;
+        }
+        else if (spatial.Distance <= SpatialSettings.MaxDistance)
+        {
+            bVirtualByDistance = false;
+        }
         SpatialVolumeScale = spatial.RearVolumeScale;
         RearHighFrequencyFactor = spatial.RearHighFrequencyFactor;
         DopplerRatio = spatial.DopplerRatio;
@@ -752,6 +832,10 @@ namespace NorvesLib::Modules::Audio::Private
         }
 
         const AudioSpatialResult spatial = instance.ComputeSpatial(m_Listener);
+        if (instance.bVirtual)
+        {
+            return;
+        }
         if (std::fabs(spatial.LeftGain - instance.LastLeftGain) > kAudioSpatialParameterEpsilon ||
             std::fabs(spatial.RightGain - instance.LastRightGain) > kAudioSpatialParameterEpsilon)
         {
@@ -791,7 +875,7 @@ namespace NorvesLib::Modules::Audio::Private
         for (uint32_t index = 0; index < m_Instances.size(); ++index)
         {
             Instance& instance = m_Instances[index];
-            if (!instance.bActive)
+            if (!instance.bActive || instance.bVirtual)
             {
                 continue;
             }
@@ -810,8 +894,9 @@ namespace NorvesLib::Modules::Audio::Private
                 }
             }
         }
-        for (Instance& instance : m_Instances)
+        for (uint32_t index = 0; index < m_Instances.size(); ++index)
         {
+            Instance& instance = m_Instances[index];
             if (!instance.bActive)
             {
                 continue;
@@ -821,7 +906,17 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 continue;
             }
-            AdvancePlayFrame(instance, deltaSeconds);
+            if (instance.bVirtual && instance.bStopRequested)
+            {
+                ReleaseSlot(index);
+                continue;
+            }
+            const bool bReachedEnd = AdvancePlayFrame(instance, deltaSeconds);
+            if (instance.bVirtual && bReachedEnd)
+            {
+                ReleaseSlot(index);
+                continue;
+            }
             if (instance.bSpatial)
             {
                 UpdateSpatial(instance, deltaSeconds);
@@ -847,7 +942,19 @@ namespace NorvesLib::Modules::Audio::Private
                 }
             }
             ApplyVolume(instance);
-            if (instance.bStopRequested && instance.FadeElapsedSeconds >= instance.FadeSeconds)
+            if (!instance.bStopRequested)
+            {
+                const bool bWantsVirtual = instance.bVirtualByDistance || instance.bVirtualRequested;
+                if (bWantsVirtual && !instance.bVirtual)
+                {
+                    VirtualizeInstance(instance);
+                }
+                else if (!bWantsVirtual && instance.bVirtual)
+                {
+                    TryDevirtualizeInstance(instance);
+                }
+            }
+            else if (instance.FadeElapsedSeconds >= instance.FadeSeconds)
             {
                 // 失敗時も再送しない。以後の物理寿命はサービスの終端通知と終了処理が持つ。
                 instance.bStopVoiceIssued = true;
@@ -896,6 +1003,11 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return AudioResult::InvalidState;
         }
+        if (instance->bVirtual)
+        {
+            instance->Params.PitchSemitones = semitones;
+            return AudioResult::Success;
+        }
         if (instance->bSpatial)
         {
             const float ratio = GetSpatialFrequencyRatio(semitones, instance->DopplerRatio, instance->MaxFrequencyRatio);
@@ -937,6 +1049,30 @@ namespace NorvesLib::Modules::Audio::Private
         }
         instance->PendingPosition = position;
         instance->bHasPendingPosition = true;
+        return AudioResult::Success;
+    }
+
+    AudioResult SoundSystem::SetInstanceAudible(SoundInstanceHandle handle, bool bAudible)
+    {
+        if (!IsOwnerThread() || m_bShutdown)
+        {
+            return AudioResult::InvalidState;
+        }
+        Instance* instance = Resolve(handle);
+        if (instance == nullptr)
+        {
+            return AudioResult::StaleHandle;
+        }
+        if (instance->bStopRequested)
+        {
+            return AudioResult::InvalidState;
+        }
+        const bool bRequestVirtual = !bAudible;
+        if (instance->bVirtualRequested == bRequestVirtual)
+        {
+            return AudioResult::AlreadyInState;
+        }
+        instance->bVirtualRequested = bRequestVirtual;
         return AudioResult::Success;
     }
 
@@ -1008,6 +1144,9 @@ namespace NorvesLib::Modules::Audio::Private
         diagnostics.Voice.StolenVoiceCount = m_Diagnostics.Voice.StolenVoiceCount;
         diagnostics.Voice.RejectedPlayCount = m_Diagnostics.Voice.RejectedPlayCount;
         diagnostics.Voice.SuppressedByCooldownCount = m_Diagnostics.Voice.SuppressedByCooldownCount;
+        diagnostics.Voice.VirtualVoiceCount = m_Diagnostics.Voice.VirtualVoiceCount;
+        diagnostics.Voice.VirtualizeCount = m_Diagnostics.Voice.VirtualizeCount;
+        diagnostics.Voice.DevirtualizeCount = m_Diagnostics.Voice.DevirtualizeCount;
         return diagnostics;
     }
 
@@ -1050,6 +1189,10 @@ namespace NorvesLib::Modules::Audio::Private
 
     void SoundSystem::ReleaseSlot(uint32_t index)
     {
+        if (m_Instances[index].bVirtual)
+        {
+            --m_Diagnostics.Voice.VirtualVoiceCount;
+        }
         const uint32_t generation = m_Instances[index].Generation;
         m_Instances[index] = Instance{};
         m_Instances[index].Generation = generation;
