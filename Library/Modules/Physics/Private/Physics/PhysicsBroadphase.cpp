@@ -943,6 +943,15 @@ namespace NorvesLib::Modules::Physics
             {
                 return Result::NoHit;
             }
+            if (bApplyFilter && query.Filter.MobilityPolicy == Core::Scene::EPhysicsQueryMobilityPolicy::StaticOnly
+                && !(proxy.bStatic || proxy.Mobility == EPhysicsProxyMobility::Static))
+            {
+                return Result::NoHit;
+            }
+            if (bApplyFilter && query.Filter.bExcludeHeightFields && proxy.Shape == EPhysicsProxyShape::HeightField)
+            {
+                return Result::NoHit;
+            }
             if (bApplyFilter && query.Filter.IgnoreEntity.IsValid() && proxy.bHasEntity
                 && proxy.Entity == query.Filter.IgnoreEntity)
             {

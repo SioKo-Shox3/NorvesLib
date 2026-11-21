@@ -8406,7 +8406,7 @@
 - notes: 設計は要件 `#### GR115` の設計 (2)(3)(4)、ロードマップ 2811 行（足ごとの `GroundContactState` を GR05/GR07 が更新し、G5〜G11 の消費者の独自判定は `QuerySurface` へ寄せる）。置き場: 要件は「Game 側の GroundContactState は GR05/GR07 の置き場に従う」とするが、犬（Game の `QuadrupedLocomotionComponent`）と動物（G13 の AI モジュール）とシ者が同じ部品を使うので Library の Component にする（G5-GR44 の集め役を Library に置いたのと同じ理由）。地形の層の番号は u8 で `Scene::SurfaceId` と型が違う（G13-GR115-SURFACE-REGISTRY の notes）ので、変換はこの provider の中だけで行う。草のしきい値 0.35 は根拠なしの仮の値（データで替える）。UNCERTAIN: G11 の水たまり（`G11-GR59-PUDDLES`）が CPU で水深を引ける形を持つか、足 IK（G9-GR14）が足の接地のレイの結果を外へ出すかは未確認。無ければ PuddleDepthM は 0、足は自前の 1 本で済ませ、PROGRESS.md に書く。ColliderComponent は形を保存しないので、表面だけ保存されても形は手で置く（要件のリスク）。危険地帯（Public API）なので評価者を通す。試験を足す理由: 反証する契約は「音・視覚・挙動の消費者が同じ足元の表面を読む」こと。食い違いは足音と足跡が別の地面の物になるだけで、撮影では気づきにくく、黙って起きる。やらないこと: 足音の再生（GR75、G16）、取り込み設定の材質からの継承（GR81、G17）、濡れた毛への結線（GR35/GR36 の側）。
 
 ## G13-GR116-ACOUSTIC-EVALUATOR: 音の通りにくさ（距離・壁・草・地形・雨の騒音床）を Core の 1 つの評価器で求め、AI の聴覚と音の両方が呼べるようにする
-- status: todo
+- status: done
 - after: G13-GR115-SURFACE-REGISTRY, G5-GR38-HEIGHTFIELD-QUERY, G5-GR38-PHYSICS-HEIGHTFIELD, G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G11-GR59-OVERHEAD-MAP, G11-GR59-PUDDLE-MASK, G11-GR59-RAIN-HIT, G11-GR59-FOOT-SPLASH, G11-GR59-PUDDLES, G16-GR73-SPATIAL-LISTENER
 - gr: GR116
 - needs-gr: GR38, GR42, GR49, GR59
