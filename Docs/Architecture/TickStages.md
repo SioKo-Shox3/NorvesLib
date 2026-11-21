@@ -88,17 +88,19 @@
 
 `PreUpdate` の後、`TickSimulationAndHaptics` は Bridge の判定を 1 回行い、World の条件を振動出力に適用する。`TickSimulation` はその Bridge の判定を受け取り、入口で World の条件をもう一度評価する。以後の各段はこの値を使う。`OnUpdate` でのポーズ変更は当フレームに、判定後のゲームモードなどでの変更は次のフレームの進行に反映される。
 
-`Engine::Engine` が持つ `SimulationPauseState` は `GetSimulationPauseState()` で取得する。`Push` と `Pop` は `Menu`、`FocusLost`、`Minimized`、`Loading`、`Dialog` ごとに要求を数える。同じ理由を 2 回要求すると、2 回解除するまでその理由は有効。件数が 0 の理由を `Pop` すると警告を記録し、`false` を返す。`IsWorldPaused()` が `false` になるのは全理由が 0 件のときだけ。有効な理由のビット集合が変わるたびに `OnChanged` を 1 回通知し、変更後の集合を渡す。`ModuleRegistry::DispatchPauseStateChanged` はレジストリが `Running` のとき、登録順に `IModule::OnPauseStateChanged(reasons)` を呼ぶ。
+`Engine::Engine` が持つ `SimulationPauseState` は `GetSimulationPauseState()` で取得する。`Push` と `Pop` は `Menu`、`FocusLost`、`Minimized`、`Loading`、`Dialog` ごとに要求を数える。同じ理由を 2 回要求すると、2 回解除するまでその理由は有効。件数が 0 の理由を `Pop` すると警告を記録し、`false` を返す。`IsWorldPaused()` が `false` になるのは全理由が 0 件のときだけ。有効な理由のビット集合が変わるたびに `OnChanged` を 1 回通知し、変更後の集合を渡す。通知中の `Push`・`Pop`・`Reset` は要求数とビット集合に即座に反映され、ビット集合に変化があれば、その時点の集合を保留し、今の通知を全購読者に配り終えてから発生順に通知する。`ModuleRegistry::DispatchPauseStateChanged` はレジストリが `Running` のとき、登録順に `IModule::OnPauseStateChanged(reasons)` を呼ぶ。
 
 | 分類 | 進行条件 | 対象 |
 |---|---|---|
 | Bridge の進行に従う | `bBridgeAdvance` | ゲームモードの状態機械とストリーミングはゲーム内ポーズ中も進む。 |
 | 非ポーズ時の simulation | `bWorldAdvance` | 通常のワールド更新、固定ステップ、物理後の更新を実行する。 |
-| ポーズ中も更新する印付き対象 | `bBridgeAdvance && !bWorldAdvance` | 通常のワールド更新に代わり、`World::TickWhenPaused` が対象を更新する。Bridge 停止中は呼ばれない。 |
+| ポーズ中も更新する印付き対象 | `bBridgeAdvance && !bWorldAdvance` | `World::TickWhenPaused` が、自身か所有者に印のある `Component` を通常の更新と同じ順序で更新する。各呼び先には 100 ms の上限で丸める前の実経過秒を渡す。 |
 
-`Entity::SetTickWhenPaused` と `Component::SetTickWhenPaused` の既定値はどちらも `false`。`Entity` の印は直下の `Component` にだけ効き、子の `Entity` には伝わらない。`Component` の印は自身だけに効く。`World::TickWhenPaused` はワールドが保持する印付き一覧から登録済みの呼び先を集め、群の順に `Unscaled` の経過秒を渡す。両方の印が重なっても同じ対象は各群 1 回まで。呼び出し直前に所有者と対象の有効状態を確認し、最後に `CleanupDestroyedObjects` で破棄予約を回収する。
+`Entity::SetTickWhenPaused` と `Component::SetTickWhenPaused` の既定値はどちらも `false`。`Entity` の印は直下の `Component` にだけ効き、子の `Entity` には伝わらない。`Component` の印は自身だけに効く。`World` は対象の `Component` を集合に保持する。両方の印が付いても集合には 1 件だけ入る。印の変更、`Component` の着脱、登録の解除時にだけ集合を更新するため、毎フレーム階層や各 `Entity` の子を走査して対象を探す必要はない。
 
-通常のワールド更新では、時間チャンネルが呼び先の受け取る経過時間を決める。`World` と `Animation` には所有者の時間倍率も掛かる。ヒットストップでこれらの時間が 0 になっても、`bWorldAdvance` が開いていれば `Unscaled` の呼び先は進む。ゲーム内ポーズ中に更新を受けるには、チャンネルにかかわらず自身か所有者に印が必要となる。
+`World::TickWhenPaused` は通常の `World::Tick` と同じく、必要なら先に呼び先を付け直す。集合内の各 `Component` の順序付きの登録記録から群・呼び出す本体・優先度・深さ優先の番号を取り、通常の更新と同じ群順で呼ぶ。各群内は優先度の昇順、同じ優先度では深さ優先の番号の昇順となる。呼び出し直前に所有者、印、対象の有効状態を確認し、最後に `CleanupDestroyedObjects` で破棄予約を回収する。
+
+通常のワールド更新では、時間チャンネルが呼び先の受け取る経過時間を決める。`World` と `Animation` には所有者の時間倍率も掛かる。ヒットストップでこれらの時間が 0 になっても、`bWorldAdvance` が開いていれば `Unscaled` の呼び先は進む。ゲーム内ポーズ中に更新を受けるには、チャンネルにかかわらず自身か所有者に印が必要となる。このとき `TickSimulation` が渡すのは、`ClampVariableDeltaTime` で丸める前の `rawDeltaNanoseconds` を秒に換算した値（0 以下なら 0 秒）。
 
 ### 現在の更新と進行条件
 
@@ -118,7 +120,7 @@
 | チャンネルの経過時間（GR02） | `bWorldAdvance`（`Unscaled` を除く） | `TickSimulation` は毎フレーム `TimeSystem::BeginFrame` に進行条件を渡す。停止中は `Unscaled` 以外の経過時間が 0 になり、内部の実時間は進む。 |
 | 振動の再生 | `bWorldAdvance` | `TickSimulationAndHaptics` が `SetHapticsPaused(!bWorldAdvance)` で停止を反映する。停止時に再生中の振動を取り消し、解除時も自動再開しない。 |
 | ゲームモードの状態機械 | `bBridgeAdvance` | `PreSimulation.GameModeStateMachine` → `UpdateGameModeStateMachine` に `Unscaled` の経過秒を渡す。 |
-| 印付きの対象のポーズ時更新 | `bBridgeAdvance && !bWorldAdvance` | `TickSimulation` → `World::TickWhenPaused(times.Unscaled)` |
+| 印付きの対象のポーズ時更新 | `bBridgeAdvance && !bWorldAdvance` | `TickSimulation` → `World::TickWhenPaused(elapsedSeconds)`（100 ms の上限で丸める前の実経過秒） |
 | ストリーミング | `bBridgeAdvance` | 通常は `PostTick.Streaming`、ゲーム内ポーズ中は `TickSimulation` が直接 `StreamingSystem::Update` を呼ぶ。`Loading` によるポーズ中も読み込みが進む。 |
 | 入力の評価 | ゲート外 | `ApplicationProcessor::Tick` → `UpdateInputFrame`（`PreUpdate` の前） |
 | ハンドラの更新と Bridge 受信 | ゲート外 | `PreUpdate.HandlerUpdate` → `OnUpdate`。Bridge の受信はゲーム側の `DrainInbound` が処理する。 |
@@ -128,6 +130,7 @@
 | 描画の同期 | ゲート外 | `ApplicationProcessor::Tick` → `World::SyncToSceneView` |
 | 空間検索の境界更新 | ゲート外 | `ApplicationProcessor::Tick` → `SceneQuery::Update`（描画同期後） |
 | モジュールの通常更新 | ゲート外 | `PostUpdate.ModuleTick` → `ModuleRegistry::TickAll` |
+| UI（`UiSystem`） | ゲート外（実装予定） | `G15-GR68-UI-CORE` で追加する。ゲーム内ポーズ中もゲートの外で実時間で更新する。追加時にこの欄に実装の場所を記す。 |
 | ハンドラの描画前処理 | ゲート外 | `ApplicationProcessor::Tick` → `IApplicationHandler::OnPreRender`（`PostUpdate` の後） |
 
 今後追加する `AIModule` の `FixedTick`（GR21〜GR24）は固定ステップとともに停止する。音のダッキング（GR73）は `OnPauseStateChanged` で受ける。それぞれの実装と同じ変更でこの表に行を足す。

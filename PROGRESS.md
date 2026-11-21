@@ -12935,3 +12935,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 ポーズの状態の変化の通知を発生順に積んで配る: 着地(直し 0 回)
 - U6 ポーズ中の呼び先の候補を印と着脱のときだけ更新し、通常の更新と同じ順で呼ぶ: 着地(直し 0 回)
 - U7 ポーズ中の印の付いたものへ上限で丸める前の実経過秒を渡す: 着地(直し 0 回)
+- U8 TickStages.md を直しに合わせ、UiSystem の行を足し、全体をビルドで確かめる: 着地(直し 0 回)
