@@ -230,6 +230,7 @@ namespace NorvesLib::Core::Scene
                 {
                     return result;
                 }
+                desc.Audio.bHasTransmissionLossDb = audio.FindMember("transmissionLossDb").IsValid();
             }
             if (const auto visual = surfaceValue.FindMember("visual"); visual.IsValid())
             {

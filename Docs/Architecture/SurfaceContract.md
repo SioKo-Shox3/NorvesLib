@@ -31,13 +31,15 @@
     {
       "name": "Default",
       "flags": [],
-      "audio": {"footstepSet": "default", "noiseLevelDb": -10, "transmissionLossDb": 0},
+      "audio": {"footstepSet": "default", "noiseLevelDb": -10},
       "visual": {"footprint": "", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0},
       "physical": {"friction": 0.6, "restitution": 0, "footSinkCm": 0}
     }
   ]
 }
 ```
+
+`audio.transmissionLossDb` を明示した表面では、その値（0 dB を含む）を壁 1 枚の透過損失として使う。省略した表面では親を順にたどり、どの親にも指定がなければ音の評価器の `wallClassFallbackLossDb` を使う（[音の透過評価](AcousticTransmission.md)）。
 
 ルートは `version` と `surfaces`、各要素は `name`、`parent`、`flags`、`audio`、`visual`、`physical` を受け付ける。名前は 1〜64 バイトの英数字と `_`。`Default` は配列内の位置によらず添字 0 で、その親は省略、空文字列、または `Default` に限る。他の親の省略・空文字列は `Default` を意味する。フラグは上記の名前の配列。`audio` の数値は有限の `float` に収まる値、`visual` の `grassTrample`・`wetFurTransfer` と `physical` の `restitution` は 0〜1、`friction`・`footSinkCm` は 0 以上の有限の `float` に収まる値とする。テキストは最大 1 MiB、表面は引退した添字を含め最大 1024 個。
 
