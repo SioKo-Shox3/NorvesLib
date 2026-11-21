@@ -66,7 +66,8 @@ namespace NorvesLib::Modules::AI
     {
         auto* world = owner.GetWorld();
         auto* body = owner.GetComponent<Physics::CharacterBodyComponent>();
-        if (!world || owner.IsPendingDestroy() || agent.IsPendingDestroy() ||
+        // プレハブの Initialize では ObjectId が 0 のため、最初の固定歩で操舵の系が接続する。
+        if (!world || owner.GetObjectId() == 0 || owner.IsPendingDestroy() || agent.IsPendingDestroy() ||
             owner.GetComponent<SteeringAgentComponent>() != &agent || !body || body->IsPendingDestroy())
         {
             if (IsBound())
@@ -75,7 +76,7 @@ namespace NorvesLib::Modules::AI
             }
             return false;
         }
-        if (m_BoundOwnerId == owner.GetObjectId() && m_BoundBodyId == body->GetComponentId())
+        if (IsBound() && m_BoundOwnerId == owner.GetObjectId() && m_BoundBodyId == body->GetComponentId())
         {
             return true;
         }
@@ -108,7 +109,8 @@ namespace NorvesLib::Modules::AI
     void AnimalMotor::Detach(Core::Entity* owner)
     {
         ++m_BindingGeneration;
-        if (owner && owner->GetObjectId() == m_BoundOwnerId)
+        // 所有者の ObjectId が変わっても、体の ComponentId で古い接続を外す。
+        if (owner && m_BoundBodyId != 0)
         {
             auto* body = owner->GetComponent<Physics::CharacterBodyComponent>();
             if (body && body->GetComponentId() == m_BoundBodyId)

@@ -12781,3 +12781,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ（直しの後）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT_CODE=0（`NorvesModule_AI.lib`・`Game.exe` を生成、error 0、変更ファイルの警告 0）。`git diff --numstat` と `--ignore-cr-at-eol` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。
 - Notes: 評価の残課題（done-when の外）: `AIModule::Shutdown` 後の再 `Initialize` で生きている個体は登録し直されない。壁の近くの目的地ではコンテキスト操舵が正面を外して壁沿いにそれることがある（シーンに置いたときに見る点）。
 - U13 操舵の登録簿を Component の非所有の参照にし、所有者の ID とハンドルを歩ごとに読み、操舵できない目標の速度を零として読む: 着地(直し 0 回)
+- U14 運動の結び付きを所有者の ObjectId が 0 の間は結ばず、外すときは体の ComponentId で外す: 着地(直し 0 回)
