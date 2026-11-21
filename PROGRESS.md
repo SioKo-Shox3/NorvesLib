@@ -12687,7 +12687,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: `FontFaceCache` を GEngine に持たせる配線はしていない（`ApplicationProcessor.cpp` の既定のフォントは今の `Build(FontAtlasDesc{}, ...)` のまま、一時のキャッシュで読む）。`Faces` の 1 本でも読めないと焼き全体が失敗する。`Codepoints` を指定したときは代わりの字 '?'・U+25A1・U+FFFD を自動で足す（どの face にも無い字は焼かない）。
 - U1 StringTable(言語ごとの文字列表・切り替えの通知・文字集合の収集): 着地(直し 0 回)
 - U2 最初の日本語の文字列表と文字のスタイル表(データだけ): 着地(直し 0 回)
-- U3 Engine::Engine に StringTable を持たせ、起動時に日本語の表を読む: 着地(直し 0 回)
+- U3 Engine::Engine に StringTable を持たせ、GetStringTable で引けるようにする(起動時の読み込みは未配線): 着地(直し 0 回)
 - U4 ITextMetrics と TextLayout の本体(折り返し・禁則・揃え・行間・省略・基準線): 着地(直し 0 回)
 - U6 FontAtlas を使う ITextMetrics の実装: 着地(直し 0 回)
 - U5 TextLayout のインラインのタグ({icon:Action}・色)と結果のキャッシュ: 着地(直し 0 回)
@@ -12708,3 +12708,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U9 StringTable の差し戻しを直す(代替言語の読み込み・Format の二重括弧・省略記号の文字集合・使用中の言語の読み直しの通知): 着地(直し 0 回)
 - U10 アトラスの CPU の状態が失われたら、寸法と世代を未接続の値にそろえる: 着地(直し 0 回)
 - U11 CMake の文字描画の選択肢の説明を日本語にし、Debug の全体のビルドで仕上げを確かめる(最後): 着地(直し 0 回)
+
+## 2026-11-21 G15-GR69-STRINGTABLE-LAYOUT（run 20261121-065219 の反復 3、差し戻しの対応、完了）
+- Done: 折り返しの位置は、幅内で禁則を守る単語境界の最も後ろ → 無ければ幅内で禁則を守る文字境界の最も後ろ → どちらも無いときだけ幅の位置で禁則を破って切る、の順にした（全文字の送り 1・幅 3 の `（ABC` は `（AB` / `C`）。単語境界の空白の判定を `bSpace`（' '・タブ・U+3000）にそろえ、タブの後ろでも切れる（幅 5 の `go	far` は `go	` / `far`）。
+- Done: `StringTable::LoadLanguage` は表の `fallback` の言語が未読み込みならそれも読む（自分を先に登録するので循環と自己参照はそこで止まる。代替言語が読めなくても主の言語は成功のまま警告を 1 行出す）。使用中の言語を読み直したら `OnLanguageChanged` を送る。`Format` は `{{`・`}}` を畳まず原文のまま残す（置換は `{0}`・`{name}` だけ）。`CollectCodepoints` は接頭辞にかかわらず、組版が省略に挿入する U+2026 を加える。
+- Done: `FontAtlasTextMetrics` は結び付けたアトラスの CPU の状態が失われたら（`FontAtlas::Shutdown`・`Upload` の失敗）、未接続と同じ値（空の字形・寸法 0・世代 0）を返す。`TextLayoutCache` の世代 0 の結果は寸法 0 で組んだものなので食い違わない。`NORVES_ENABLE_CORE_TEXT` の説明を日本語にした。
+- 証拠: `.harness/runs/20261121-065219/verify-G15-GR69-STRINGTABLE-LAYOUT-iter3-build.txt`（ImGui・CORE_TEXT とも ON の構成で `cmake --build build --config Debug -- /m:1` が EXIT=0、Game.exe まで生成。StringTable.obj・FontAtlasTextMetrics.obj は直したソースより新しい。`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。
+- 試験: done-when (5) の試験と verify の ctest の 2 行は、人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: 文字列表と組版を使う画面はまだ無く、各シーンの見た目は変わらない。
+- Next: ランナーの評価者の反証（前回の指摘への対応差分）。起動時に `ja` を読む配線と、UI の Label への組版の配線は、文字列表を使う側の項目でする。
+- Notes: 既知の限界: 使用中の言語の代替言語だけを読み直したときは `OnLanguageChanged` を送らない（代替言語の訳を返すのは製品ビルドの欠落キーだけ）。
