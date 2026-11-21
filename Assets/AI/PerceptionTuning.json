@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "vision": {
+    "fieldOfViewDegrees": 120,
+    "fieldOfViewEdgeDegrees": 15,
+    "fadeStartMeters": 40,
+    "maxDistanceMeters": 60,
+    "terrainClearanceMeters": 0.05
+  },
+  "grass": {
+    "opacityScale": 1,
+    "stepMeters": 0.5
+  },
+  "hearing": {
+    "windCoefficient": 0.3,
+    "windReferenceSpeed": 5,
+    "windFactorMin": 0.5,
+    "windFactorMax": 1.6,
+    "audibleLevelDb": 0,
+    "directionErrorBaseRadians": 0.35,
+    "directionErrorMinRadians": 0.05,
+    "directionErrorMaxRadians": 1.2
+  },
+  "smell": {
+    "downwindLengthMeters": 40,
+    "upwindLengthMeters": 3,
+    "upwindFactor": 0.1,
+    "upwindAxisRatio": 0.5,
+    "crossSigmaBaseMeters": 2,
+    "crossSigmaSpreadPerMeter": 0.15,
+    "calmWindSpeed": 0.3,
+    "fullWindSpeed": 1.5,
+    "calmLengthMeters": 8,
+    "windFilterSeconds": 1
+  },
+  "awareness": {
+    "gain": 1.5,
+    "decay": 0.25,
+    "suspiciousThreshold": 0.35,
+    "alertThreshold": 0.8,
+    "hysteresis": 0.05,
+    "reactionDelaySeconds": 0.3,
+    "reactionJitterSeconds": 0.1,
+    "memorySeconds": 10
+  }
+}
