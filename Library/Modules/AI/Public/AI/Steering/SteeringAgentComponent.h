@@ -90,6 +90,7 @@ namespace NorvesLib::Modules::AI
 
     private:
         friend class AIModule;
+        friend class SteeringSystem;
         friend class AnimalMotor;
         bool AcceptRequest(SteeringRequest request);
         void DetachMotorAndUnregister();

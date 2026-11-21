@@ -13,7 +13,6 @@
 #include "Rendering/RenderingCoordinator.h"
 #endif
 
-#include <algorithm>
 #include <utility>
 
 namespace NorvesLib::Modules::AI
@@ -55,31 +54,23 @@ namespace NorvesLib::Modules::AI
 
     void AIModule::RegisterAgent(SteeringAgentComponent& agent)
     {
-        if (!IsOwnerThread() || agent.m_bRegistered)
+        if (IsOwnerThread())
         {
-            return;
+            m_Steering.RegisterAgent(agent);
         }
-        m_Agents.push_back(&agent);
-        agent.m_bRegistered = true;
     }
 
     void AIModule::UnregisterAgent(SteeringAgentComponent& agent)
     {
-        if (!IsOwnerThread() || !agent.m_bRegistered)
+        if (IsOwnerThread())
         {
-            return;
-        }
-        const auto it = std::find(m_Agents.begin(), m_Agents.end(), &agent);
-        if (it != m_Agents.end())
-        {
-            m_Agents.erase(it);
-            agent.m_bRegistered = false;
+            m_Steering.UnregisterAgent(agent, m_Navigation);
         }
     }
 
     uint32_t AIModule::GetAgentCount() const
     {
-        return IsOwnerThread() ? static_cast<uint32_t>(m_Agents.size()) : 0u;
+        return IsOwnerThread() ? m_Steering.GetAgentCount() : 0u;
     }
 
     Core::Container::Span<SteeringAgentComponent* const> AIModule::GetAgents() const
@@ -88,7 +79,7 @@ namespace NorvesLib::Modules::AI
         {
             return {};
         }
-        return {m_Agents.data(), m_Agents.size()};
+        return m_Steering.GetAgents();
     }
 
     Core::Locomotion::QuadrupedLocomotionParams AIModule::GetLocomotionProfile(Core::Container::AnsiStringView path)
@@ -130,11 +121,13 @@ namespace NorvesLib::Modules::AI
         return true;
     }
 
-    void AIModule::PreFixedTick(float)
+    void AIModule::PreFixedTick(float dt)
     {
         if (IsOwnerThread() && m_bInitialized)
         {
+            m_Steering.BeginStep(m_Navigation);
             m_Navigation.RunBudget();
+            m_Steering.Compute(dt, m_Navigation);
         }
     }
 
@@ -190,11 +183,7 @@ namespace NorvesLib::Modules::AI
     {
         if (IsOwnerThread())
         {
-            for (auto* agent : m_Agents)
-            {
-                agent->m_bRegistered = false;
-            }
-            m_Agents.clear();
+            m_Steering.Reset(m_Navigation);
             m_LocomotionProfiles.Clear();
             m_Navigation.Reset();
             m_bInitialized = false;
@@ -207,7 +196,7 @@ namespace NorvesLib::Modules::AI
         {
             return;
         }
-        if (m_bInitialized || !m_Agents.empty())
+        if (m_bInitialized || m_Steering.GetAgentCount() != 0)
         {
             Shutdown();
         }

@@ -3,8 +3,8 @@
 #include "AI/IAIModule.h"
 #include "AI/Motor/LocomotionProfileCache.h"
 #include "AI/Navigation/NavigationService.h"
+#include "AI/Steering/SteeringSystem.h"
 #include "Container/Span.h"
-#include "Container/VariableArray.h"
 #include "Debug/DebugConfig.h"
 #include "Thread/Thread.h"
 
@@ -21,7 +21,7 @@ namespace NorvesLib::Modules::AI
         bool Install(Core::Engine::Engine& engine) override;
         void RegisterReflectedTypes() override;
         bool Initialize() override;
-        // 後半の FixedTick で位置を書くと Kinematic の速度が 0 になるため、前半だけで探索を進める。
+        // World の固定更新がモーターを動かす前に、この歩の操舵速度を確定する。
         void PreFixedTick(float fixedDeltaTime) override;
         void LateTick(float deltaTime) override;
         void Shutdown() override;
@@ -38,6 +38,7 @@ namespace NorvesLib::Modules::AI
         Core::Locomotion::QuadrupedLocomotionParams GetLocomotionProfile(Core::Container::AnsiStringView path);
         // 登録順に参照する。登録・解除・終了処理でビューは無効になる。
         Core::Container::Span<SteeringAgentComponent* const> GetAgents() const;
+        const Spatial::UniformGridHash& GetNeighborHash() const { return m_Steering.GetNeighborHash(); }
 
     private:
         bool IsOwnerThread() const;
@@ -46,7 +47,7 @@ namespace NorvesLib::Modules::AI
         Core::Engine::Engine* m_Engine = nullptr;
         NavigationService m_Navigation;
         LocomotionProfileCache m_LocomotionProfiles;
-        Core::Container::VariableArray<SteeringAgentComponent*> m_Agents;
+        SteeringSystem m_Steering;
         bool m_bInitialized = false;
 #if NORVES_ENABLE_DEBUG_OUTPUT
         bool m_bNavDebugDrawEnabled = false;

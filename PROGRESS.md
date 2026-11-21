@@ -12760,3 +12760,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 運動の層 AnimalMotor と動物の locomotion.v1 プロファイル: 着地(直し 0 回)
 - U2 経路追従・軌跡追従・群れの 3 則と重みの合成: 着地(直し 2 回)
 - U3 地上の 16 方向のコンテキスト操舵: 着地(直し 0 回)
+- U7 操舵の系（PreFixedTick で SoA を集め、ハッシュを作り直し、操舵を解いて書き戻す）: 着地(直し 0 回)
