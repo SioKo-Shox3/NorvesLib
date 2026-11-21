@@ -1253,7 +1253,7 @@ namespace NorvesLib::Core::Rendering
                 // 描画がゲームのフレームを飛ばしたときは、前のカメラを TAA の履歴を書いたフレームのカメラにする
                 // （物体の前の変換も RenderingCoordinator がそのフレームへ付け替える）。
                 const CameraProxy *reprojectionCamera = temporalAAPass->FindReprojectionCamera(
-                    viewportId, activeCamera->CameraId, activeCamera->SourceCameraId, context.FrameNumber);
+                    viewportId, activeCamera->CameraId, activeCamera->SourceCameraId, activeCamera->CutSerial, context.FrameNumber);
                 const CameraProxy *previousCamera =
                     reprojectionCamera ? reprojectionCamera : context.GetPreviousCamera();
                 jitteredCamera = *activeCamera;

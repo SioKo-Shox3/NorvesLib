@@ -272,6 +272,9 @@ namespace NorvesLib::Core::Component
         Rendering::CameraProxy snapshot = outProxy;
         snapshot.ViewClearance = Rendering::MakeDefaultViewClearanceParameters();
         snapshot.CameraId = GetComponentId();
+        // プロキシを再利用しても、生成元は今回のコンポーネントにそろえる。
+        snapshot.SourceCameraId = GetComponentId();
+        snapshot.CutSerial = m_CutSerial;
         snapshot.PositionX = worldTransform.position.x;
         snapshot.PositionY = worldTransform.position.y;
         snapshot.PositionZ = worldTransform.position.z;

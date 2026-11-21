@@ -134,8 +134,10 @@ namespace NorvesLib::Core::Rendering
             result.ShutterTime = 1.0f - shutterFraction *
                 (1.0f - PathTracingCameraDetail::Halton(sequenceIndex, 5u));
         }
+        // カットをまたぐ場合や別のカメラに切り替わった場合は、シャッター区間を補間しない。
         if (previous && previous->CameraId == current.CameraId &&
-            previous->Projection == current.Projection)
+            previous->Projection == current.Projection &&
+            previous->SourceCameraId == current.SourceCameraId && previous->CutSerial == current.CutSerial)
         {
             const float previousPosition[3] = {
                 previous->PositionX, previous->PositionY, previous->PositionZ};

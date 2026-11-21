@@ -443,29 +443,41 @@ namespace NorvesLib::Core::Rendering
         }
 
         GPUVignetteParams params = {};
-        params.intensity = m_Settings.Intensity;
-        params.radius = m_Settings.Radius;
-        params.softness = m_Settings.Softness;
-        // カメラがビネットを差し替えていればその値を使う（有限でない値は差し替えない）。
         const CameraProxy* activeCamera = context.GetActiveCamera();
-        if (activeCamera != nullptr && activeCamera->GradingOverride.bEnabled)
+        float chromaticAberrationPixels = 0.0f;
+        if (activeCamera != nullptr && activeCamera->PostProcess.bValid)
         {
-            const CameraGradingOverride& grading = activeCamera->GradingOverride;
-            if (std::isfinite(grading.VignetteIntensity) && std::isfinite(grading.VignetteRadius) &&
-                std::isfinite(grading.VignetteSoftness))
+            // ビネットはトーンマップで掛ける。強度 0 でもシェーダーが補間するため、幅は正にする。
+            params.intensity = 0.0f;
+            params.softness = 1.0f;
+            PostProcessSettings profile = activeCamera->PostProcess;
+            profile.Sanitize();
+            chromaticAberrationPixels = profile.Lens.ChromaticAberrationPixels;
+        }
+        else
+        {
+            params.intensity = m_Settings.Intensity;
+            params.radius = m_Settings.Radius;
+            params.softness = m_Settings.Softness;
+            // カメラがビネットを差し替えていればその値を使う（有限でない値は差し替えない）。
+            if (activeCamera != nullptr && activeCamera->GradingOverride.bEnabled)
             {
-                params.intensity = std::clamp(grading.VignetteIntensity, 0.0f, 1.0f);
-                params.radius = grading.VignetteRadius;
-                params.softness = grading.VignetteSoftness;
+                const CameraGradingOverride& grading = activeCamera->GradingOverride;
+                if (std::isfinite(grading.VignetteIntensity) && std::isfinite(grading.VignetteRadius) &&
+                    std::isfinite(grading.VignetteSoftness))
+                {
+                    params.intensity = std::clamp(grading.VignetteIntensity, 0.0f, 1.0f);
+                    params.radius = grading.VignetteRadius;
+                    params.softness = grading.VignetteSoftness;
+                }
+            }
+            if (activeCamera != nullptr)
+            {
+                chromaticAberrationPixels = activeCamera->LensEffects.ChromaticAberrationPixels;
             }
         }
-        // 色収差はカメラのレンズ効果からだけ取る（既定0で掛けない。有限でない値・負は0、上限16画素）。
-        params.chromaticAberrationPixels = 0.0f;
-        if (activeCamera != nullptr && std::isfinite(activeCamera->LensEffects.ChromaticAberrationPixels))
-        {
-            params.chromaticAberrationPixels =
-                std::clamp(activeCamera->LensEffects.ChromaticAberrationPixels, 0.0f, 16.0f);
-        }
+        params.chromaticAberrationPixels =
+            std::isfinite(chromaticAberrationPixels) ? std::clamp(chromaticAberrationPixels, 0.0f, 16.0f) : 0.0f;
         const bool bDebugPostProcessBypass =
             IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
         params.bEnabled = bDebugPostProcessBypass ? 0u : (m_Settings.bEnabled ? 1u : 0u);

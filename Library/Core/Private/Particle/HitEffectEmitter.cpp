@@ -4,6 +4,7 @@
 #include "Logging/LogMacros.h"
 #include "Particle/VfxSchema.h"
 #include "Rendering/MaterialTypes.h"
+#include "Scene/SurfaceRegistry.h"
 
 #include <cmath>
 
@@ -83,6 +84,18 @@ namespace NorvesLib::Core::Particle
                 Rendering::BlendMode::Additive);
         }
 
+        const HitEffectTableEntry* FindSurfaceEntry(const HitEffectTable& table, const char* name)
+        {
+            for (const HitEffectTableEntry& entry : table.Entries)
+            {
+                if (entry.SurfaceName == name)
+                {
+                    return &entry;
+                }
+            }
+            return nullptr;
+        }
+
         /** @brief ベクトルの全成分が有限値か判定する。 */
         bool IsFinite(const Math::Vector3& value)
         {
@@ -160,20 +173,43 @@ namespace NorvesLib::Core::Particle
         return m_Table;
     }
 
+    void HitEffectEmitter::SetSurfaceRegistry(const Scene::SurfaceRegistry* registry)
+    {
+        m_SurfaceRegistry = registry;
+    }
+
+    const Scene::SurfaceRegistry* HitEffectEmitter::GetSurfaceRegistry() const
+    {
+        return m_SurfaceRegistry;
+    }
+
     uint32_t HitEffectEmitter::SelectEffect(const char* surfaceName) const
     {
         if (!m_bHasTable)
         {
             return InvalidEffectIndex;
         }
-        if (surfaceName != nullptr && surfaceName[0] != '\0')
+        if (surfaceName == nullptr || surfaceName[0] == '\0')
         {
-            for (const HitEffectTableEntry& entry : m_Table.Entries)
+            return m_Table.DefaultEffectIndex;
+        }
+        if (const HitEffectTableEntry* entry = FindSurfaceEntry(m_Table, surfaceName))
+        {
+            return entry->EffectIndex;
+        }
+
+        Scene::SurfaceId id;
+        if (m_SurfaceRegistry == nullptr || !m_SurfaceRegistry->TryFindByName(Container::StringView(surfaceName), id))
+        {
+            return m_Table.DefaultEffectIndex;
+        }
+        const size_t surfaceCount = m_SurfaceRegistry->GetSurfaceCount();
+        for (size_t visited = 0; visited < surfaceCount && !id.IsDefault(); ++visited)
+        {
+            id = m_SurfaceRegistry->GetDesc(id).Parent;
+            if (const HitEffectTableEntry* entry = FindSurfaceEntry(m_Table, m_SurfaceRegistry->GetName(id).c_str()))
             {
-                if (entry.SurfaceName == surfaceName)
-                {
-                    return entry.EffectIndex;
-                }
+                return entry->EffectIndex;
             }
         }
         return m_Table.DefaultEffectIndex;

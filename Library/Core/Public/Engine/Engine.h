@@ -15,6 +15,8 @@
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
 #include "Scene/SurfaceRegistry.h"
+#include "Scene/TerrainSurfaceProvider.h"
+#include "Text/StringTable.h"
 #include "Input/InputSystem.h"
 #include "Input/IInputDevice.h"
 #include "Input/HapticsService.h"
@@ -470,6 +472,38 @@ namespace NorvesLib::Core::Engine
             return m_SurfaceRegistry;
         }
 
+        /**
+         * @brief 地形の表面の provider を取得
+         */
+        Scene::TerrainSurfaceProvider &GetTerrainSurfaceProvider()
+        {
+            return m_TerrainSurfaceProvider;
+        }
+
+        /**
+         * @brief 地形の表面の provider を取得（const版）
+         */
+        const Scene::TerrainSurfaceProvider &GetTerrainSurfaceProvider() const
+        {
+            return m_TerrainSurfaceProvider;
+        }
+
+        /**
+         * @brief 言語ごとの文字列表を取得
+         */
+        StringTable &GetStringTable()
+        {
+            return m_StringTable;
+        }
+
+        /**
+         * @brief 言語ごとの文字列表を取得（const版）
+         */
+        const StringTable &GetStringTable() const
+        {
+            return m_StringTable;
+        }
+
         // ========== 入力システム ==========
 
         /**
@@ -606,6 +640,11 @@ namespace NorvesLib::Core::Engine
         Scene::SceneQuery m_SceneQuery;
         // 表面の語彙の登録簿（GEngine 配下で実体保持）
         Scene::SurfaceRegistry m_SurfaceRegistry;
+        // 地形の層と草の密度から表面を返す provider（SceneQuery が借りる）。参照する系より後に宣言する。
+        Scene::TerrainSurfaceProvider m_TerrainSurfaceProvider;
+        Scene::VegetationSurfaceProvider m_VegetationSurfaceProvider;
+        // 言語ごとの文字列表
+        StringTable m_StringTable;
 
         // 入力システム（GEngine配下で実体保持）
         Input::InputSystem m_InputSystem;

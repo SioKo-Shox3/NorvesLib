@@ -50,6 +50,7 @@
 | `SpringArmComponent` | Camera（主群） | 固定更新後の位置を読み、追従姿勢を更新 | Unscaled | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1938` |
 | `HoldSlotComponent` | PostPhysics（主群） | 保持状態の整理 | World | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1950` |
 | `SocketAttachmentComponent` | PostPhysics（主群） | 評価済みの姿勢からソケットの追従を更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1960` |
+| `GroundContactComponent` | PostPhysics（主群・優先度 -1） | 固定ステップの公開番号が変わったときに、体と足ごとの接地のレイと表面の照会で同じ群の消費者（`FootSplashComponent` など優先度 0）より先に接地の状態を更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Component/GroundContactComponent.cpp:171` |
 | `AnimatorComponent` | Animation（主群）・PoseFinalize | Animation でアニメを進め、PoseFinalize で評価とイベント配信 | Animation | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1978` |
 | `SkinnedMeshComponent` | Animation（主群）・PoseFinalize | 自前の Animation 時刻更新と PoseFinalize での姿勢評価 | Animation | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1992` |
 | `ScriptComponent` | Default（主群） | Script の更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Component/ScriptComponent.cpp:56` |
@@ -62,7 +63,8 @@
 | `ZoneSensorComponent` | なし（群に登録しない） | 毎フレームの処理なし。位置は EncounterService と InteractionService が Module Late で読む | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp:86` |
 | `EncounterZoneComponent` | なし（群に登録しない） | 毎フレームの処理なし。EncounterService が Module Late で状態機械を進める | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp:87` |
 | `InteractableComponent` | なし（群に登録しない） | 毎フレームの処理なし。InteractionService が Module Late で候補を読む | World | 非ポーズ時のsimulation | `Library/Modules/Gameplay/Private/Gameplay/GameplayModule.cpp:88` |
-| `AudioComponent` | Tick なし（登録しない） | 毎フレームの処理なし。Initialize で持ち主のキーを採り、Finalize で ReleaseOwner（ループは fade-out、ワンショットは鳴り切る） | —（論理サウンド層の Update が実時間で進める） | Bridge の停止中も進む（通常 Module Tick は gate 外） | `Library/Modules/Audio/Private/Audio/AudioServiceModule.cpp:80`（RegisterReflectedTypes） |
+| `AudioComponent` | Tick なし（群に登録しない） | World3D のものは音声モジュールの Tick が持ち主の位置を読み、再生中のインスタンスに渡す | —（論理サウンド層の Update が実時間で進める） | Bridge の停止中も進む（通常 Module Tick は gate 外） | `Library/Modules/Audio/Private/Audio/AudioServiceModule.cpp`（Tick・RegisterReflectedTypes） |
+| `AudioListenerComponent` | Tick なし（群に登録しない） | Initialize / Finalize で音声モジュールに登録・解除し、音声モジュールの Tick がリスナーを解決するときに読む | —（音声モジュールの Tick の実時間） | Bridge の停止中も進む（通常 Module Tick は gate 外） | `Library/Modules/Audio/Private/Audio/AudioServiceModule.cpp`（Tick・RegisterReflectedTypes） |
 | `FollowCameraComponent` | Input（主群）・Camera | Input で視線入力、Camera で追従・衝突処理 | Unscaled | 非ポーズ時のsimulation | `Game/Gameplay/Camera/FollowCameraComponent.cpp:109` |
 | `QuadrupedLocomotionComponent` | Input（主群）・PoseFinalize・PostPhysics | 入力収集、ルート移動の取得、物理後の移動終了と見た目の更新 | Unscaled | 非ポーズ時のsimulation | `Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:212` |
 
@@ -117,7 +119,8 @@ Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテ�
 
 - 最終のカメラの確定点は `PostLateTick` の Module `LateTick` の後に呼ばれる Handler の `OnLateUpdate`。現在の Game カメラの最終 proxy は `GameApplicationHandler::OnLateUpdate` の slot から確定する。ロードマップの「`IModule::LateTick` を最終のカメラの確定点」とする記述は採らない。
 - G14 CameraDirector の配置は未決の G14-S3 に残す。どこに所有しても候補・intent の評価と最終 commit を分け、当フレームの最終結果は Game の `OnLateUpdate` の確定境界で一度だけ反映する。Module の `LateTick` で準備しても、描画同期後の通常 Module Tick から別の camera を上書きする方式にはしない。
-- G16 listener は最終 commit 後の同じフレームの camera snapshot を読む。現在の順序なら、その後の通常 Module Tick か将来追加する明示的な確定通知が候補となる。Module の `LateTick` を最終カメラの読み取り点にしない。停止中の listener / Audio 方針は GR119 / GR73 で定め、現在の `AudioServiceModule` に listener 連携があるとは扱わない。
+- G16 listener は最終 commit 後の同じフレームの camera snapshot を読む。現在の順序なら、その後の通常 Module Tick か将来追加する明示的な確定通知が候補となる。Module の `LateTick` を最終カメラの読み取り点にしない。停止中の listener / Audio の方針は GR119 で定める。
+- GR73 では、音のリスナーは Handler の `OnLateUpdate` 後に動く通常の Module の `TickAll` で、同じフレームの最終カメラを読む。
 - Game 専用の camera slot は `Delegate` と weak binding を使う。`OnUpdate` で前フレームの残件を破棄し、同一フレームで複数回予約した場合は最後を採用する。`OnLateUpdate` の呼び出しは pending を先に空にし、callback 内の新予約は同じ呼び出しでは実行しない。
 - 現在の camera snapshot は ID から live な Entity / Component を解決し、`UpdateRenderTransforms` → SpringArm の再更新 → `UpdateWorldTransforms` → proxy 生成の順で確定する。これにより Module Late 後の child pivot と SpringArm が更新した child camera を反映する。
 

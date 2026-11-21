@@ -163,7 +163,7 @@ namespace NorvesLib::Core::Rendering
         NoHistory,             // 履歴が無い（最初のフレーム・捨てた後）
         ViewportChanged,       // 履歴を書いたのは別の Viewport
         FrameNotAdvanced,      // 履歴を書いたフレームより前か同じフレームを描く
-        CameraChanged,         // カメラが切り替わった
+        CameraChanged,         // カメラが切り替わった・カット（CutSerial）をまたいだ
         PreviousCameraMissing, // velocity の基準にする前のカメラが無い
         InvalidExposure,       // 履歴か現在の露出が有限の正でない
         ObjectStateMismatch    // velocity の物体の前の変換が、履歴を書いたフレームのものでない
@@ -178,6 +178,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t CameraId = 0u;
         // GameThread 側のカメラの識別子（CameraProxy::SourceCameraId）。登録 ID が同じでも替われば切り替え
         uint64_t SourceCameraId = 0u;
+        // カメラの不連続の通し番号（CameraProxy::CutSerial）。履歴を書いたフレームと違えばカットをまたいだので使わない
+        uint32_t CutSerial = 0u;
         float PreExposure = 0.0f;
         // velocity の基準にする前のカメラがあるか
         bool bHasPreviousCamera = false;
@@ -187,11 +189,12 @@ namespace NorvesLib::Core::Rendering
         bool bPreviousObjectStateComplete = false;
     };
 
-    /** @brief 履歴の問い合わせへ、今のフレームのカメラの識別子と露出を写す。 */
+    /** @brief 履歴の問い合わせへ、今のフレームのカメラの識別子・カットの通し番号・露出を写す。 */
     inline void SetTemporalAAHistoryCamera(TemporalAAHistoryQuery& query, const CameraProxy& camera)
     {
         query.CameraId = camera.CameraId;
         query.SourceCameraId = camera.SourceCameraId;
+        query.CutSerial = camera.CutSerial;
         query.PreExposure = camera.PreExposure;
     }
 
@@ -205,6 +208,8 @@ namespace NorvesLib::Core::Rendering
      *   PreviousObjectStateFrameNumber に入れる。履歴のフレームと違う、または付け替えきれなかったら使わない。
      * - カメラ: 飛んだフレームでは、SceneView が前のカメラを履歴を書いたフレームのカメラ
      *   （FindReprojectionCamera）へ差し替える。連続したフレームではパケットの前のカメラが同じものになる。
+     * - カット: CutSerial が履歴を書いたフレームと違えば履歴を捨て、再投影のカメラも返さない。
+     *   通し番号なので、カットのパケットが描かれずに捨てられても次に描くパケットで判別できる。
      *
      * TAA を掛けない Viewport（同じフレームの2つ目以降）はこの状態に触れないので、1つの SceneView に
      * 2つの Viewport があっても、TAA を掛ける Viewport の履歴は途切れない。履歴を書いた Viewport を TAA 無しで
@@ -228,7 +233,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return TemporalAAHistoryDecision::FrameNotAdvanced;
             }
-            if (query.CameraId != m_CameraId || query.SourceCameraId != m_SourceCameraId)
+            if (query.CameraId != m_CameraId || query.SourceCameraId != m_SourceCameraId || query.CutSerial != m_CutSerial)
             {
                 return TemporalAAHistoryDecision::CameraChanged;
             }
@@ -256,15 +261,15 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 飛んだフレームで velocity の前のカメラにする、履歴を書いたフレームのカメラ
          *
-         * 同じ Viewport・同じカメラ（登録 ID と GameThread 側の識別子の両方）の履歴があり、frameNumber が
-         * 履歴の直後より後のときだけ返す（ジッタなし）。それ以外（連続したフレームを含む）は null で、
-         * パケットの前のカメラをそのまま使う。
+         * 同じ Viewport・同じカメラ（登録 ID と GameThread 側の識別子）で、カット（CutSerial）をまたがない履歴があり、
+         * frameNumber が履歴の直後より後のときだけ返す（ジッタなし）。カットのパケットが描かれずに捨てられても、
+         * カット前のカメラは返さない。条件を満たさないときは null を返し、パケットの前のカメラをそのまま使う。
          */
         const CameraProxy* FindReprojectionCamera(uint32_t viewportId, uint64_t cameraId, uint64_t sourceCameraId,
-                                                  uint64_t frameNumber) const
+                                                  uint32_t cutSerial, uint64_t frameNumber) const
         {
             if (!m_bValid || viewportId != m_ViewportId || cameraId != m_CameraId ||
-                sourceCameraId != m_SourceCameraId || frameNumber <= m_FrameNumber + 1u)
+                sourceCameraId != m_SourceCameraId || cutSerial != m_CutSerial || frameNumber <= m_FrameNumber + 1u)
             {
                 return nullptr;
             }
@@ -279,6 +284,7 @@ namespace NorvesLib::Core::Rendering
             m_ViewportId = query.ViewportId;
             m_CameraId = query.CameraId;
             m_SourceCameraId = query.SourceCameraId;
+            m_CutSerial = query.CutSerial;
             m_PreExposure = query.PreExposure;
             m_Camera = camera;
             m_Camera.ProjectionJitterNdcX = 0.0f;
@@ -320,6 +326,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_ViewportId = 0u;
         uint64_t m_CameraId = 0u;
         uint64_t m_SourceCameraId = 0u;
+        uint32_t m_CutSerial = 0u;
         float m_PreExposure = 0.0f;
         CameraProxy m_Camera;
     };

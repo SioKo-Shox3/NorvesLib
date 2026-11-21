@@ -119,6 +119,8 @@ namespace NorvesLib::Core::Scene
         SurfaceAudioDesc Audio;
         SurfaceVisualDesc Visual;
         SurfacePhysicalDesc Physical;
+        // 草の場の密度がこの値を超えたら、この表面を草の表面として選ぶ（GR42。草の provider が引く対象の表面だけで使う）。
+        float VegetationDensityThreshold = 0.35f;
     };
 
     enum class SurfaceQueryFlags : uint8_t

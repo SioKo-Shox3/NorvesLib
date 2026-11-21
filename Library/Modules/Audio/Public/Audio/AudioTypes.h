@@ -75,7 +75,14 @@ namespace NorvesLib::Modules::Audio
         uint64_t StolenVoiceCount = 0;
         uint64_t RejectedPlayCount = 0;
         uint64_t SuppressedByCooldownCount = 0;
+        uint32_t VirtualVoiceCount = 0; ///< 現在休眠しているインスタンス数。
+        uint64_t VirtualizeCount = 0; ///< 物理ボイスを手放して休眠に移った回数。
+        uint64_t DevirtualizeCount = 0; ///< 休眠から物理ボイスへの復帰に成功した回数。
     };
+
+    // サービスがボイス作成時に受け付けるピッチの上限（半音）。周波数比は 1024。
+    inline constexpr float kAudioMaxVoicePitchSemitones = 120.0f;
+    inline constexpr float kAudioMinVoiceFrequencyRatio = 1.0f / 1024.0f; ///< ボイスに適用する周波数比の下限。
 
     struct AudioVoiceDesc
     {
