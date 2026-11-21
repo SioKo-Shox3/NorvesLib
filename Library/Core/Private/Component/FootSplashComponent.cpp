@@ -251,21 +251,30 @@ namespace NorvesLib::Core::Component
 
             auto& terrainSystem = engine->GetTerrainSystem();
             Scene::GroundQueryHit hit;
-            // PostPhysics の優先度 -1 で更新した接地状態から、足音・足跡と同じ接地点と法線を使う。
-            // FallbackJoint に対応する足が当たっていなければ従来の照会を使う。放出量の計算は共通。
+            // 今の公開番号に対応する足の結果は、接地・未接地ともに採用する。
+            // 公開番号が取れない、接地状態が古い、または対応する足がない場合だけ従来の照会を使う。
+            bool bUseSharedContact = false;
             if (groundContact)
             {
+                uint64_t sequence = 0;
                 const auto& contacts = groundContact->GetGroundContactState();
                 const int32_t index = groundContact->FindFootIndex(leg.FallbackJoint);
-                if (contacts.StepSerial != 0 && index >= 0 && static_cast<uint32_t>(index) < contacts.FootCount &&
-                    contacts.Foot[index].bHit)
+                if (engine->GetSceneQuery().GetPublishedSnapshotSequence(sequence) == Scene::EPhysicsSceneQueryResult::Success &&
+                    sequence != 0 && contacts.StepSerial == sequence && index >= 0 &&
+                    static_cast<uint32_t>(index) < contacts.FootCount)
                 {
+                    bUseSharedContact = true;
+                    const auto& footContact = contacts.Foot[index];
+                    if (!footContact.bHit)
+                    {
+                        continue;
+                    }
                     hit.bHit = true;
-                    hit.Point = contacts.Foot[index].Point;
-                    hit.Normal = contacts.Foot[index].Normal;
+                    hit.Point = footContact.Point;
+                    hit.Normal = footContact.Normal;
                 }
             }
-            if (!hit.bHit)
+            if (!bUseSharedContact)
             {
                 const auto result = engine->GetSceneQuery().QueryGround(
                     foot.position + Math::Vector3(0.0f, GroundProbeUp, 0.0f), GroundProbeUp + GroundProbeDown, hit);
