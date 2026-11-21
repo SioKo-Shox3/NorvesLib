@@ -26,7 +26,7 @@ namespace NorvesLib::Modules::Audio::Private
                                         Core::Scene::ESoundClass soundClass, uint8_t priority) override;
         AudioResult SetVoiceSourcePosition(VoiceHandle handle, const Math::Vector3& sourcePosition) override;
         AudioResult UntrackVoice(VoiceHandle handle) override;
-        // 次に評価を回す更新で使うリスナーの位置を明示する。
+        // 次に 1 声以上を評価する更新で使うリスナーの位置を明示する。評価する声が無い更新では保留したままにする。
         void SetListenerPosition(const Math::Vector3& position) override;
         // 保留中の明示位置を取り消す。
         void ClearListenerPosition() override;
@@ -67,8 +67,8 @@ namespace NorvesLib::Modules::Audio::Private
         };
 
         size_t FindVoice(VoiceHandle handle) const;
-        // 評価の期限が来た声を予算内で選び、この更新のリスナー位置で評価する。
-        void EvaluateDueVoices(const Core::Scene::AcousticTransmissionEvaluator& evaluator, const Math::Vector3& listener);
+        // 評価の期限が来た声を予算内で選び、この更新のリスナー位置で評価し、評価した声の数を返す。
+        size_t EvaluateDueVoices(const Core::Scene::AcousticTransmissionEvaluator& evaluator, const Math::Vector3& listener);
         // 音源からリスナーまでの経路を評価し、声の目標値を更新する。
         void EvaluateVoice(TrackedVoice& voice, const Core::Scene::AcousticTransmissionEvaluator& evaluator,
                            const Math::Vector3& listener);

@@ -377,13 +377,13 @@ namespace NorvesLib::Modules::Audio::Private
     AudioResult SoundSystem::StealInstance(uint32_t index)
     {
         Instance& instance = m_Instances[index];
-        UntrackVoice(instance);
         const AudioResult result = m_Service.AbortVoice(instance.Voice);
         if (result != AudioResult::Success && result != AudioResult::StaleHandle)
         {
-            TrackVoiceIfSpatial(instance);
             return result;
         }
+        // 再登録で平滑化の値が既定に戻って音量が跳ぶため、声を手放すときだけ追跡を外す。
+        UntrackVoice(instance);
         ReleaseSlot(index);
         ++m_Diagnostics.Voice.StolenVoiceCount;
         return AudioResult::Success;
@@ -609,7 +609,6 @@ namespace NorvesLib::Modules::Audio::Private
 
     void SoundSystem::VirtualizeInstance(Instance& instance)
     {
-        UntrackVoice(instance);
         const AudioResult result = m_Service.AbortVoice(instance.Voice);
         if (result != AudioResult::Success && result != AudioResult::StaleHandle)
         {
@@ -617,11 +616,12 @@ namespace NorvesLib::Modules::Audio::Private
             if (m_Service.GetVoiceState(instance.Voice, state) == AudioResult::Success &&
                 state != AudioVoiceState::Quarantined)
             {
-                // 停止に失敗して鳴り続けるボイスは保持し、次の Update で休眠を再び試す。
-                TrackVoiceIfSpatial(instance);
+                // 停止に失敗して鳴り続けるボイスと遮蔽の追跡記録を保持し、次の Update で休眠を再び試す。
                 return;
             }
         }
+        // 奪取と同じく、声を手放すときだけ追跡を外す。
+        UntrackVoice(instance);
         instance.Voice = {};
         instance.bVirtual = true;
         ++m_Diagnostics.Voice.VirtualVoiceCount;

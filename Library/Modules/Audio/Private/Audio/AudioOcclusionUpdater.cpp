@@ -156,15 +156,18 @@ namespace NorvesLib::Modules::Audio::Private
 
         if (evaluator && (m_bExplicitListenerPending || m_bResolvedListenerSet))
         {
-            EvaluateDueVoices(*evaluator, m_bExplicitListenerPending ? m_ExplicitListener : m_ResolvedListener);
-            ClearListenerPosition();
+            // 評価する声が無い更新では、明示位置を次の評価まで保留する。
+            if (EvaluateDueVoices(*evaluator, m_bExplicitListenerPending ? m_ExplicitListener : m_ResolvedListener) > 0)
+            {
+                ClearListenerPosition();
+            }
         }
         // 1 − exp(−dt / τ) を、小さな dt でも桁落ちしない形で求める。
         SmoothAndApply(service, -std::expm1(-dt / m_Settings.SmoothingTimeConstantSeconds));
     }
 
-    void AudioOcclusionUpdater::EvaluateDueVoices(const Core::Scene::AcousticTransmissionEvaluator& evaluator,
-                                                  const Math::Vector3& listener)
+    size_t AudioOcclusionUpdater::EvaluateDueVoices(const Core::Scene::AcousticTransmissionEvaluator& evaluator,
+                                                    const Math::Vector3& listener)
     {
         const auto& settings = evaluator.GetSettings();
         const size_t budget = settings.VoiceBudgetPerFrame > 0 ? settings.VoiceBudgetPerFrame : m_Settings.VoiceBudgetPerFrame;
@@ -196,6 +199,7 @@ namespace NorvesLib::Modules::Audio::Private
         {
             EvaluateVoice(m_Voices[m_Candidates[i].VoiceIndex], evaluator, listener);
         }
+        return count;
     }
 
     void AudioOcclusionUpdater::EvaluateVoice(TrackedVoice& voice, const Core::Scene::AcousticTransmissionEvaluator& evaluator,

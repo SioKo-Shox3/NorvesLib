@@ -13120,3 +13120,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(差し戻しの直し): `cmake --build build --config Debug --target Game -- /m:1` が exit 0・`Game.vcxproj -> build/Game/Debug/Game.exe` まで(`.harness/runs/20261122-015214/verify-G13-GR116-AUDIO-ACOUSTICS-U8-build.txt`)。各単位で `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。ctest の行と試験の部分は絶対規則 11 で回していない。
 - Next(差し戻しの直し): ランナーの評価者の判定(危険地帯: Public API の `IAudioService`・`IAudioOcclusion`、SPI の `IAudioBackend`、Core の `AcousticSettings` の既定値)。起動の確かめは G13-GR116-AUDIO-CHECK。
 - Notes(差し戻しの直し): 判断: `AcousticTransmission.h` と `AcousticTransmission.md` は paths の外だが、done-when が `voiceBudgetPerFrame（既定 4）` と名指しし、この値を読むのは音の遮蔽の更新器だけなので、既定の 1 行と文書の 1 行を直した。モジュールの Tick の中で解決したリスナーと、同じフレームの `SoundSystem::Update` で始まった声は、次のフレームのサービスの Tick から評価に入る(1 フレームの遅れ。初回は開いた値から寄せるので跳ばない)。評価器が null の間は経路の評価を休み、明示の位置は保留のまま残す。
+- U9 評価 0 件の更新で明示のリスナー位置を消さず、停止に失敗して鳴り続ける声の遮蔽の追跡を保つ: 着地(直し 0 回)

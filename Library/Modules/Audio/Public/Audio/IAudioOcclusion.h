@@ -32,7 +32,7 @@ namespace NorvesLib::Modules::Audio
         virtual AudioResult SetVoiceSourcePosition(VoiceHandle handle, const Math::Vector3& sourcePosition) = 0;
         // 声を追跡から外す。以後この声のバックエンドには触れない。
         virtual AudioResult UntrackVoice(VoiceHandle handle) = 0;
-        // リスナーの位置を明示する。次に評価を回す更新で使い、消費する。
+        // 明示したリスナー位置は、次に 1 声以上を評価する更新で使い、消費する。評価する声が無い更新では保留する。
         // 明示がない更新ではモジュールが解決したリスナー（GR73）の位置を使う。どちらもない間は評価しない。
         virtual void SetListenerPosition(const Math::Vector3& position) = 0;
         // まだ使っていない明示の位置を取り消す。

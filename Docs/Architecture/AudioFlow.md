@@ -132,9 +132,9 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 
 ### 遮蔽とローパス
 
-`SoundSystem` は 3D の定義から物理 voice を開始すると、`IAudioOcclusion::TrackVoiceAcoustics` に音源の位置、定義の `sound_class`（既定は `ambient`）、優先度を渡して追跡を始める。
+`SoundSystem` は 3D の定義から物理 voice を開始すると、`IAudioOcclusion::TrackVoiceAcoustics` に音源の位置、定義の `sound_class`（既定は `ambient`）、優先度を渡して追跡を始める。声の奪取・休眠で停止に失敗して声が鳴り続ける間は、遮蔽の追跡と平滑化中の値を保ち、声を実際に手放すときだけ追跡を外す。
 
-音声モジュールは毎 Tick、GR73 が解決したリスナー位置を `SetResolvedListenerPosition` で更新器へ渡す。`MainCamera` では主カメラの位置、`Entity` と `Hybrid` では選んだ `AudioListenerComponent` の Entity の位置を使う。既定の姿勢へ退避したときは `ClearResolvedListenerPosition` で解決位置を外す。呼び手が `IAudioOcclusion::SetListenerPosition` で明示した位置は、次に評価を回す更新で優先して使い、その更新で消費する。明示位置がなければ解決位置を使い、どちらもなければ経路を評価しない。
+音声モジュールは毎 Tick、GR73 が解決したリスナー位置を `SetResolvedListenerPosition` で更新器へ渡す。`MainCamera` では主カメラの位置、`Entity` と `Hybrid` では選んだ `AudioListenerComponent` の Entity の位置を使う。既定の姿勢へ退避したときは `ClearResolvedListenerPosition` で解決位置を外す。呼び手が `IAudioOcclusion::SetListenerPosition` で明示した位置は、次に 1 声以上を評価する更新で優先して使い、その更新で消費する。評価する声が無い更新では明示位置を保留する。明示位置がなければ解決位置を使い、どちらもなければ経路を評価しない。
 
 音声モジュールは `Install` でエンジンの評価器をサービスへ渡す。サービスは `AudioService::Tick()` の最後に更新器を回す。経過時間はサービスが単調時計で測り、初回は 0 秒、以後は最大 0.1 秒とする。更新器は通知が反映された声の状態を読み、破棄済み、`Stopping` 以降、または `Quarantined` の声をバックエンドに触れずに追跡から外す。モジュールがその後に解決したリスナー位置と、同じフレームの `SoundSystem::Update` で始まった声は、次のフレームから評価に使う。
 
