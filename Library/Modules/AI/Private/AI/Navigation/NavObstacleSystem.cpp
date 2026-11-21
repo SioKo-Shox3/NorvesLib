@@ -11,9 +11,25 @@ namespace NorvesLib::Modules::AI
 {
     namespace
     {
-        double HorizontalDistance(const Math::Vector3& a, const Math::Vector3& b)
+        double PositionDistance(const Math::Vector3& a, const Math::Vector3& b)
         {
-            return std::hypot(static_cast<double>(a.x) - b.x, static_cast<double>(a.z) - b.z);
+            return std::hypot(static_cast<double>(a.x) - b.x, static_cast<double>(a.y) - b.y,
+                              static_cast<double>(a.z) - b.z);
+        }
+
+        bool MatchesStampCells(Core::Container::VariableArray<NavCellCoord>& cells, const NavDynamicStamp& stamp)
+        {
+            // Apply と同じ Z・X 順で重複を除き、押印中のセル列と照合する。
+            const auto cellLess = [](NavCellCoord a, NavCellCoord b)
+            {
+                return a.Z < b.Z || (a.Z == b.Z && a.X < b.X);
+            };
+            if (!std::is_sorted(cells.begin(), cells.end(), cellLess))
+            {
+                std::sort(cells.begin(), cells.end(), cellLess);
+            }
+            cells.erase(std::unique(cells.begin(), cells.end()), cells.end());
+            return cells == stamp.Cells;
         }
 
         bool MakeFootprint(const NavObstacleComponent& obstacle, const Math::Transform& transform,
@@ -114,6 +130,7 @@ namespace NorvesLib::Modules::AI
         }
         m_Obstacles.clear();
         m_Time = 0.0;
+        m_GridVersion = 0;
         m_OverlayGeneration = 0;
     }
 
@@ -154,8 +171,10 @@ namespace NorvesLib::Modules::AI
             return;
         }
         const uint64_t generation = nav.GetDynamicOverlay().GetGeneration();
-        if (generation != m_OverlayGeneration)
+        const uint64_t gridVersion = nav.GetGrid().GetVersion();
+        if (generation != m_OverlayGeneration || gridVersion != m_GridVersion)
         {
+            m_GridVersion = gridVersion;
             m_OverlayGeneration = generation;
             MarkAllForRestamp();
         }
@@ -183,7 +202,9 @@ namespace NorvesLib::Modules::AI
         const uint64_t version = owner->GetTransformVersion();
         const bool changed = !obstacle.m_bHasObservation || version != obstacle.m_ObservedVersion;
         const bool intervalElapsed = m_Time - obstacle.m_StampedTime >= settings.MinRestampIntervalSeconds;
-        if (!changed && !obstacle.m_bNeedsRestamp && !(obstacle.m_bWaitingForInterval && intervalElapsed))
+        const auto properties = obstacle.GetStampProperties();
+        const bool needsRestamp = obstacle.m_bNeedsRestamp || properties != obstacle.m_EvaluatedProperties;
+        if (!changed && !needsRestamp && !(obstacle.m_bWaitingForInterval && intervalElapsed))
         {
             // 同じ位置にいた時刻も進め、静止後の最初の移動を正しい間隔で測る。
             obstacle.m_ObservedTime = m_Time;
@@ -193,7 +214,7 @@ namespace NorvesLib::Modules::AI
         const auto transform = owner->GetWorldTransform();
         const double elapsed = m_Time - obstacle.m_ObservedTime;
         const bool tooFast = changed && obstacle.m_bHasObservation &&
-            HorizontalDistance(transform.position, obstacle.m_ObservedPosition) > settings.MaxStampSpeed * elapsed;
+            PositionDistance(transform.position, obstacle.m_ObservedPosition) > settings.MaxStampSpeed * elapsed;
         obstacle.m_bHasObservation = true;
         obstacle.m_ObservedVersion = version;
         obstacle.m_ObservedPosition = transform.position;
@@ -207,9 +228,10 @@ namespace NorvesLib::Modules::AI
             return;
         }
 
-        const bool force = obstacle.m_bNeedsRestamp || !stamp.bApplied;
+        const bool force = needsRestamp || !stamp.bApplied;
+        obstacle.m_EvaluatedProperties = properties;
         obstacle.m_bNeedsRestamp = false;
-        const ENavObstacleMode mode = obstacle.Mode.Get();
+        const ENavObstacleMode mode = properties.Mode;
         NavDynamicFootprint footprint;
         double turningRadius = 0.0;
         if ((mode != ENavObstacleMode::Block && mode != ENavObstacleMode::Cost) ||
@@ -225,7 +247,7 @@ namespace NorvesLib::Modules::AI
             const auto& previous = obstacle.m_StampedAxis;
             const double angle = std::atan2(std::abs(Math::Vector2::Cross(previous, axis)),
                                             Math::Vector2::Dot(previous, axis));
-            const double movement = (std::max)(HorizontalDistance(footprint.Center, obstacle.m_StampedPosition),
+            const double movement = (std::max)(PositionDistance(footprint.Center, obstacle.m_StampedPosition),
                                                angle * turningRadius);
             if (movement < static_cast<double>(settings.MinRestampDistanceCells) * nav.GetGrid().GetDesc().CellSize)
             {
@@ -238,20 +260,28 @@ namespace NorvesLib::Modules::AI
             }
         }
 
-        overlay.Revoke(stamp);
-        RasterizeNavDynamicFootprint(nav.GetGrid(), footprint, settings.HeightBand, stamp.Cells);
-        if (!stamp.Cells.empty())
+        RasterizeNavDynamicFootprint(nav.GetGrid(), footprint, settings.HeightBand, m_RasterCells);
+        const uint32_t cost = NavCostMultiplierToExtraPer128(obstacle.CostMultiplier.Get());
+        const bool keepStamp = force && stamp.bApplied && stamp.OverlayGeneration == overlay.GetGeneration() &&
+            stamp.Mode == mode && stamp.CostExtraPer128 == cost && MatchesStampCells(m_RasterCells, stamp);
+        if (!keepStamp)
         {
-            stamp.Mode = mode;
-            stamp.CostExtraPer128 = NavCostMultiplierToExtraPer128(obstacle.CostMultiplier.Get());
-            overlay.Apply(stamp);
-            if (stamp.bApplied)
+            overlay.Revoke(stamp);
+            stamp.Cells.swap(m_RasterCells);
+            if (stamp.Cells.empty())
             {
-                obstacle.m_Overlay = &overlay;
-                obstacle.m_StampedTime = m_Time;
-                obstacle.m_StampedPosition = footprint.Center;
-                obstacle.m_StampedAxis = axis;
+                return;
             }
+            stamp.Mode = mode;
+            stamp.CostExtraPer128 = cost;
+            overlay.Apply(stamp);
+        }
+        if (stamp.bApplied)
+        {
+            obstacle.m_Overlay = &overlay;
+            obstacle.m_StampedTime = m_Time;
+            obstacle.m_StampedPosition = footprint.Center;
+            obstacle.m_StampedAxis = axis;
         }
     }
 }

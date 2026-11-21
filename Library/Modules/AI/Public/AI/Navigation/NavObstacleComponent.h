@@ -44,6 +44,24 @@ namespace NorvesLib::Modules::AI
         void SetDefaults();
         void Unregister();
 
+        // 浮動小数はビット列で控え、同じ NaN が残っていても変更と扱わない。
+        struct StampProperties
+        {
+            ENavObstacleShape Shape;
+            uint32_t RadiusBits;
+            uint32_t HalfLengthBits;
+            uint32_t HalfExtentXBits;
+            uint32_t HalfExtentZBits;
+            uint32_t MinHeightBits;
+            uint32_t MaxHeightBits;
+            ENavObstacleMode Mode;
+            uint32_t CostMultiplierBits;
+
+            bool operator==(const StampProperties&) const = default;
+        };
+        StampProperties GetStampProperties() const;
+
+        StampProperties m_EvaluatedProperties{};
         NavDynamicStamp m_Stamp;
         const NavDynamicOverlay* m_Overlay = nullptr; // 押印先。登録解除時に参照を外す。
         Math::Vector3 m_StampedPosition;

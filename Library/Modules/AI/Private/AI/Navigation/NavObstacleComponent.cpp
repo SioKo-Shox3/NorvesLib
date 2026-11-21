@@ -3,6 +3,8 @@
 #include "AI/AIModule.h"
 #include "Module/ModuleRegistry.h"
 
+#include <bit>
+
 namespace NorvesLib::Modules::AI
 {
     namespace
@@ -91,6 +93,15 @@ namespace NorvesLib::Modules::AI
         {
             m_bNeedsRestamp = true;
         }
+    }
+
+    NavObstacleComponent::StampProperties NavObstacleComponent::GetStampProperties() const
+    {
+        const auto& half = HalfExtents.Get();
+        return {Shape.Get(), std::bit_cast<uint32_t>(Radius.Get()), std::bit_cast<uint32_t>(HalfLength.Get()),
+                std::bit_cast<uint32_t>(half.x), std::bit_cast<uint32_t>(half.y),
+                std::bit_cast<uint32_t>(MinHeight.Get()), std::bit_cast<uint32_t>(MaxHeight.Get()),
+                Mode.Get(), std::bit_cast<uint32_t>(CostMultiplier.Get())};
     }
 
     bool NavObstacleComponent::IsNavStamped() const

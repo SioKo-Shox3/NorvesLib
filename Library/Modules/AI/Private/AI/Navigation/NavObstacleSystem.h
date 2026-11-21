@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "AI/Navigation/NavTypes.h"
 #include "Container/VariableArray.h"
 #include <cstdint>
 
@@ -34,6 +35,8 @@ namespace NorvesLib::Modules::AI
                     const NavObstacleSettings& settings);
 
         Core::Container::VariableArray<NavObstacleComponent*> m_Obstacles;
+        Core::Container::VariableArray<NavCellCoord> m_RasterCells;
+        uint64_t m_GridVersion = 0;
         uint64_t m_OverlayGeneration = 0;
         double m_Time = 0.0;
     };
