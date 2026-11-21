@@ -13135,3 +13135,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 嗅覚の純関数 SmellModel と風向の低域フィルタを足す: 着地(直し 0 回)
 - U8 気づきの積分 AwarenessIntegrator を足す: 着地(直し 0 回)
 - U5 視覚の純関数 VisionModel を足す: 着地(直し 0 回)
+- U4 ポートの Engine 実装（草 = GrassField＋DrynessMap、風 = EnvironmentSystem の WindParameters）を足す: 着地(直し 0 回)
