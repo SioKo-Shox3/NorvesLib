@@ -13003,3 +13003,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 IAudioMixer とドメインのミキサー(バスの正本・実効のゲイン・設定の音量・ポーズ・ダッキング・当て直し): 着地(直し 0 回)
 - U3 Mixer.json の読み込み(既定はコード、JSON で上書き、欠落・不正は既定と診断): 着地(直し 0 回)
 - U4 音の定義の bus・duck_tag とクリップのカテゴリ: 着地(直し 0 回)
+- U5 SoundSystem とモジュールをミキサーへつなぐ: 着地(直し 0 回)

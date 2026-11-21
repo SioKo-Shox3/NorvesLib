@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Audio/AudioMixer.h"
 #include "Audio/IAudioService.h"
 #include "Audio/ISoundSystem.h"
 #include "Container/PointerTypes.h"
@@ -36,6 +37,8 @@ namespace NorvesLib::Modules::Audio
         virtual ~IAudioModule() = default;
         [[nodiscard]] virtual IAudioService& GetAudioService() = 0;
         [[nodiscard]] virtual ISoundSystem& GetSoundSystem() = 0;
+        /** モジュールが所有するミキサーを返す。 */
+        [[nodiscard]] virtual IAudioMixer& GetMixer() = 0;
         [[nodiscard]] virtual const AudioBackendStatus& GetBackendStatus() const = 0;
     };
 

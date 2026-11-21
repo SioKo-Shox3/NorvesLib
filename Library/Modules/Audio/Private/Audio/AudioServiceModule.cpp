@@ -3,6 +3,7 @@
 
 #include "Audio/AudioListenerComponent.h"
 #include "Audio/AudioListenerResolver.h"
+#include "Audio/AudioMixerDomain.h"
 #include "Audio/AudioSpatialHost.h"
 #include "Audio/NullAudioBackend.h"
 #include "Audio/SoundSystem.h"
@@ -73,15 +74,17 @@ namespace NorvesLib::Modules::Audio::Private
         public:
             explicit AudioServiceModule(Core::Container::TUniquePtr<IAudioService> service,
                                         const AudioModuleOptions& options, bool bBackendCreateFailed)
-                : m_Service(std::move(service)), m_Options(options)
+                : m_Service(std::move(service)), m_Mixer(Core::Container::MakeUnique<AudioMixerDomain>()), m_Options(options)
             {
                 if (bBackendCreateFailed)
                 {
                     SetFallbackStatus("backend_create_failed");
                 }
+                m_Mixer->BindService(m_Service.get());
                 if (m_Service)
                 {
                     m_SoundSystem = Core::Container::MakeUnique<SoundSystem>(*m_Service, Random::Generator{});
+                    m_SoundSystem->BindMixer(m_Mixer.get());
                 }
             }
 
@@ -126,9 +129,11 @@ namespace NorvesLib::Modules::Audio::Private
                     // SoundSystem の参照先を破棄する前に、参照する側を終了して外す。
                     m_SoundSystem->Shutdown();
                     m_SoundSystem.reset();
+                    m_Mixer->BindService(nullptr);
                     m_Service->Shutdown();
                     m_Service = CreateAudioServiceForBackend(Core::Container::MakeUnique<NullAudioBackend>());
                     m_SoundSystem = Core::Container::MakeUnique<SoundSystem>(*m_Service, Random::Generator{});
+                    m_SoundSystem->BindMixer(m_Mixer.get());
                     result = m_Service->Initialize();
                     if (result == AudioResult::Success)
                     {
@@ -138,6 +143,12 @@ namespace NorvesLib::Modules::Audio::Private
                 if (result != AudioResult::Success)
                 {
                     return false;
+                }
+                m_Mixer->BindService(m_Service.get());
+                const AudioResult busResult = m_Mixer->ReapplyBackendState();
+                if (busResult != AudioResult::Success)
+                {
+                    LOG_WARNING("AUDIO_MIXER bus_create=failed result=%d", static_cast<int>(busResult));
                 }
                 m_bInitialized = true;
                 if (m_BackendStatus.bFellBackToNull)
@@ -172,6 +183,7 @@ namespace NorvesLib::Modules::Audio::Private
                 if (m_Service)
                 {
                     m_SoundSystem->Shutdown();
+                    m_Mixer->Shutdown();
                     m_Service->Shutdown();
                 }
             }
@@ -215,6 +227,11 @@ namespace NorvesLib::Modules::Audio::Private
                 return *m_SoundSystem;
             }
 
+            IAudioMixer& GetMixer() override
+            {
+                return *m_Mixer;
+            }
+
             const AudioBackendStatus& GetBackendStatus() const override
             {
                 return m_BackendStatus;
@@ -230,6 +247,7 @@ namespace NorvesLib::Modules::Audio::Private
             }
 
             Core::Container::TUniquePtr<IAudioService> m_Service;
+            Core::Container::TUniquePtr<AudioMixerDomain> m_Mixer;
             Core::Container::TUniquePtr<SoundSystem> m_SoundSystem;
             Core::Engine::Engine* m_Engine = nullptr;
             MainCameraAudioListenerSource m_CameraListenerSource;
