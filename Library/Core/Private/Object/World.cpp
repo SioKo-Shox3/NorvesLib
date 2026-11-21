@@ -1631,6 +1631,13 @@ namespace NorvesLib::Core
             return;
         }
         EndTickCollection();
+        // 印の付いた対象が無ければ、順序の作り直しも呼び先の収集もせず、破棄予約の回収だけを行う。
+        // 順序の汚れの印は再開後の通常の更新まで残す。
+        if (m_PausedTickTargets.empty())
+        {
+            CleanupDestroyedObjects();
+            return;
+        }
         if (m_bOrderedTicksDirty)
         {
             SyncOrderedTicks();

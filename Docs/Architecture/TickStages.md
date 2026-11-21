@@ -98,7 +98,7 @@
 
 `Entity::SetTickWhenPaused` と `Component::SetTickWhenPaused` の既定値はどちらも `false`。`Entity` の印は直下の `Component` にだけ効き、子の `Entity` には伝わらない。`Component` の印は自身だけに効く。`World` は対象の `Component` を集合に保持する。両方の印が付いても集合には 1 件だけ入る。印の変更、`Component` の着脱、登録の解除時にだけ集合を更新するため、毎フレーム階層や各 `Entity` の子を走査して対象を探す必要はない。
 
-`World::TickWhenPaused` は通常の `World::Tick` と同じく、必要なら先に呼び先を付け直す。集合内の各 `Component` の順序付きの登録記録から群・呼び出す本体・優先度・深さ優先の番号を取り、通常の更新と同じ群順で呼ぶ。各群内は優先度の昇順、同じ優先度では深さ優先の番号の昇順となる。呼び出し直前に所有者、印、対象の有効状態を確認し、最後に `CleanupDestroyedObjects` で破棄予約を回収する。
+`World::TickWhenPaused` は、印の付いた対象の集合が空なら順序の作り直しも呼び先の収集もせず、破棄予約の回収（`CleanupDestroyedObjects`）だけを行って抜ける。このとき順序の汚れの印は下ろさず、再開後の通常の更新で付け直す。集合が空でなく、かつ木の構造や Tick の設定が変わったフレームに限り、通常の `World::Tick` と共通の `SyncOrderedTicks` で先に呼び先を付け直す。この作り直しの費用は通常のフレームと同じで、変化の無いフレームでは走らない。集合内の各 `Component` の順序付きの登録記録から群・呼び出す本体・優先度・深さ優先の番号を取り、通常の更新と同じ群順で呼ぶ。各群内は優先度の昇順、同じ優先度では深さ優先の番号の昇順となる。呼び出し直前に所有者、印、対象の有効状態を確認し、最後に `CleanupDestroyedObjects` で破棄予約を回収する。
 
 通常のワールド更新では、時間チャンネルが呼び先の受け取る経過時間を決める。`World` と `Animation` には所有者の時間倍率も掛かる。ヒットストップでこれらの時間が 0 になっても、`bWorldAdvance` が開いていれば `Unscaled` の呼び先は進む。ゲーム内ポーズ中に更新を受けるには、チャンネルにかかわらず自身か所有者に印が必要となる。このとき `TickSimulation` が渡すのは、`ClampVariableDeltaTime` で丸める前の `rawDeltaNanoseconds` を秒に換算した値（0 以下なら 0 秒）。
 
