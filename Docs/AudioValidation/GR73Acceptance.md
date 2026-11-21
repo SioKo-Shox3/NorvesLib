@@ -82,12 +82,14 @@
 | 渡し先 | 渡す値 |
 |---|---|
 | `IAudioService::SetVoiceOutputGains` | 距離利得を含む左右の線形利得 (g·L, g·R)。3D の voice では `SetVoicePan` を使わない |
-| `IAudioService::SetVoiceFrequencyRatio` | ピッチの周波数比 × ドップラー比。サービスは正の有限値を下限 1/1024 と voice 作成時の上限に収める。最終ピッチを pitch（半音）とすると、3D の voice 作成時の上限は min(max(12, pitch) + 12, 120) 半音（`kAudioMaxVoicePitchSemitones` = 120）。pitch > 120 の再生は既存の voice を奪う前に `InvalidState` で拒否する |
+| `IAudioService::SetVoiceFrequencyRatio` | ピッチの周波数比 × ドップラー比。`SoundSystem` はこの比を 1/1024（`kAudioMinVoiceFrequencyRatio`）から voice 作成時の上限までに丸めて渡す。0 以下を含めて下限を下回る比は下限に、上限を超える比は上限にする。有限の低いピッチで比が `float` の 0 になっても、下限で鳴る。最終ピッチを pitch（半音）とすると、3D の voice 作成時の上限は min(max(12, pitch) + 12, 120) 半音（`kAudioMaxVoicePitchSemitones` = 120）。pitch > 120 の再生は既存の voice を奪う前に `InvalidState` で拒否する |
 | voice の音量 | 10^((volume_db + 揺らぎ_db)/20) × 再生の音量 × フェード利得 × 区分の音量 × 全体の音量 × 背後の音量倍率 |
 
-3D の左右の利得は、両方とも前回の適用値との差が ε = 1e-4 以下なら更新を省く。3D の周波数比は `SetPitch` による変更も含めて同じ ε を使う。3D の voice の音量も差が ε 以下なら更新を省くが、非ゼロから厳密に 0 へ変わるときは送る。2D の voice の音量は前回の適用値と完全に一致するときだけ省く。
+3D の左右の利得は、両方とも前回の適用値との差が ε = 1e-4 以下なら更新を省く。3D の周波数比は再生開始時に丸めて送り、成功した値を保存する。毎フレームの更新と `SetPitch` では丸めた比を前回の適用値と同じ ε で比較し、差が ε を超えたときだけ送る。送信に成功した比を次の比較に使う。3D の voice の音量も差が ε 以下なら更新を省くが、非ゼロから厳密に 0 へ変わるときは送る。2D の voice の音量は前回の適用値と完全に一致するときだけ省く。
 
 ## 受入れの閾値
+
+下表の値は、試験で照合せず、式が満たすべき性質を定義する参照値とする。
 
 基底は CameraProxy の既定とし、L、R は距離利得を掛ける前のパン係数とする。
 

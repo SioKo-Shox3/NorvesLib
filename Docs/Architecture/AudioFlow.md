@@ -119,12 +119,12 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 1. `IAudioService::Tick()` が voice の終了・エラーの通知を取り込む。
 2. `AudioListenerResolver::Resolve` でリスナーを決め、`SoundSystem::SetListener` で渡す。
 3. 登録された `AudioComponent` のうち `Spatialization == World3D` のものは、`ISoundSystem::IsAudible` が真のインスタンスへ、持ち主の `Entity::GetWorldTransform()` の位置を `ISoundSystem::SetEmitterPosition` で渡す。有効なハンドルでは物理 voice に停止を発行するまで `IsAudible` が真なので、フェードアウト中も音源は持ち主に追従する。
-4. `SoundSystem::Update(dt)` が各 3D インスタンスの音源速度を位置の差分/dt で求める。`ComputeAudioSpatial` にリスナーと音源の状態を渡し、下表の値を反映する。左右の利得は両方とも前回の適用値との差が ε = 1e-4 以下なら更新を省く。3D の周波数比（`SetPitch` による変更を含む）と 3D の voice の音量にも同じ ε を使い、音量が非ゼロから厳密に 0 になるときは送る。2D の voice の音量は完全一致のときだけ更新を省く。
+4. `SoundSystem::Update(dt)` が各 3D インスタンスの音源速度を位置の差分/dt で求める。`ComputeAudioSpatial` にリスナーと音源の状態を渡し、下表の値を反映する。左右の利得は両方とも前回の適用値との差が ε = 1e-4 以下なら更新を省く。3D の周波数比は再生開始時から丸めて送り、送信に成功した比を保存する。毎フレームの更新と `SetPitch` では丸めた比をこの保存値と同じ ε で比較する。3D の voice の音量にも同じ ε を使い、音量が非ゼロから厳密に 0 になるときは送る。2D の voice の音量は完全一致のときだけ更新を省く。
 
 | 係数 | 反映先 |
 |---|---|
 | 距離利得 × 等パワーの左右のパン係数 | `IAudioService::SetVoiceOutputGains` に左右の線形利得を渡す。近距離ほどパンは中央に寄る。3D の voice に `SetVoicePan` は使わない |
-| ピッチの周波数比 × ドップラー比 | `IAudioService::SetVoiceFrequencyRatio` に渡す。最終ピッチを pitch（半音）とすると、3D の voice 作成時の上限は min(max(12, pitch) + 12, 120) 半音（`kAudioMaxVoicePitchSemitones` = 120）。pitch > 120 の再生は既存の voice を奪う前に `InvalidState` で拒否する |
+| ピッチの周波数比 × ドップラー比 | `SoundSystem` が 1/1024（`kAudioMinVoiceFrequencyRatio`）から voice 作成時の上限までに丸め、`IAudioService::SetVoiceFrequencyRatio` に渡す。有限の低いピッチで比が 0 になっても下限で鳴る。最終ピッチを pitch（半音）とすると、3D の voice 作成時の上限は min(max(12, pitch) + 12, 120) 半音（`kAudioMaxVoicePitchSemitones` = 120）。pitch > 120 の再生は既存の voice を奪う前に `InvalidState` で拒否する |
 | 背後の音量倍率 | 既存の voice 音量（10^((volume_db + 揺らぎ_db)/20) × 再生の音量 × フェード利得 × 区分の音量 × 全体の音量）に一度だけ掛ける |
 | 背後の高域の係数 | 値を保持する。フィルタへの適用は `G16-GR73-ACOUSTICS-AI-WIRE` の範囲 |
 

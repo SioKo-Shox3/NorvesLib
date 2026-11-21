@@ -32,10 +32,15 @@ namespace NorvesLib::Modules::Audio::Private
             return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
         }
 
-        /** 半音単位のピッチにドップラー効果を加えた周波数比を返す。 */
-        float GetSpatialFrequencyRatio(float semitones, float dopplerRatio)
+        /** ピッチとドップラー比から、サービスが使う範囲 [1/1024, ボイス作成時の上限] に丸めた周波数比を返す。 */
+        float GetSpatialFrequencyRatio(float semitones, float dopplerRatio, float maxRatio)
         {
-            return std::exp2(semitones / 12.0f) * dopplerRatio;
+            const float ratio = std::exp2(semitones / 12.0f) * dopplerRatio;
+            if (!(ratio > kAudioMinVoiceFrequencyRatio))
+            {
+                return kAudioMinVoiceFrequencyRatio;
+            }
+            return std::min(ratio, maxRatio);
         }
     }
 
@@ -458,6 +463,7 @@ namespace NorvesLib::Modules::Audio::Private
             std::min(std::max(12.0f, pitch) + (instance.bSpatial ? 12.0f : 0.0f), kAudioMaxVoicePitchSemitones)};
         if (instance.bSpatial)
         {
+            instance.MaxFrequencyRatio = std::exp2(desc.MaxPitchSemitones / 12.0f);
             // 再生できない 3D 音源のために既存のボイスを奪わない。
             clip = SelectClip(definition);
             if (!clip)
@@ -469,14 +475,6 @@ namespace NorvesLib::Modules::Audio::Private
                 return AudioResult::Rejected;
             }
         }
-        if (stealIndex != SoundInstanceHandle::InvalidIndex)
-        {
-            const AudioResult result = StealInstance(stealIndex);
-            if (result != AudioResult::Success)
-            {
-                return result;
-            }
-        }
         instance.FadeSeconds = ResolveFadeSeconds(params.FadeIn, definition.FadeInMs, false);
         instance.Gain = instance.FadeSeconds > 0.0f ? 0.0f : 1.0f;
         instance.FadeStartGain = instance.Gain;
@@ -485,6 +483,14 @@ namespace NorvesLib::Modules::Audio::Private
         if (!IsValidVolume(volume))
         {
             return AudioResult::InvalidState;
+        }
+        if (stealIndex != SoundInstanceHandle::InvalidIndex)
+        {
+            const AudioResult result = StealInstance(stealIndex);
+            if (result != AudioResult::Success)
+            {
+                return result;
+            }
         }
 
         if (!instance.bSpatial)
@@ -503,7 +509,8 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 instance.LastLeftGain = spatial.LeftGain;
                 instance.LastRightGain = spatial.RightGain;
-                const float ratio = GetSpatialFrequencyRatio(instance.Params.PitchSemitones, instance.DopplerRatio);
+                const float ratio = GetSpatialFrequencyRatio(instance.Params.PitchSemitones, instance.DopplerRatio,
+                                                             instance.MaxFrequencyRatio);
                 result = m_Service.SetVoiceFrequencyRatio(instance.Voice, ratio);
                 if (result == AudioResult::Success)
                 {
@@ -685,7 +692,8 @@ namespace NorvesLib::Modules::Audio::Private
                 instance.LastRightGain = spatial.RightGain;
             }
         }
-        const float ratio = GetSpatialFrequencyRatio(instance.Params.PitchSemitones, instance.DopplerRatio);
+        const float ratio = GetSpatialFrequencyRatio(instance.Params.PitchSemitones, instance.DopplerRatio,
+                                                     instance.MaxFrequencyRatio);
         if (std::fabs(ratio - instance.LastFrequencyRatio) > kAudioSpatialParameterEpsilon &&
             m_Service.SetVoiceFrequencyRatio(instance.Voice, ratio) == AudioResult::Success)
         {
@@ -820,7 +828,7 @@ namespace NorvesLib::Modules::Audio::Private
         }
         if (instance->bSpatial)
         {
-            const float ratio = GetSpatialFrequencyRatio(semitones, instance->DopplerRatio);
+            const float ratio = GetSpatialFrequencyRatio(semitones, instance->DopplerRatio, instance->MaxFrequencyRatio);
             if (std::fabs(ratio - instance->LastFrequencyRatio) <= kAudioSpatialParameterEpsilon)
             {
                 instance->Params.PitchSemitones = semitones;

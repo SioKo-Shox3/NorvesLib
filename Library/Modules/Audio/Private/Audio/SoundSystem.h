@@ -78,6 +78,7 @@ namespace NorvesLib::Modules::Audio::Private
             float DopplerRatio = 1.0f; ///< ピッチに掛けるドップラー比。
             float LastLeftGain = 0.0f; ///< 最後に送信に成功した左の利得。
             float LastRightGain = 0.0f; ///< 最後に送信に成功した右の利得。
+            float MaxFrequencyRatio = 2.0f; ///< 3D ボイスの作成時に設定した周波数比の上限。
             float LastFrequencyRatio = 0.0f; ///< 最後に送信に成功した周波数比。
             SoundCategory Category = SoundCategory::Effect;
             uint32_t FadeOutMs = 0;

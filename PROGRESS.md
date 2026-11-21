@@ -12680,3 +12680,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 4): `.harness/runs/20261121-055840/G16-GR73-SPATIAL-LISTENER-iter4-build.txt`(全部を載せた版で `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。verify の ctest の行は、試験を外す決まりの形では選ぶ試験が残らないので回していない。
 - Next(反復 4): ランナーの評価者の反証(危険地帯: Public API の `ISoundSystem`・`AudioTypes.h`)。聴感の確かめは G16-GR73-SPATIAL-CHECK(World3D の `AudioComponent` を付けた Entity をカメラの真右・真左・背後へ動かし、真横で片側だけから鳴ること、フェードアウト中も音像が Entity を追うことを聴く)。
 - Notes(反復 4): 判断: 退化した距離の範囲(有限の Max ≤ Min)は d < Max で 1、d ≥ Max で 0 にした(受理する設定では起きない)。3D の voice の上限で切った分のドップラーは、サービスが周波数比を作成時の上限に丸める。2D の voice の音量・ピッチの扱いは変えていない。再生中に MinDistance・MaxDistance・Rolloff を変えても鳴っている音には反映されない(`Play` の時点の設定を保つ)のは今のまま。
+- U12 3D の周波数比を voice の範囲へ丸めてから比べ・送り・保存し、受入れ記録と音の流れの文書に書く: 着地(直し 0 回)

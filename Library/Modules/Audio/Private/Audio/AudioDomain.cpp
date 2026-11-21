@@ -14,7 +14,7 @@ namespace NorvesLib::Modules::Audio::Private
     namespace
     {
         constexpr float kDefaultMaxFrequencyRatio = 2.0f;
-        constexpr float kMinFrequencyRatio = 1.0f / 1024.0f;
+        constexpr float kMinFrequencyRatio = kAudioMinVoiceFrequencyRatio;
 
         [[nodiscard]] constexpr bool CanSetVoiceParameters(AudioVoiceState state) noexcept
         {

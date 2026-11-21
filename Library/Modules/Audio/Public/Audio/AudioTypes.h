@@ -79,6 +79,7 @@ namespace NorvesLib::Modules::Audio
 
     // サービスがボイス作成時に受け付けるピッチの上限（半音）。周波数比は 1024。
     inline constexpr float kAudioMaxVoicePitchSemitones = 120.0f;
+    inline constexpr float kAudioMinVoiceFrequencyRatio = 1.0f / 1024.0f; ///< ボイスに適用する周波数比の下限。
 
     struct AudioVoiceDesc
     {
