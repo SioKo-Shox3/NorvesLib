@@ -29,6 +29,7 @@ namespace NorvesLib::Core::Rendering
     {
         constexpr uint32_t MaxRetainedBoardFrameResources = 8;
         constexpr uint32_t BoardPipelineVariantCount = 3;
+        constexpr uint32_t BoardShaderKindCount = 3;
         constexpr uint32_t CanvasLayerOpacityParamsSize = 16;
 
         struct SortedBoardEntry
@@ -44,12 +45,16 @@ namespace NorvesLib::Core::Rendering
             TextureHandle Texture = TextureHandle::Invalid();
             BlendMode BlendModeProp = BlendMode::Translucent;
             uint32_t PipelineIndex = 0;
+            BoardSampler Sampler = BoardSampler::Point;
+            BoardShaderKind ShaderKind = BoardShaderKind::Standard;
 
             bool operator==(const BoardBatchKey &other) const
             {
                 return Texture == other.Texture &&
                        BlendModeProp == other.BlendModeProp &&
-                       PipelineIndex == other.PipelineIndex;
+                       PipelineIndex == other.PipelineIndex &&
+                       Sampler == other.Sampler &&
+                       ShaderKind == other.ShaderKind;
             }
 
             bool operator!=(const BoardBatchKey &other) const
@@ -99,6 +104,47 @@ namespace NorvesLib::Core::Rendering
             default:
                 return 1;
             }
+        }
+
+        BoardSampler NormalizeBoardSampler(BoardSampler sampler)
+        {
+            switch (sampler)
+            {
+            case BoardSampler::LinearClamp:
+            case BoardSampler::LinearMipClamp:
+                return sampler;
+            default:
+                return BoardSampler::Point;
+            }
+        }
+
+        BoardShaderKind NormalizeBoardShaderKind(BoardShaderKind kind)
+        {
+            switch (kind)
+            {
+            case BoardShaderKind::RadialFill:
+            case BoardShaderKind::CircleMask:
+                return kind;
+            default:
+                return BoardShaderKind::Standard;
+            }
+        }
+
+        // 板の描画コマンドの Draw.MaterialIndex は材質を引かないので、Canvas の板ではサンプラーと
+        // シェーダーの種類を詰める。既定（Point・Standard）は 0 で変更の前と同じ値。
+        uint32_t EncodeBoardDrawVariant(BoardSampler sampler, BoardShaderKind kind)
+        {
+            return static_cast<uint32_t>(sampler) | (static_cast<uint32_t>(kind) << 8u);
+        }
+
+        BoardSampler DecodeBoardDrawSampler(uint32_t variant)
+        {
+            return NormalizeBoardSampler(static_cast<BoardSampler>(variant & 0xffu));
+        }
+
+        BoardShaderKind DecodeBoardDrawShaderKind(uint32_t variant)
+        {
+            return NormalizeBoardShaderKind(static_cast<BoardShaderKind>((variant >> 8u) & 0xffu));
         }
 
         float NormalizeBoardFlipFlag(bool bFlip)
@@ -209,6 +255,10 @@ namespace NorvesLib::Core::Rendering
             outData.NormalMatrix[7] = proxy.UVRect.y;
             outData.NormalMatrix[8] = proxy.UVRect.z;
             outData.NormalMatrix[9] = proxy.UVRect.w;
+            // 板ごとの値を NormalMatrix[10..11] と CustomData[2..3] に格納する。
+            // 頂点シェーダーは vec4(normalRows[2].zw, customData.zw) として読む。
+            outData.NormalMatrix[10] = proxy.ShaderParams.x;
+            outData.NormalMatrix[11] = proxy.ShaderParams.y;
 
             const BlendMode normalizedBlendMode = CanvasView::NormalizeBoardBlendMode(proxy.BlendModeProp);
             outData.ObjectColor[0] = proxy.Tint.x;
@@ -221,8 +271,8 @@ namespace NorvesLib::Core::Rendering
             outData.CustomData[1] = viewportPlan.PixelRect.Height > 0.0f
                                         ? viewportPlan.PixelRect.Height
                                         : static_cast<float>(viewportPlan.RenderHeight);
-            outData.CustomData[2] = 0.0f;
-            outData.CustomData[3] = 0.0f;
+            outData.CustomData[2] = proxy.ShaderParams.z;
+            outData.CustomData[3] = proxy.ShaderParams.w;
             for (float &value : outData.ShadingParams)
             {
                 value = -1.0f;
@@ -235,6 +285,8 @@ namespace NorvesLib::Core::Rendering
             key.Texture = proxy.Texture;
             key.BlendModeProp = CanvasView::NormalizeBoardBlendMode(proxy.BlendModeProp);
             key.PipelineIndex = GetBoardBlendPipelineIndex(key.BlendModeProp);
+            key.Sampler = NormalizeBoardSampler(proxy.Sampler);
+            key.ShaderKind = NormalizeBoardShaderKind(proxy.ShaderKind);
             return key;
         }
 
@@ -252,6 +304,7 @@ namespace NorvesLib::Core::Rendering
             command.Draw.InstanceDataOffset = firstInstance;
             command.Draw.bInstanced = true;
             command.Draw.MaterialBlendMode = key.BlendModeProp;
+            command.Draw.MaterialIndex = EncodeBoardDrawVariant(key.Sampler, key.ShaderKind);
             command.Draw.Texture = key.Texture;
             command.Draw.ObjectId = proxy.ObjectId;
             command.SortKey = proxy.SortKey;
@@ -466,6 +519,8 @@ namespace NorvesLib::Core::Rendering
                 CanvasView::AddRetainedRenderPass(*m_RetainedResources, renderPass);
                 CanvasView::AddRetainedFramebuffer(*m_RetainedResources, framebuffer);
                 CanvasView::AddRetainedSampler(*m_RetainedResources, m_Owner ? m_Owner->m_BoardPointClampSampler : nullptr);
+                CanvasView::AddRetainedSampler(*m_RetainedResources, m_Owner ? m_Owner->m_BoardLinearClampSampler : nullptr);
+                CanvasView::AddRetainedSampler(*m_RetainedResources, m_Owner ? m_Owner->m_BoardLinearMipClampSampler : nullptr);
             }
 
             context.CommandList->BeginRenderPass(renderPass, framebuffer);
@@ -543,62 +598,81 @@ namespace NorvesLib::Core::Rendering
             return descriptorSet;
         }
 
-        Container::VariableArray<RHI::PipelinePtr> CreateBoardPipelines(RHI::RenderPassPtr renderPass,
-                                                                        ViewRenderContext& context)
+        struct BoardPipelineTable
         {
-            Container::VariableArray<RHI::PipelinePtr> pipelines;
-            pipelines.reserve(BoardPipelineVariantCount);
+            RHI::ShaderPtr VertexShader;
+            RHI::ShaderPtr PixelShaders[BoardShaderKindCount];
+            bool bVertexShaderRequested = false;
+            bool bPixelShaderRequested[BoardShaderKindCount] = {};
+            RHI::PipelinePtr Pipelines[BoardPipelineVariantCount][BoardShaderKindCount];
+            bool bFailed[BoardPipelineVariantCount][BoardShaderKindCount] = {};
+        };
 
-            if (!renderPass || !context.Device || !context.ShaderMgr)
+        RHI::PipelinePtr GetOrCreateBoardPipeline(BoardPipelineTable &table,
+                                                  const RHI::RenderPassPtr &renderPass,
+                                                  ViewRenderContext &context,
+                                                  CanvasView::RetainedBoardFrameResources &retainedResources,
+                                                  uint32_t blendIndex,
+                                                  BoardShaderKind shaderKind)
+        {
+            const uint32_t shaderIndex = static_cast<uint32_t>(shaderKind);
+            RHI::PipelinePtr &pipeline = table.Pipelines[blendIndex][shaderIndex];
+            bool &failed = table.bFailed[blendIndex][shaderIndex];
+            if (pipeline || failed)
             {
-                return pipelines;
+                return pipeline;
             }
 
-            RHI::ShaderPtr vertexShader = context.ShaderMgr->LoadShader("board2d.vert", RHI::ShaderStage::Vertex);
-            RHI::ShaderPtr pixelShader = context.ShaderMgr->LoadShader("board2d.frag", RHI::ShaderStage::Pixel);
-            if (!vertexShader || !pixelShader)
+            constexpr const char *pixelShaderFiles[BoardShaderKindCount] =
             {
-                return pipelines;
-            }
-
-            const RHI::DescriptorSetDesc descriptorSetDesc = CreateBoardDescriptorSetDesc();
-
-            RHI::GraphicsPipelineDesc pipelineDesc;
-            pipelineDesc.vertexShader = vertexShader;
-            pipelineDesc.pixelShader = pixelShader;
-            pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
-            pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-            pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
-            pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
-            pipelineDesc.rasterState.lineWidth = 1.0f;
-            pipelineDesc.depthStencilState.depthTestEnable = false;
-            pipelineDesc.depthStencilState.depthWriteEnable = false;
-            pipelineDesc.renderPass = renderPass;
-            pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
-
-            const BlendMode boardBlendModes[BoardPipelineVariantCount] =
+                "board2d.frag", "board2d_ring.frag", "board2d_circle.frag"
+            };
+            constexpr BlendMode boardBlendModes[BoardPipelineVariantCount] =
             {
                 BlendMode::Opaque,
                 BlendMode::Translucent,
                 BlendMode::Additive
             };
 
-            for (uint32_t index = 0; index < BoardPipelineVariantCount; ++index)
+            if (!table.bVertexShaderRequested)
             {
-                RHI::GraphicsPipelineDesc variantDesc = pipelineDesc;
-                variantDesc.blendState.attachments.push_back(
-                    CanvasView::CreateBoardBlendAttachmentDesc(boardBlendModes[index]));
-                RHI::PipelinePtr pipeline = context.Device->CreateGraphicsPipeline(variantDesc);
-                if (!pipeline)
-                {
-                    pipelines.clear();
-                    return pipelines;
-                }
-
-                pipelines.push_back(pipeline);
+                table.bVertexShaderRequested = true;
+                table.VertexShader = context.ShaderMgr->LoadShader("board2d.vert", RHI::ShaderStage::Vertex);
+            }
+            if (!table.bPixelShaderRequested[shaderIndex])
+            {
+                table.bPixelShaderRequested[shaderIndex] = true;
+                table.PixelShaders[shaderIndex] = context.ShaderMgr->LoadShader(pixelShaderFiles[shaderIndex], RHI::ShaderStage::Pixel);
             }
 
-            return pipelines;
+            if (table.VertexShader && table.PixelShaders[shaderIndex])
+            {
+                RHI::GraphicsPipelineDesc pipelineDesc;
+                pipelineDesc.vertexShader = table.VertexShader;
+                pipelineDesc.pixelShader = table.PixelShaders[shaderIndex];
+                pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+                pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+                pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+                pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+                pipelineDesc.rasterState.lineWidth = 1.0f;
+                pipelineDesc.depthStencilState.depthTestEnable = false;
+                pipelineDesc.depthStencilState.depthWriteEnable = false;
+                pipelineDesc.renderPass = renderPass;
+                pipelineDesc.descriptorSetLayouts.push_back(CreateBoardDescriptorSetDesc());
+                pipelineDesc.blendState.attachments.push_back(
+                    CanvasView::CreateBoardBlendAttachmentDesc(boardBlendModes[blendIndex]));
+                pipeline = context.Device->CreateGraphicsPipeline(pipelineDesc);
+            }
+            if (!pipeline)
+            {
+                failed = true;
+                NORVES_LOG_ERROR("CanvasView", "板のパイプラインを作成できません（ブレンド番号 %u、シェーダー %s）",
+                                 blendIndex, pixelShaderFiles[shaderIndex]);
+                return nullptr;
+            }
+
+            retainedResources.Pipelines.push_back(pipeline);
+            return pipeline;
         }
 
         void RecordBoardDrawCommands(RHI::RenderPassPtr renderPass,
@@ -606,43 +680,43 @@ namespace NorvesLib::Core::Rendering
                                      CanvasView::RetainedBoardFrameResources &retainedResources,
                                      DrawCommandView boardCommands)
         {
-            if (boardCommands.empty() || !context.Renderer || !m_Owner)
+            if (boardCommands.empty() || !renderPass || !context.Device || !context.ShaderMgr ||
+                !context.Renderer || !m_Owner || !m_Owner->m_BoardFallbackWhiteTexture ||
+                !m_Owner->m_BoardPointClampSampler || !m_Owner->m_BoardLinearClampSampler ||
+                !m_Owner->m_BoardLinearMipClampSampler)
             {
                 return;
             }
 
-            Container::VariableArray<RHI::PipelinePtr> pipelines = CreateBoardPipelines(renderPass, context);
-            if (pipelines.size() != BoardPipelineVariantCount ||
-                !m_Owner->m_BoardFallbackWhiteTexture ||
-                !m_Owner->m_BoardPointClampSampler)
-            {
-                return;
-            }
-
-            for (const RHI::PipelinePtr &pipeline : pipelines)
-            {
-                retainedResources.Pipelines.push_back(pipeline);
-            }
-
+            // パイプラインは描画パスに結び付くので、この記録の中だけで共有する。
+            BoardPipelineTable table;
             Container::VariableArray<DrawCommand> executableCommands;
             executableCommands.reserve(boardCommands.size());
             for (const DrawCommand &command : boardCommands)
             {
+                const uint32_t variant = command.Draw.MaterialIndex;
+                const uint32_t blendIndex = GetBoardBlendPipelineIndex(command.Draw.MaterialBlendMode);
+                const RHI::PipelinePtr pipeline = GetOrCreateBoardPipeline(table, renderPass, context, retainedResources,
+                                                                           blendIndex, DecodeBoardDrawShaderKind(variant));
+                if (!pipeline)
+                {
+                    continue;
+                }
+                const RHI::SamplerPtr sampler = m_Owner->GetBoardSampler(DecodeBoardDrawSampler(variant));
                 const RHI::TexturePtr texture = ResolveBoardTexture(command,
                                                                     context,
                                                                     m_Owner->m_BoardFallbackWhiteTexture);
                 RHI::DescriptorSetPtr descriptorSet = CreateBoardDescriptorSet(context,
                                                                               retainedResources,
                                                                               texture,
-                                                                              m_Owner->m_BoardPointClampSampler);
+                                                                              sampler);
                 if (!descriptorSet)
                 {
                     return;
                 }
 
                 DrawCommand executableCommand = command;
-                const uint32_t pipelineIndex = GetBoardBlendPipelineIndex(command.Draw.MaterialBlendMode);
-                executableCommand.Pipeline = pipelines[pipelineIndex];
+                executableCommand.Pipeline = pipeline;
                 executableCommand.DescriptorSet = descriptorSet;
                 executableCommand.DescriptorSetSlot = 0;
                 retainedResources.BoundTextures.push_back(texture);
@@ -985,6 +1059,8 @@ namespace NorvesLib::Core::Rendering
         m_NextBoardInsertionSequence = 0;
         m_BoardFallbackWhiteTexture.reset();
         m_BoardPointClampSampler.reset();
+        m_BoardLinearClampSampler.reset();
+        m_BoardLinearMipClampSampler.reset();
         View::Shutdown();
     }
 
@@ -1356,6 +1432,19 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    RHI::SamplerPtr CanvasView::GetBoardSampler(BoardSampler sampler) const
+    {
+        switch (sampler)
+        {
+        case BoardSampler::LinearClamp:
+            return m_BoardLinearClampSampler;
+        case BoardSampler::LinearMipClamp:
+            return m_BoardLinearMipClampSampler;
+        default:
+            return m_BoardPointClampSampler;
+        }
+    }
+
     bool CanvasView::EnsureBoardSharedResources(RHI::IDevice *device)
     {
         if (!device)
@@ -1383,20 +1472,46 @@ namespace NorvesLib::Core::Rendering
             m_BoardFallbackWhiteTexture->Update(whitePixel, 4u, 4u);
         }
 
-        if (!m_BoardPointClampSampler)
+        auto createSampler = [device](BoardSampler sampler)
         {
             RHI::SamplerDesc samplerDesc;
-            samplerDesc.filterMin = RHI::FilterMode::Point;
-            samplerDesc.filterMag = RHI::FilterMode::Point;
-            samplerDesc.filterMip = RHI::FilterMode::Point;
+            samplerDesc.filterMin = sampler == BoardSampler::Point ? RHI::FilterMode::Point : RHI::FilterMode::Linear;
+            samplerDesc.filterMag = samplerDesc.filterMin;
+            samplerDesc.filterMip = sampler == BoardSampler::LinearMipClamp ? RHI::FilterMode::Linear : RHI::FilterMode::Point;
             samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
             samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
             samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+            if (sampler == BoardSampler::LinearClamp)
+            {
+                samplerDesc.maxLOD = 0.0f;
+            }
+            return device->CreateSampler(samplerDesc);
+        };
 
-            m_BoardPointClampSampler = device->CreateSampler(samplerDesc);
+        if (!m_BoardPointClampSampler)
+        {
+            m_BoardPointClampSampler = createSampler(BoardSampler::Point);
             if (!m_BoardPointClampSampler)
             {
-                NORVES_LOG_ERROR("CanvasView", "Failed to create board point clamp sampler");
+                NORVES_LOG_ERROR("CanvasView", "板の Point サンプラーを作成できません");
+                return false;
+            }
+        }
+        if (!m_BoardLinearClampSampler)
+        {
+            m_BoardLinearClampSampler = createSampler(BoardSampler::LinearClamp);
+            if (!m_BoardLinearClampSampler)
+            {
+                NORVES_LOG_ERROR("CanvasView", "板の LinearClamp サンプラーを作成できません");
+                return false;
+            }
+        }
+        if (!m_BoardLinearMipClampSampler)
+        {
+            m_BoardLinearMipClampSampler = createSampler(BoardSampler::LinearMipClamp);
+            if (!m_BoardLinearMipClampSampler)
+            {
+                NORVES_LOG_ERROR("CanvasView", "板の LinearMipClamp サンプラーを作成できません");
                 return false;
             }
         }
