@@ -12711,3 +12711,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 要起票: MegaGeometry の前のフレームの HZB の再利用判定 `EvaluatePreviousHiZ`（`Library/Core/Public/Rendering/MegaGeometryPass.h:175`。`MegaHiZContract` に `CutSerial` が無い）と、草の HiZ の採用（`Library/Core/Private/Rendering/GrassPass.cpp:796`）は `CameraId`・`SourceCameraId` だけを比べて `CutSerial` を見ない。同じカメラで `MarkCameraCut` したフレームで、カットの前の深度で遮蔽を判定する（`CameraDiscontinuity.md` の約束に反する）。
 - U6 パストレーサーの持ち越しで、連番でないパケットのカットと RenderThread が後から足す instance にもカットの判定を当てる: 着地(直し 0 回)
 - U7 メインカメラの登録枠の更新を m_MainCamera へ写し、GetPreviousCamera と BuildCameraProxy でカメラの生成元をそろえる: 着地(直し 0 回)
+- U8 規約の文書へ直しを反映し、全体の Game のビルドで確かめる: 着地(直し 0 回)
