@@ -13138,3 +13138,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 ポートの Engine 実装（草 = GrassField＋DrynessMap、風 = EnvironmentSystem の WindParameters）を足す: 着地(直し 0 回)
 - U3 調整値の束 PerceptionTuning と JSON の読み込み、Assets/AI/PerceptionTuning.json を足す: 着地(直し 0 回)
 - U9 AIModule の設計文書に知覚のモデルを書き、全体のビルドを通す: 着地(直し 0 回)
+## G13-GR24-SENSE-MODELS 知覚のモデルの仕上げ（2026-11-22）
+- Done: 草の遮蔽の積分に刻みと枯れ度を指定する `GrassField::QueryOcclusion(a, b, stepMeters, pDryness)` を足した（2 引数版はこれへ 0.5 m・nullptr で委ねて値は同じ。枯れ度は描画と同じ `Rendering::GrassEffectiveDryness`（`DrynessMap::Sample` と LayerB の A の大きい方）と種別の `Dryness.DensityScale`・`HeightScale` を枯れ度 > 0 の点だけ掛ける）。AI のポート `IGrassFieldSource`・`IWindSource`（既定は草なし・無風）と Engine 実装 `EngineGrassFieldSource`（Vegetation の草の場＋枯れ度マップ）・`EngineWindSource`（`EnvironmentSystem` の解決した風を `EvaluateWind`・`WindClockSeconds` で引く。`Resolve` は風の 7 項目が変わったときだけ呼ぶ）を足した。純関数 `VisionModel`・`HearingModel`・`SmellModel`（＋`WindDirectionFilter`）・`AwarenessIntegrator` と、調整値の束 `PerceptionTuning`（`Assets/AI/PerceptionTuning.json`、値は仮）を `Library/Modules/AI/Private/AI/Perception/` に置き、`Docs/Architecture/AIModule.md` に「知覚のモデル」の節を書いた。
+- 証拠: `.harness/runs/20261122-050549/verify-G13-GR24-SENSE-MODELS-U9.txt`（試験を外した全体の `cmake --build build --config Debug -- -m:1`。初回は PowerShell の引数分割で MSB1031 の中断、引数を引用符で囲んだ再実行でエラー 0・27 プロジェクトを生成し Game.exe まで通った）。
+- 試験: 試験は作らず回していない（人の決まり）。done-when (3) の Perception*Test は作っていない。
+- 人が見るときの見どころ: まだ知覚の処理へ配線していない（G13-GR24-PERCEPTION-SERVICE の受け持ち）ので、ゲームの見た目と動きは変わらない。
+- Next: ランナーの評価者の反証（GrassField は Public API）。G13-GR24-PERCEPTION-SERVICE が `PerceptionTuning` の読み込みとモデルの配線、固体の遮蔽を受け持つ。
+- Notes: 採った判断: 枯れ度は GR24 の側で掛けず `GrassField` の多重定義の中で 1 回だけ掛ける（LayerB の A を読めるのが草の場だけのため）。遠景の帯の草丈の潰しは視点の距離で決まる描画だけの効果なので知覚には掛けない（近景の帯の値）。草の倍率 `grass.opacityScale` は光学的厚さに掛ける（T^scale、T=1 は 1 のまま）。聴覚の量は (R/d)^2 の線形（可聴半径の換算は評価器の `ComputeHearingRadiusThresholdDb`）、強さは 1−exp(−量)、騒音床のマスキングは 1/(1+10^((床−受音)/10))。嗅覚は風上の拡散に横風の境で 1・真の風上で `upwindAxisRatio`（仮 0.5）の角度の倍率を掛け、同じ距離で横風 > 風上を保つ（要件の式からの差）。気づきの上がる遷移は段ごとに遅れを数えるので、Unaware から一気に Alert へ上がると遅れが 2 回入ることがある。感度は気づきの積分の側だけで掛ける。踏み倒し（GR44）は CPU から読めないので知覚に入れていない。
