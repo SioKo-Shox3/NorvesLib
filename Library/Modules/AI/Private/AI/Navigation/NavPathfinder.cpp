@@ -72,7 +72,7 @@ namespace NorvesLib::Modules::AI
         NavPathQuery Query;
         uint64_t GridVersion = 0;
         uint32_t EpsilonQ8 = 256;
-        uint8_t ThresholdQ = 0;
+        uint16_t ThresholdQ = 0;
         ENavSearchState State = ENavSearchState::Idle;
         uint32_t ExpansionCount = 0;
         uint32_t Stamp = 0;

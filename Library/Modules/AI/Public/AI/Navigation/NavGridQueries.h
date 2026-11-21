@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "AI/Navigation/NavGrid.h"
+#include "Container/VariableArray.h"
 
 namespace NorvesLib::Modules::AI
 {
@@ -16,7 +17,7 @@ namespace NorvesLib::Modules::AI
     namespace NavGridQueries
     {
         /// 読み込み済みで、地形とクリアランスが通行を許すセルかを返す。
-        bool IsCellPassable(const NavGrid& grid, NavCellCoord cell, uint8_t thresholdQ);
+        bool IsCellPassable(const NavGrid& grid, NavCellCoord cell, uint16_t thresholdQ);
 
         /// 指定した位置のセルを、半径 radius のエージェントが通れるかを返す。
         bool IsWalkable(const NavGrid& grid, const Math::Vector3& position, float radius);
@@ -27,9 +28,14 @@ namespace NorvesLib::Modules::AI
                                  float searchRadius, Math::Vector3& outPosition);
 
         /// XZ 線分が触れる全セルをたどる。角や格子線では両側を調べ、最初の当たりで止まる。
-        /// 非有限入力は始点で、走査上限に達した場合は最初の未確認セルで当たりとする。
+        /// 非有限入力や表現できない半径は始点で、走査上限に達した場合は最初の未確認セルで当たりとする。
         NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from,
                                  const Math::Vector3& to, float radius);
+
+        /// Raycast と同じ走査をし、通行を調べたセル（当たりのセルを含む）が属するタイルの座標を outTestedTiles に足す。
+        /// 既に outTestedTiles にある座標は足さない。
+        NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius,
+                                 Core::Container::VariableArray<NavTileCoord>& outTestedTiles);
 
         /// この位置のセルに直進で入るコストを返す。通れなければ kNavCostImpassable。
         uint32_t SampleCost(const NavGrid& grid, const Math::Vector3& position, const NavAgentProfile& profile);

@@ -12,7 +12,7 @@ namespace NorvesLib::Modules::AI::NavGridQueries
         constexpr int64_t kMaxCell = INT32_MAX;
         constexpr double kInfinity = std::numeric_limits<double>::infinity();
 
-        bool IsPassable(NavCellRef ref, uint8_t thresholdQ)
+        bool IsPassable(NavCellRef ref, uint16_t thresholdQ)
         {
             return ref && IsNavCellPassable(ref.Tile->Flags[ref.Index], ref.Tile->ClearanceQ[ref.Index], thresholdQ);
         }
@@ -91,7 +91,7 @@ namespace NorvesLib::Modules::AI::NavGridQueries
         }
     } // namespace
 
-    bool IsCellPassable(const NavGrid& grid, NavCellCoord cell, uint8_t thresholdQ)
+    bool IsCellPassable(const NavGrid& grid, NavCellCoord cell, uint16_t thresholdQ)
     {
         return IsPassable(grid.FindCell(cell), thresholdQ);
     }
@@ -110,7 +110,11 @@ namespace NorvesLib::Modules::AI::NavGridQueries
             return false;
         }
         const NavGridDesc& desc = grid.GetDesc();
-        const uint8_t threshold = NavClearanceThresholdQ(radius, desc.CellSize);
+        const uint16_t threshold = NavClearanceThresholdQ(radius, desc.CellSize);
+        if (threshold == kNavClearanceThresholdUnreachable)
+        {
+            return false;
+        }
         const double limit = std::isfinite(searchRadius) && searchRadius > 0.0f ? searchRadius : 0.0;
         double bestSquared = limit * limit;
         const NavCellCoord center = grid.WorldToCell(position.x, position.z);
@@ -190,7 +194,8 @@ namespace NorvesLib::Modules::AI::NavGridQueries
         return bFound;
     }
 
-    NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius)
+    static NavRaycastResult RaycastImpl(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to,
+                                       float radius, Core::Container::VariableArray<NavTileCoord>* outTestedTiles)
     {
         NavCellCoord cell = grid.WorldToCell(from.x, from.z);
         const NavGridDesc& desc = grid.GetDesc();
@@ -200,11 +205,23 @@ namespace NorvesLib::Modules::AI::NavGridQueries
             return {true, 0.0f, cell, from};
         }
 
-        const uint8_t threshold = NavClearanceThresholdQ(radius, desc.CellSize);
+        const uint16_t threshold = NavClearanceThresholdQ(radius, desc.CellSize);
+        if (threshold == kNavClearanceThresholdUnreachable)
+        {
+            return {true, 0.0f, cell, from};
+        }
         NavRaycastResult result{false, 1.0f, grid.WorldToCell(to.x, to.z), to};
         uint32_t visited = 0;
         const auto hit = [&](NavCellCoord candidate, double t)
         {
+            if (outTestedTiles)
+            {
+                const NavTileCoord coord = grid.CellToTile(candidate);
+                if (std::find(outTestedTiles->begin(), outTestedTiles->end(), coord) == outTestedTiles->end())
+                {
+                    outTestedTiles->push_back(coord);
+                }
+            }
             constexpr uint32_t kMaxVisited = 1u << 20;
             if (visited++ < kMaxVisited && IsCellPassable(grid, candidate, threshold))
             {
@@ -219,7 +236,7 @@ namespace NorvesLib::Modules::AI::NavGridQueries
 
         const double dx = static_cast<double>(to.x) - from.x;
         const double dz = static_cast<double>(to.z) - from.z;
-        if (hit(cell, 0.0) || (dx == 0.0 && dz == 0.0))
+        if (hit(cell, 0.0))
         {
             return result;
         }
@@ -232,6 +249,11 @@ namespace NorvesLib::Modules::AI::NavGridQueries
         if ((bOnX && hit({cell.X - 1, cell.Z}, 0.0)) ||
             (bOnZ && hit({cell.X, cell.Z - 1}, 0.0)) ||
             (bOnX && bOnZ && hit({cell.X - 1, cell.Z - 1}, 0.0)))
+        {
+            return result;
+        }
+
+        if (dx == 0.0 && dz == 0.0)
         {
             return result;
         }
@@ -269,6 +291,17 @@ namespace NorvesLib::Modules::AI::NavGridQueries
                 return result;
             }
         }
+    }
+
+    NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius)
+    {
+        return RaycastImpl(grid, from, to, radius, nullptr);
+    }
+
+    NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius,
+                             Core::Container::VariableArray<NavTileCoord>& outTestedTiles)
+    {
+        return RaycastImpl(grid, from, to, radius, &outTestedTiles);
     }
 
     uint32_t SampleCost(const NavGrid& grid, const Math::Vector3& position, const NavAgentProfile& profile)

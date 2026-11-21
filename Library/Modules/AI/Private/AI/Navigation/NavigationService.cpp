@@ -212,14 +212,37 @@ namespace NorvesLib::Modules::AI
             }
         }
 
+        slot.Tiles.clear();
         Core::Container::UnorderedSet<uint64_t> seen;
-        for (NavCellCoord cell : slot.Cells)
+        const auto recordTile = [&](NavTileCoord coord)
         {
-            const NavTileCoord coord = m_Grid.CellToTile(cell);
             if (seen.insert(coord.ToKey()).second)
             {
                 slot.Tiles.push_back({coord, m_Grid.GetTileGeneration(coord)});
             }
+        };
+        for (NavCellCoord cell : slot.Cells)
+        {
+            recordTile(m_Grid.CellToTile(cell));
+        }
+
+        Core::Container::VariableArray<NavTileCoord> testedTiles;
+        const auto recordSegment = [&](const Math::Vector3& from, const Math::Vector3& to)
+        {
+            testedTiles.clear();
+            NavGridQueries::Raycast(m_Grid, from, to, radius, testedTiles);
+            for (NavTileCoord coord : testedTiles)
+            {
+                recordTile(coord);
+            }
+        };
+        if (slot.Points.size() == 1)
+        {
+            recordSegment(slot.Points.front(), slot.Points.front());
+        }
+        for (size_t i = 1; i < slot.Points.size(); ++i)
+        {
+            recordSegment(slot.Points[i - 1], slot.Points[i]);
         }
         slot.Status = state == ENavSearchState::Succeeded ? ENavPathStatus::Succeeded : ENavPathStatus::Partial;
     }

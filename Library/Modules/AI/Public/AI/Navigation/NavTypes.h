@@ -87,19 +87,22 @@ namespace NorvesLib::Modules::AI
     /// セル幅に相当するクリアランスの量子化段数。
     inline constexpr uint32_t kNavClearanceStepsPerCell = 8;
 
-    /// 半径をセル幅の 1/8 単位で切り上げ、255 を上限とする。半径やセル幅が非有限または 0 以下なら 0。
-    inline uint8_t NavClearanceThresholdQ(float radius, float cellSize)
+    /// ClearanceQ で表せる上限（255）を超える半径のしきい値。どのセルも満たさない。
+    inline constexpr uint16_t kNavClearanceThresholdUnreachable = 256;
+
+    /// 半径をセル幅の 1/8 単位で切り上げ、255 を超えたら 256 を返す。半径やセル幅が非有限または 0 以下なら 0。
+    inline uint16_t NavClearanceThresholdQ(float radius, float cellSize)
     {
         if (!std::isfinite(radius) || radius <= 0.0f || !std::isfinite(cellSize) || cellSize <= 0.0f)
         {
             return 0;
         }
         const double steps = static_cast<double>(radius) * kNavClearanceStepsPerCell / static_cast<double>(cellSize);
-        if (steps >= 255.0)
+        if (steps > 255.0)
         {
-            return 255;
+            return kNavClearanceThresholdUnreachable;
         }
-        return static_cast<uint8_t>(std::ceil(steps));
+        return static_cast<uint16_t>(std::ceil(steps));
     }
 
     /// クリアランスをセル幅の 1/8 単位で切り捨てる。下限は 0、上限は 255 で、NaN は 0。
@@ -138,7 +141,7 @@ namespace NorvesLib::Modules::AI
     }
 
     /// 通行を阻むフラグがなく、クリアランスがしきい値以上なら通れる。
-    inline bool IsNavCellPassable(uint8_t flags, uint8_t clearanceQ, uint8_t thresholdQ)
+    inline bool IsNavCellPassable(uint8_t flags, uint8_t clearanceQ, uint16_t thresholdQ)
     {
         return (flags & kNavBlockingFlags) == 0 && clearanceQ >= thresholdQ;
     }
