@@ -76,7 +76,8 @@ namespace NorvesLib::Modules::AI
         };
 
         bool HasSlot(PathHandle handle) const;
-        void FinishPath(PathSlot& slot, ENavSearchState state);
+        /// 探索中に押印が変わり、現在の版で探し直す場合は false を返す。
+        bool TryFinishPath(PathSlot& slot, ENavSearchState state);
 
         void SyncOverlayGridDesc(const NavGridDesc& previous);
 

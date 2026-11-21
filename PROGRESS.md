@@ -13080,3 +13080,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: `Game.exe --ai-nav-smoke`（ナビと操舵のデバッグ描画は場面が有効にする）。青い動く箱が始点 (4.5, 16.5) と目標 (27.5, 16.5) を結ぶ直線を Z 方向に横切るので、黄色の代役の経路（緑の折れ線）が箱の手前で引き直されて箱を避けること、ログの `stage=ready … obstacle_cells=` と `result=pass … obstacle_cells_max=` が 0 でないことを見る。動的な塞ぎのセル自体はナビの格子の描画には出ない。撮影・計測の確かめは回さない決まり。
 - Next: 場面の起動の確かめ（G13-GR22-AI-SMOKE-CHECK）、地形からのベイク（G13-GR21-NVNAV-COOK）、タイルの出し入れ（G13-GR21-NAV-STREAMING）。
 - Notes: 判断: オーバーレイはエージェントの半径で膨らませないので、押印の足跡を全体で 1 つの余白 `AgentPadding`（既定 0.5 m = Medium の半径）で広げる。高さの帯 `HeightBand` は 2 m、速さのしきい値は 3 m/s（場面の箱は 0.5 m/s）。0.25 s・0.5 セルを含めすべて未計測の仮の値。既知の限界（平滑化が Cost のセルを横切りうる・`uint32_t` の通し番号の周回・Large の縁を擦りうる・可変 Tick で動かすと速さを歩の数の倍に見積もりうる・版がタイル単位）は `AIModule.md` に書いた。
+- U9 探索中に動的な版が進んで失敗した要求を Pending のまま探し直す: 着地(直し 0 回)

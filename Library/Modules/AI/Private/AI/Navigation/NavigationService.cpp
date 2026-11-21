@@ -210,22 +210,31 @@ namespace NorvesLib::Modules::AI
             remaining -= before == UINT32_MAX ? 1u : m_Pathfinder.GetExpansionCount() - before;
             if (state != ENavSearchState::InProgress)
             {
-                FinishPath(slot, state);
+                const bool finished = TryFinishPath(slot, state);
                 m_Pathfinder.Reset();
-                m_Pending.pop_front();
+                if (finished)
+                {
+                    m_Pending.pop_front();
+                }
             }
         }
     }
 
-    void NavigationService::FinishPath(PathSlot& slot, ENavSearchState state)
+    bool NavigationService::TryFinishPath(PathSlot& slot, ENavSearchState state)
     {
+        const uint32_t serialAtBegin = m_Pathfinder.GetDynamicSerialAtBegin();
         const auto cells = m_Pathfinder.GetPathCells();
         const float radius = slot.Query.Profile.Radius;
         if ((state != ENavSearchState::Succeeded && state != ENavSearchState::Partial)
             || !SmoothNavPath(m_Grid, cells, radius, slot.Points, &m_Overlay))
         {
+            if (m_Overlay.GetSerial() != serialAtBegin)
+            {
+                slot.Points.clear();
+                return false;
+            }
             slot.Status = ENavPathStatus::Failed;
-            return;
+            return true;
         }
         slot.Cells.assign(cells.begin(), cells.end());
         if (slot.Points.size() > 1)
@@ -243,7 +252,6 @@ namespace NorvesLib::Modules::AI
         }
 
         slot.Tiles.clear();
-        const uint32_t serialAtBegin = m_Pathfinder.GetDynamicSerialAtBegin();
         Core::Container::UnorderedSet<uint64_t> seen;
         const auto recordTile = [&](NavTileCoord coord)
         {
@@ -281,6 +289,7 @@ namespace NorvesLib::Modules::AI
             recordSegment(slot.Points[i - 1], slot.Points[i]);
         }
         slot.Status = state == ENavSearchState::Succeeded ? ENavPathStatus::Succeeded : ENavPathStatus::Partial;
+        return true;
     }
 
     bool NavigationService::FindNearestWalkable(const Math::Vector3& position, const NavAgentProfile& profile,
