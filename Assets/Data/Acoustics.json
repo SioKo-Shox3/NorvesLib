@@ -9,7 +9,7 @@
   "windNoiseFloor": {"curve": [[0, -120], [5, 25], [20, 45]]},
   "maskingCoefficient": 0.5,
   "updateHz": 10,
-  "voiceBudgetPerFrame": 32,
+  "voiceBudgetPerFrame": 4,
   "classes": {
     "Cue": {"referenceDistanceM": 1, "highFrequencyLevelOffsetDb": -6, "exemptFromOcclusion": false, "exemptFromMasking": false},
     "Ambient": {"referenceDistanceM": 1, "highFrequencyLevelOffsetDb": -10, "exemptFromOcclusion": false, "exemptFromMasking": false},
