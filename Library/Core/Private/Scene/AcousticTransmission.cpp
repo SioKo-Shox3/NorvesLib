@@ -2,8 +2,14 @@
 #include "Scene/AcousticTransmission.h"
 #include "Asset/AssetFileReader.h"
 #include "Debug/Stats.h"
+#include "Environment/EnvironmentSystem.h"
+#include "Rendering/Terrain/TerrainSystem.h"
 #include "Scene/AcousticDistance.h"
+#include "Scene/SceneQuery.h"
+#include "Scene/SurfaceRegistry.h"
 #include "Text/JsonDocument.h"
+#include "Vegetation/GrassField.h"
+#include "Vegetation/Vegetation.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -324,6 +330,35 @@ namespace NorvesLib::Core::Scene
             }
             return static_cast<float>(std::min(static_cast<double>(accumulated) + loss, kMaxFloat));
         }
+
+        // 草と地形は同じ水平刻みで評価する。倍精度で刻みを決めてから整数にし、遠距離でも最大 24 点に収める。
+        int PathSampleCount(const AcousticPathQuery& query)
+        {
+            const double dx = static_cast<double>(query.Listener.x) - query.Source.x;
+            const double dz = static_cast<double>(query.Listener.z) - query.Source.z;
+            const double length = std::sqrt(dx * dx + dz * dz);
+            double step = 1.5;
+            while (length > 24 * step)
+            {
+                step *= 2;
+            }
+            return std::max(1, static_cast<int>(std::ceil(length / step)));
+        }
+
+        Math::Vector3 PathMidpoint(const AcousticPathQuery& query, int index, int count)
+        {
+            const double t = (index + 0.5) / count;
+            return {static_cast<float>(std::lerp(double(query.Source.x), double(query.Listener.x), t)),
+                    static_cast<float>(std::lerp(double(query.Source.y), double(query.Listener.y), t)),
+                    static_cast<float>(std::lerp(double(query.Source.z), double(query.Listener.z), t))};
+        }
+
+        void SetOcclusionLoss(AcousticContribution& contribution, double loss, const AcousticSettings& settings)
+        {
+            contribution.BroadbandLossDb = static_cast<float>(std::min(loss, kMaxFloat));
+            contribution.HighFrequencyLossDb = static_cast<float>(std::min(
+                static_cast<double>(contribution.BroadbandLossDb) * settings.OcclusionHighFrequencyRatio, kMaxFloat));
+        }
     }
 
     const char* GetSoundClassName(ESoundClass soundClass) noexcept
@@ -438,12 +473,188 @@ namespace NorvesLib::Core::Scene
         return static_cast<float>(std::lerp(static_cast<double>(left.Db), static_cast<double>(right->Db), fraction));
     }
 
+    float AcousticNoiseFloorModel::EvaluateHighFrequencyNoiseFloorDb(const Math::Vector3& listener,
+        const AcousticSettings& settings) const
+    {
+        float rain = 0.0f;
+        float wind = 0.0f;
+        if (m_Environment && m_Environment->IsEnabled())
+        {
+            const auto& state = m_Environment->GetState();
+            rain = std::isfinite(state.RainIntensity) ? std::clamp(state.RainIntensity, 0.0f, 1.0f) : 0.0f;
+            wind = std::isfinite(state.WindBaseSpeed) ? std::max(0.0f, state.WindBaseSpeed) : 0.0f;
+        }
+        const IRainShelterSource& source = m_Shelter ? *m_Shelter : m_OpenSky;
+        const float shelter = source.QueryShelter01(listener);
+        const double coverage = std::isfinite(shelter) ? std::clamp(shelter, 0.0f, 1.0f) : 0.0f;
+        const double rainDb = EvaluateAcousticCurveDb(settings.RainNoiseFloorCurve, rain) - coverage * settings.RainShelteredReductionDb;
+        const double windDb = EvaluateAcousticCurveDb(settings.WindNoiseFloorCurve, wind);
+
+        // 大きい方の電力をくくり出し、大きな dB 値でも指数のオーバーフローを防ぐ。
+        const double louder = std::max(rainDb, windDb);
+        const double quieter = std::min(rainDb, windDb);
+        const double sumDb = louder + 10.0 * std::log10(1.0 + std::pow(10.0, (quieter - louder) / 10.0));
+        return static_cast<float>(std::clamp(sumDb, static_cast<double>(kAcousticSilenceDb), kMaxFloat));
+    }
+
+    void StaticGeometryAcousticContributor::SetSources(const AcousticSources& sources)
+    {
+        m_SceneQuery = sources.SceneQuery;
+        m_Surfaces = sources.Surfaces;
+        m_Terrain = sources.Terrain;
+    }
+
+    void StaticGeometryAcousticContributor::Contribute(const AcousticContributionContext& context,
+        AcousticContribution& outContribution) const
+    {
+        outContribution = {};
+        if (!m_SceneQuery || context.DistanceM <= 1.0e-4f)
+        {
+            return;
+        }
+        PhysicsQueryDesc ray;
+        ray.Kind = EPhysicsQueryKind::RaycastAll;
+        ray.Ray = Math::Ray(context.Query.Source, context.Direction);
+        ray.MaxDistance = context.DistanceM;
+        ray.Filter = context.Query.Filter;
+        ray.Filter.TriggerPolicy = EPhysicsQueryTriggerPolicy::Exclude;
+        ray.MaxHits = 4;
+        if (m_SceneQuery->ExecuteQuery(ray, m_Hits) != EPhysicsSceneQueryResult::Success)
+        {
+            return;
+        }
+
+        // 通常は最大 4 件。隣接交換で距離順にし、同距離の順序と配列の領域を保つ。
+        for (size_t i = 1; i < m_Hits.size(); ++i)
+        {
+            for (size_t j = i; j > 0 && m_Hits[j].Distance < m_Hits[j - 1].Distance; --j)
+            {
+                std::swap(m_Hits[j], m_Hits[j - 1]);
+            }
+        }
+        double loss = 0.0;
+        const size_t count = std::min<size_t>(ray.MaxHits, m_Hits.size());
+        for (size_t i = 0; i < count; ++i)
+        {
+            const auto& hit = m_Hits[i];
+            Rendering::Terrain::GroundSample ground;
+            if (m_Terrain && m_Terrain->SampleGround(hit.Point.x, hit.Point.z, ground) && ground.bValid &&
+                std::abs(ground.Height - hit.Point.y) <= 0.05f)
+            {
+                continue;
+            }
+            float wallLoss = context.Settings.WallClassFallbackLossDb;
+            if (m_Surfaces)
+            {
+                const auto id = m_Surfaces->ResolveFallback(hit.Surface,
+                    [](const SurfaceDesc& desc) { return desc.Audio.TransmissionLossDb > 0.0f; });
+                const float surfaceLoss = m_Surfaces->GetDesc(id).Audio.TransmissionLossDb;
+                if (surfaceLoss > 0.0f)
+                {
+                    wallLoss = surfaceLoss;
+                }
+            }
+            loss += wallLoss;
+            outContribution.bBlocksLineOfSight = true;
+        }
+        SetOcclusionLoss(outContribution, loss, context.Settings);
+    }
+
+    void VegetationAcousticContributor::Contribute(const AcousticContributionContext& context,
+        AcousticContribution& outContribution) const
+    {
+        outContribution = {};
+        const auto* field = m_Vegetation ? m_Vegetation->GetGrassField() : nullptr;
+        if (!field || context.Settings.VegetationAbsorptionDbPerMeter <= 0.0f)
+        {
+            return;
+        }
+        const int count = PathSampleCount(context.Query);
+        const double segment = static_cast<double>(context.DistanceM) / count;
+        double loss = 0.0;
+        for (int i = 0; i < count; ++i)
+        {
+            const auto point = PathMidpoint(context.Query, i, count);
+            const auto sample = field->Sample(point.x, point.z);
+            if (!sample.bValid || sample.Density <= 0.0f)
+            {
+                continue;
+            }
+            const float top = field->QueryTopHeight(point.x, point.z);
+            if (top - sample.HeightMeters <= point.y && point.y < top)
+            {
+                loss += sample.Density * segment * context.Settings.VegetationAbsorptionDbPerMeter;
+            }
+        }
+        SetOcclusionLoss(outContribution, loss, context.Settings);
+    }
+
+    void TerrainAcousticContributor::Contribute(const AcousticContributionContext& context,
+        AcousticContribution& outContribution) const
+    {
+        outContribution = {};
+        if (!m_Terrain)
+        {
+            return;
+        }
+        const int count = PathSampleCount(context.Query);
+        double maxDepth = 0.0;
+        for (int i = 0; i < count; ++i)
+        {
+            const auto point = PathMidpoint(context.Query, i, count);
+            Rendering::Terrain::GroundSample sample;
+            if (m_Terrain->SampleGround(point.x, point.z, sample) && sample.bValid)
+            {
+                maxDepth = std::max(maxDepth, static_cast<double>(sample.Height) - point.y);
+            }
+        }
+        const auto& settings = context.Settings;
+        if (maxDepth > settings.TerrainMinDepthM)
+        {
+            SetOcclusionLoss(outContribution, std::min(static_cast<double>(settings.TerrainMaxLossDb),
+                settings.TerrainBaseLossDb + maxDepth * settings.TerrainLossPerMeterDb), settings);
+            outContribution.bBlocksLineOfSight = true;
+        }
+    }
+
+    void RainMaskingAcousticContributor::Contribute(const AcousticContributionContext& context,
+        AcousticContribution& outContribution) const
+    {
+        outContribution = {};
+        if (!m_Model)
+        {
+            return;
+        }
+        outContribution.NoiseFloorDb = m_Model->EvaluateHighFrequencyNoiseFloorDb(context.Query.Listener, context.Settings);
+        const double received = static_cast<double>(context.Query.SourceLevelDb) + context.Class.HighFrequencyLevelOffsetDb
+            + context.Partial.GainDb - context.Partial.HighFrequencyLossDb;
+        const double loss = std::max(0.0, outContribution.NoiseFloorDb - received) * context.Settings.MaskingCoefficient;
+        outContribution.HighFrequencyLossDb = static_cast<float>(std::min(loss, kMaxFloat));
+    }
+
     AcousticTransmissionEvaluator::AcousticTransmissionEvaluator()
         : m_Settings(AcousticSettings::MakeDefault()), m_OwnerThreadId(Thread::Thread::GetCurrentThreadId())
     {
+        BindContributor(m_StaticGeometry, kAcousticStaticGeometryOrder);
+        BindContributor(m_Vegetation, kAcousticVegetationOrder);
+        BindContributor(m_Terrain, kAcousticTerrainOrder);
+        BindContributor(m_RainMasking, kAcousticMaskingOrder);
     }
 
     AcousticTransmissionEvaluator::~AcousticTransmissionEvaluator() = default;
+
+    void AcousticTransmissionEvaluator::SetSources(const AcousticSources& sources)
+    {
+        if (!IsOwnerThread())
+        {
+            return;
+        }
+        m_StaticGeometry.SetSources(sources);
+        m_Vegetation.SetVegetation(sources.Vegetation);
+        m_Terrain.SetTerrain(sources.Terrain);
+        m_NoiseFloor.SetEnvironment(sources.Environment);
+        m_RainMasking.SetNoiseFloorModel(sources.Environment ? &m_NoiseFloor : nullptr);
+    }
 
     bool AcousticTransmissionEvaluator::IsOwnerThread() const
     {

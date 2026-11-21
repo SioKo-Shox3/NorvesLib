@@ -9,8 +9,26 @@
 #include "Thread/Thread.h"
 #include <cstdint>
 
+namespace NorvesLib::Core::Environment
+{
+    class EnvironmentSystem;
+}
+
+namespace NorvesLib::Core::Rendering::Terrain
+{
+    class TerrainSystem;
+}
+
+namespace NorvesLib::Core::Vegetation
+{
+    class Vegetation;
+}
+
 namespace NorvesLib::Core::Scene
 {
+    class SceneQuery;
+    class SurfaceRegistry;
+
     /// 利得の下限と、環境騒音がないときの騒音床（dB）。
     inline constexpr float kAcousticSilenceDb = -120.0f;
     /// 距離減衰を打ち切る距離（m）。通常の距離では逆二乗の減衰を保つ。
@@ -144,10 +162,110 @@ namespace NorvesLib::Core::Scene
     /// X が狭義昇順の曲線を線形補間する。範囲外は端の値、NaN は先頭、空なら無音を返す。
     float EvaluateAcousticCurveDb(Container::Span<const AcousticCurvePoint> curve, float x) noexcept;
 
+    /// GameThread で聞き手の位置の雨の遮蔽率を返す。寿命は登録側が持つ。
+    class IRainShelterSource
+    {
+    public:
+        virtual ~IRainShelterSource() = default;
+        /// 開けた空は 0、完全に覆われた場所は 1 を返す。
+        virtual float QueryShelter01(const Math::Vector3& position) const = 0;
+    };
+
+    /// G11 の雨の遮蔽は GPU の深度マップで、CPU から屋根の下かを引く口が今は無い。既定は開けた空（0）。
+    class OpenSkyRainShelterSource final : public IRainShelterSource
+    {
+    public:
+        float QueryShelter01(const Math::Vector3&) const override { return 0.0f; }
+    };
+
+    /// 雨量・風速と雨の遮蔽率から、聞き手の高域の騒音床を求める。
+    class AcousticNoiseFloorModel
+    {
+    public:
+        /// 気象を借用する。未接続または無効な気象は雨量・風速ともに 0 とする。
+        void SetEnvironment(const Environment::EnvironmentSystem* environment) { m_Environment = environment; }
+        /// 雨の遮蔽率の供給元を借用する。nullptr で開けた空に戻す。
+        void SetShelterSource(const IRainShelterSource* source) { m_Shelter = source; }
+        float EvaluateHighFrequencyNoiseFloorDb(const Math::Vector3& listener, const AcousticSettings& settings) const;
+
+    private:
+        const Environment::EnvironmentSystem* m_Environment = nullptr;
+        const IRainShelterSource* m_Shelter = nullptr;
+        OpenSkyRainShelterSource m_OpenSky;
+    };
+
+    /// 評価器が借用する供給元。各欄は nullptr で解除でき、接続中の寿命は呼び出し側が持つ。
+    struct AcousticSources
+    {
+        const Scene::SceneQuery* SceneQuery = nullptr;
+        const SurfaceRegistry* Surfaces = nullptr;
+        const Vegetation::Vegetation* Vegetation = nullptr;
+        const Rendering::Terrain::TerrainSystem* Terrain = nullptr;
+        const Environment::EnvironmentSystem* Environment = nullptr;
+    };
+
+    inline constexpr int32_t kAcousticStaticGeometryOrder = 100;
+    inline constexpr int32_t kAcousticVegetationOrder = 200;
+    inline constexpr int32_t kAcousticTerrainOrder = 300;
+    inline constexpr int32_t kAcousticMaskingOrder = 1000;
+
+    /// 経路上の地形を除く物理の当たりから、表面ごとの透過損失を求める。
+    class StaticGeometryAcousticContributor final : public IAcousticMediumContributor
+    {
+    public:
+        void SetSources(const AcousticSources& sources);
+        EAcousticMediumKind GetKind() const override { return EAcousticMediumKind::StaticGeometry; }
+        void Contribute(const AcousticContributionContext& context, AcousticContribution& outContribution) const override;
+
+    private:
+        const SceneQuery* m_SceneQuery = nullptr;
+        const SurfaceRegistry* m_Surfaces = nullptr;
+        const Rendering::Terrain::TerrainSystem* m_Terrain = nullptr;
+        mutable Container::VariableArray<PhysicsQueryHit> m_Hits;
+    };
+
+    /// 草丈の範囲内を通る経路で、草の密度に応じた透過損失を積算する。
+    class VegetationAcousticContributor final : public IAcousticMediumContributor
+    {
+    public:
+        void SetVegetation(const Vegetation::Vegetation* vegetation) { m_Vegetation = vegetation; }
+        EAcousticMediumKind GetKind() const override { return EAcousticMediumKind::Vegetation; }
+        void Contribute(const AcousticContributionContext& context, AcousticContribution& outContribution) const override;
+
+    private:
+        const Vegetation::Vegetation* m_Vegetation = nullptr;
+    };
+
+    /// 経路が地表より下を通る最大深さから丘の遮蔽を求める。
+    class TerrainAcousticContributor final : public IAcousticMediumContributor
+    {
+    public:
+        void SetTerrain(const Rendering::Terrain::TerrainSystem* terrain) { m_Terrain = terrain; }
+        EAcousticMediumKind GetKind() const override { return EAcousticMediumKind::Terrain; }
+        void Contribute(const AcousticContributionContext& context, AcousticContribution& outContribution) const override;
+
+    private:
+        const Rendering::Terrain::TerrainSystem* m_Terrain = nullptr;
+    };
+
+    /// 遮蔽後の受音レベルと気象による騒音床の差から、高域のマスキングを求める。
+    class RainMaskingAcousticContributor final : public IAcousticMediumContributor
+    {
+    public:
+        void SetNoiseFloorModel(const AcousticNoiseFloorModel* model) { m_Model = model; }
+        EAcousticMediumKind GetKind() const override { return EAcousticMediumKind::Masking; }
+        void Contribute(const AcousticContributionContext& context, AcousticContribution& outContribution) const override;
+
+    private:
+        const AcousticNoiseFloorModel* m_Model = nullptr;
+    };
+
     /**
      * GameThread 専用。シングルトンにせず Engine::Engine のメンバとして持つ。
      * 寄与源は借用で、登録した側が外すまで破棄しない（SceneQuery::BindPhysicsProvider と同じ寿命の規則）。
      * Contribute の中から登録を変えない。
+     * 構築時に既定の 4 つの寄与源を登録する。個別に外すには対応する GetDefault…Contributor() の参照を
+     * UnbindContributor に渡す。SetSources で供給元を変えても登録順や解除状態は保たれる。
      */
     class AcousticTransmissionEvaluator
     {
@@ -167,6 +285,15 @@ namespace NorvesLib::Core::Scene
         EPhysicsSceneQueryResult BindContributor(IAcousticMediumContributor& contributor, int32_t order);
         /// 所有スレッドで登録を外す。空なら Unavailable、別の寄与源なら ProviderMismatch。
         EPhysicsSceneQueryResult UnbindContributor(IAcousticMediumContributor& contributor);
+
+        /// 所有スレッドで既定の寄与源の供給元を差し替える。気象が未接続なら雨のマスキングは寄与しない。
+        void SetSources(const AcousticSources& sources);
+        AcousticNoiseFloorModel& GetNoiseFloorModel() { return m_NoiseFloor; }
+        const AcousticNoiseFloorModel& GetNoiseFloorModel() const { return m_NoiseFloor; }
+        StaticGeometryAcousticContributor& GetDefaultStaticGeometryContributor() { return m_StaticGeometry; }
+        VegetationAcousticContributor& GetDefaultVegetationContributor() { return m_Vegetation; }
+        TerrainAcousticContributor& GetDefaultTerrainContributor() { return m_Terrain; }
+        RainMaskingAcousticContributor& GetDefaultRainMaskingContributor() { return m_RainMasking; }
 
         /// 所有スレッドで現在の設定を借用する。
         const AcousticSettings& GetSettings() const;
@@ -191,6 +318,11 @@ namespace NorvesLib::Core::Scene
             IAcousticMediumContributor* Contributor;
             int32_t Order;
         };
+        AcousticNoiseFloorModel m_NoiseFloor;
+        StaticGeometryAcousticContributor m_StaticGeometry;
+        VegetationAcousticContributor m_Vegetation;
+        TerrainAcousticContributor m_Terrain;
+        RainMaskingAcousticContributor m_RainMasking;
         Container::VariableArray<ContributorEntry> m_Contributors;
         AcousticSettings m_Settings;
         Thread::Thread::ThreadId m_OwnerThreadId;

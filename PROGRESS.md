@@ -12816,3 +12816,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 3): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-iter3-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK`・C1060 は 0 件)。
 - Next(反復 3): ランナーの評価者の反証。聴感の確かめは G16-GR73-SPATIAL-CHECK。
 - U1 評価器の骨組み(公開型・設定の読み込み・距離の dB・寄与源の登録と合成)と Acoustics.json: 着地(直し 0 回)
+- U2 既定の 4 つの寄与源(静的幾何・草・地形・雨の騒音床)と供給元の差し込み: 着地(直し 0 回)
