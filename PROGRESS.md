@@ -13150,3 +13150,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U12 Alert への反応の遅れを Alert の閾値を超えた時点から数える: 着地(直し 0 回)
 - U13 音響評価器でマスキング免除の音クラスは聴覚の量をマスキングで下げない: 着地(直し 0 回)
 - U14 設計文書を直しに合わせ、全体のビルドを通す: 着地(直し 0 回)
+## G13-GR24-SENSE-MODELS 差し戻しの直しの仕上げ（2026-11-22、run 20261122-050549・反復 3）
+- Done: 評価者の 6 件の指摘を直した。(1) 嗅覚は風下（`a >= 0`）が煙 `S·exp(−a/L_down)·exp(−c²/(2σ²))` だけ、風上（`a < 0`）が `S·UpwindFactor·exp(−d/L_up)` だけになり、`UpwindAxisRatio` と `max(煙, B)` を消した。(2) 気づきの昇格の保留を Suspicious と Alert で別々に持ち、反応の遅れを各段階の閾値を超えた時点から数える（Unaware から一気に上がっても遅れは 2 回入らない）。(3) 草のポートを `QueryGrassPath`（光学的厚さと積分点の草の先端の最大）にし、目の高さが枯れ度を反映した草の先端の最大以上なら草の透過率を 1 にした（`GrassField::QueryOpticalDepth` を足し、`QueryOcclusion` はその `exp(−τ)`）。(4) `grass.opacityScale` を光学的厚さに掛けてから指数を 1 回だけ取るので、濃い草でも倍率が効く。(5) 音響評価器でマスキング免除（`bExemptFromMasking`）の音クラスは `MaskingFactor = 1`（騒音床は結果に入れる）。(6) `vision.fieldOfViewEdgeDegrees` は正の値だけを受け付け、縁の幅 ≤ 0 か FadeStart ≥ MaxDistance の調整値では可視度 0。設計文書 `Docs/Architecture/AIModule.md` の「知覚のモデル」を合わせた。
+- 証拠: `.harness/runs/20261122-050549/verify-G13-GR24-SENSE-MODELS-U14.txt`（直しを全部入れた先頭で、試験を外した全体の `cmake --build build --config Debug -- -m:1` が終了コード 0・エラー 0 で `Game.vcxproj -> ...Game.exe` まで生成。警告は libwebsockets の MSB8065 だけ）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は各単位で一致。
+- 試験: 試験は作らず回していない（人の決まり）。done-when (3) の Perception*Test は作っていない。
+- 人が見るときの見どころ: まだ知覚の処理へ配線していない（G13-GR24-PERCEPTION-SERVICE の受け持ち）ので、ゲームの見た目と動きは変わらない。
+- Next: ランナーの評価者の反証（`GrassField` は Public API）。配線・`PerceptionTuning` の読み込み・固体の遮蔽は G13-GR24-PERCEPTION-SERVICE。
+- Notes: 既知の限界: 嗅覚を要件の式どおりにしたので、仮の調整値では真横（90 度）の点が同じ距離の風上より薄くなる（d = 10 m で横風 約 3.7e-6·S、風上 約 3.6e-3·S）。done-when (3) の「風下 > 横風 > 風上」は軸に近い横風か、`crossSigmaBaseMeters`・`upwindFactor` の調整で満たす。前の仕上げの Notes にある「風上の軸の比・`max(煙, B)`・遅れが 2 回入る」はこの直しで無くなった。
