@@ -13137,3 +13137,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U5 視覚の純関数 VisionModel を足す: 着地(直し 0 回)
 - U4 ポートの Engine 実装（草 = GrassField＋DrynessMap、風 = EnvironmentSystem の WindParameters）を足す: 着地(直し 0 回)
 - U3 調整値の束 PerceptionTuning と JSON の読み込み、Assets/AI/PerceptionTuning.json を足す: 着地(直し 0 回)
+- U9 AIModule の設計文書に知覚のモデルを書き、全体のビルドを通す: 着地(直し 0 回)
