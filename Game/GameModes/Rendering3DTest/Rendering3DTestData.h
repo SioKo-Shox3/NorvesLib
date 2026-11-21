@@ -280,6 +280,8 @@ namespace Game::GameModes
         // --orbit-degrees-per-second で指定したカメラの周回の速さ（度/秒、0で止まったまま）。撮影で
         // 動くカメラの TAA の残像を確かめるのに使う。
         float m_OrbitDegreesPerSecond = 0.0f;
+        // --camera-shutter-angle で指定したカメラのシャッター角（度）。0 なら動きぼけなし。
+        float m_StartupCameraShutterAngleDegrees = 0.0f;
         // 決定的な撮影の旋回は、最初に回した時点のヨー（度）に、エポックからの時間に比例した角度を足して決める。
         float m_OrbitBaseYaw = 0.0f;
         bool m_bOrbitBaseYawLatched = false;
