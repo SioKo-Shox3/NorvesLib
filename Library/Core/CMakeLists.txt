@@ -252,6 +252,7 @@ set(PRIVATE_SOURCES
     Private/Component/ScriptComponent.cpp
     Private/Engine/ApplicationProcessor.cpp
     # Scene
+    Private/Scene/AcousticDistance.cpp
     Private/Scene/SceneQuery.cpp
     Private/Scene/LevelSnap.cpp
     Private/Scene/PhysicsLayerTable.cpp
@@ -750,6 +751,7 @@ set(PUBLIC_HEADERS
     Public/Component/HoldSlotComponent.h
     Public/Component/AnimatorComponent.h
     # Scene
+    Public/Scene/AcousticDistance.h
     Public/Scene/SceneQuery.h
     Public/Scene/LevelSnap.h
     Public/Scene/RenderTransformHistory.h

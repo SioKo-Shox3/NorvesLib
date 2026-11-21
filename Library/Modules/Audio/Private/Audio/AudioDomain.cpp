@@ -14,7 +14,7 @@ namespace NorvesLib::Modules::Audio::Private
     namespace
     {
         constexpr float kDefaultMaxFrequencyRatio = 2.0f;
-        constexpr float kMinFrequencyRatio = 1.0f / 1024.0f;
+        constexpr float kMinFrequencyRatio = kAudioMinVoiceFrequencyRatio;
 
         [[nodiscard]] constexpr bool CanSetVoiceParameters(AudioVoiceState state) noexcept
         {
@@ -104,7 +104,7 @@ namespace NorvesLib::Modules::Audio::Private
 
                 const uint64_t frameCount = clip->GetFrameCount();
                 if (!std::isfinite(desc.MaxPitchSemitones) || desc.MaxPitchSemitones < 0.0f ||
-                    desc.MaxPitchSemitones > 120.0f || desc.StartFrame >= frameCount)
+                    desc.MaxPitchSemitones > kAudioMaxVoicePitchSemitones || desc.StartFrame >= frameCount)
                 {
                     return AudioResult::InvalidState;
                 }
@@ -210,6 +210,40 @@ namespace NorvesLib::Modules::Audio::Private
                 const float boundedPan = std::clamp(pan, -1.0f, 1.0f);
                 const float angle = (boundedPan + 1.0f) * Math::Constants::PI / 4.0f;
                 return m_Backend->SetVoiceOutputGains(handle, std::cos(angle), std::sin(angle)) == AudioResult::Success
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult SetVoiceOutputGains(VoiceHandle handle, float leftGain, float rightGain) override
+            {
+                const ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (!std::isfinite(leftGain) || leftGain < 0.0f || !std::isfinite(rightGain) || rightGain < 0.0f ||
+                    !CanSetVoiceParameters(record->State))
+                {
+                    return AudioResult::InvalidState;
+                }
+                return m_Backend->SetVoiceOutputGains(handle, leftGain, rightGain) == AudioResult::Success
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult SetVoiceFrequencyRatio(VoiceHandle handle, float ratio) override
+            {
+                const ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (!std::isfinite(ratio) || ratio <= 0.0f || !CanSetVoiceParameters(record->State))
+                {
+                    return AudioResult::InvalidState;
+                }
+                const float boundedRatio = std::clamp(ratio, kMinFrequencyRatio, record->MaxFrequencyRatio);
+                return m_Backend->SetVoiceFrequencyRatio(handle, boundedRatio) == AudioResult::Success
                     ? AudioResult::Success
                     : AudioResult::BackendFailure;
             }
