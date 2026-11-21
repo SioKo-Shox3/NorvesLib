@@ -143,7 +143,11 @@ step  = base + (base * extra) / 128
 | `MotorProfilePath` | `AI/Locomotion/Wolf.json` | 四足運動の論理資産パス |
 | `WanderSeed` | 1 | 徘徊要求の開始時に使う種 |
 
-`Initialize` は登録済みの `AIModule` に個体を登録し、運動プロファイルを取得して同じ Entity の CharacterBody に接続を試みる。操舵系の登録情報には Component のポインタを保持せず、ComponentId と所有 Entity の ObjectId・EntityHandle を記録する。固定歩ごとに Engine の World でハンドルを解決し、所有 Entity の ObjectId と ComponentId を照合する。ハンドルが未取得、解決不能、または ObjectId が一致しない場合は、ObjectId で所有 Entity を引き直す。Engine の World にいない個体は操舵しない。`EndPlay`・`Finalize` では接続を外して登録を解除し、操舵系が保持した経路枠を返す。初期要求は `Idle`。GameThread から要求を一つ渡すと、受理時に要求を置き換えて非ゼロの `Revision` を更新する。不正な位置・距離・無効なハンドルを渡した場合は `false` を返し、前の要求を保つ。[SteeringAgentComponent.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringAgentComponent.cpp)
+操舵系は `PhysicsModule::RegisterCharacter` と同じ形で、`SteeringAgentComponent` の非所有参照と `ComponentId` を登録簿に持つ。`Initialize` は個体を `AIModule` に登録し、運動プロファイルを取得して同じ Entity の CharacterBody への接続を試みる。`EndPlay`・`Finalize`・デストラクタはいずれもモーターの接続を外し、登録が残っていれば解除して経路枠を返す。[SteeringAgentComponent.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringAgentComponent.cpp)
+
+各固定歩の開始時に、各 Component の所有 Entity を調べ、Engine の World に属する個体だけを操舵する。World に入る前に `AddComponent` した個体も、入った後の最初の固定歩から操舵の対象になる。所有 Entity の `ObjectId` と `EntityHandle` は固定歩ごとの近傍収集で所有者から読む。[SteeringSystem.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringSystem.cpp)
+
+初期要求は `Idle`。GameThread から要求を一つ渡すと、受理時に要求を置き換えて非ゼロの `Revision` を更新する。不正な位置・距離・無効なハンドルを渡した場合は `false` を返し、前の要求を保つ。
 
 | 要求 API | 引数と動作 |
 |---|---|
@@ -159,13 +163,15 @@ step  = base + (base * extra) / 128
 
 `SteeringSystem::Compute` は正の有限な固定刻みごとに、`SteeringSystem::CanSteer` を満たす個体の位置と前回の操舵速度を登録順に集める。所有 Entity は階層内で有効かつ Tick が有効で、操舵 Component は有効かつ Tick が有効で破棄予定でないことが条件となる。解決した個体がこの条件を外れたら、近傍の格子から除き、操舵速度を零に戻す。位置・速度は X、Y、Z ごとの配列（SoA）に保持し、位置の X、Z から `Spatial::UniformGridHash` を作り直す。セル幅の既定は 8 m。全個体を同じ入力から解き終えてから各 Component に結果を書き戻すため、先に解いた個体の新しい速度が後の個体に混ざらない。
 
-`QueryRadius(x, z, radius, out, excludeIndex)` は高さを無視し、倍精度で `dx² + dz² <= radius²` を満たす点の元の配列添字を昇順で返す。円周上の点も入り、自分の添字は指定して除ける。非有限の中心・半径や負の半径では結果は空。物理の AABB の木が衝突形状を扱うのに対し、この格子はエージェントだけを扱う。GR24 は `AIModule::GetNeighborHash()` で近傍を照会し、`AIModule::GetNeighborEntities()` の同じ添字から所有 Entity のハンドルを得る。添字の対応は直近の固定歩の収集に限られ、ハンドルが未取得の個体には無効なハンドルが入る。[UniformGridHash.h](../../Library/Modules/AI/Private/AI/Spatial/UniformGridHash.h)・[UniformGridHash.cpp](../../Library/Modules/AI/Private/AI/Spatial/UniformGridHash.cpp)
+`QueryRadius(x, z, radius, out, excludeIndex)` は高さを無視し、倍精度で `dx² + dz² <= radius²` を満たす点の元の配列添字を昇順で返す。円周上の点も入り、自分の添字は指定して除ける。非有限の中心・半径や負の半径では結果は空。物理の AABB の木が衝突形状を扱うのに対し、この格子はエージェントだけを扱う。GR24 は `AIModule::GetNeighborHash()` で近傍を照会し、`AIModule::GetNeighborEntities()` の同じ添字から所有 Entity のハンドルを得る。`SteeringSystem` では、近傍の添字 `i` に対応する `GetNeighborEntities()[i]` と `GetNeighborObjectIds()[i]` は、その固定歩に所有 Entity から読んだ `EntityHandle` と `ObjectId` である。ECS の行がまだ無い個体も位置は格子に入り、ハンドルは無効になる。[UniformGridHash.h](../../Library/Modules/AI/Private/AI/Spatial/UniformGridHash.h)・[UniformGridHash.cpp](../../Library/Modules/AI/Private/AI/Spatial/UniformGridHash.cpp)
+
+`Gather` は `Pursue`・`KeepDistance`・`Flee`・`FollowTrail` の相手をハンドルで解決し、位置と速度を読む。相手に `SteeringAgentComponent` があれば、`CanSteer` を満たすときは前回の操舵速度、満たさないときは零を読む。この判定で、相手を収集する順番にかかわらず同じ速度が得られる。相手に操舵 Component が無ければ、破棄予定でない `CharacterBodyComponent` の速度を使う。`Flee` と `FollowTrail` の計算が使うのは相手の位置だけである。[SteeringSystem.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringSystem.cpp)
 
 操舵系は要求の希望速度と半径 `max(1 m, 2 * profile.Radius)` の分離速度を等しい重みで足す。地上ではさらに 16 方向のナビ照会（先読み 2～6 m）と半径 1.5 m の近傍で危険を評価し、最後に速度・旋回の上限を適用する。足元が未読み込みまたは通行不能ならナビ由来の危険は加えず、近傍の危険だけを使う。行動の選択は現在の要求の種類で決まり、行動木などの上位の決定は GR24 の範囲である。`Flight` は操舵の次元を切り替えるが、飛行する動物の運動と群れの制御は G13-GR22-FLIGHT-FLOCK の範囲である。
 
 ## 四足動物の運動と Animator への公開
 
-`AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` を購読する。操舵系は各歩の開始時にも接続を確認する。コールバックは Entity を World から引き直し、個体と Body の ID、Entity と Body の破棄状態、接続の世代を照合し、操舵系と同じ `SteeringSystem::CanSteer` を満たす個体だけを更新する。切断時に世代を進めるため、古い購読から新しい Body へ入力が届くことはない。[AnimalMotor.cpp](../../Library/Modules/AI/Private/AI/Motor/AnimalMotor.cpp)
+`AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` を購読する。プレハブやシーンの読み込みでは `Initialize` が所有 Entity の `ObjectId` の採番に先行するため、ID が 0 の間は接続を保留する。操舵系は各固定歩の開始時に `CanSteer` を満たす個体で接続を確認し、採番後の最初の歩で Body に接続する。所有者の `ObjectId` か Body が変わったときは、接続の世代を進め、現在の Body の `ComponentId` が以前の接続先と一致すれば古い購読を外してから、新しい接続を結ぶ。コールバックは購読時の `ObjectId` で World から所有 Entity を引き、個体と Body の `ComponentId`、接続の世代、破棄状態、`CanSteer` を照合してからモーターを進める。[AnimalMotor.cpp](../../Library/Modules/AI/Private/AI/Motor/AnimalMotor.cpp)
 
 1. `MakeIntent` は操舵の水平速が 0.001 m/s 未満なら移動入力を零にする。それ以上では速歩の上限（`Gaits[1].SpeedMax`）を超えたときだけ `bSprint` を立てる。操舵の単位方向に `min(speed / speedMax, 1)` を掛けて `LocomotionIntent::Move` に渡す。分母は通常なら速歩、スプリントなら襲歩（`Gaits[3].SpeedMax`）の上限。モデルは同じ上限を入力強度に掛けるので、平地でその場旋回をしていなければ、平滑化前の目標速は襲歩の上限まで操舵の水平速に一致する。
 2. `QuadrupedLocomotionModel::Step` に Body の接地・地面法線・速度・足場速度・重力と、持ち主の向きを渡す。モデルが足場に対する観測速度、上下のしきい値、最短滞在時間から歩様を選ぶ。斜面、旋回、加減速、衝突の結果により実際の速さは目標と異なり得る。[QuadrupedLocomotionModel.cpp](../../Library/Core/Private/Locomotion/QuadrupedLocomotionModel.cpp)
