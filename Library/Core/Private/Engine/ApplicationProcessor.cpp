@@ -1732,7 +1732,7 @@ namespace NorvesLib::Core::Engine
         {
             if (bCaptureUi)
             {
-                LOG_WARNING("ApplicationProcessor runtime option --capture-ui は --capture-png が無いので無視する");
+                LOG_WARNING("ApplicationProcessor runtime option --capture-ui は --capture-png が無いので撮影には効かない（Canvas の有無は起動設定に従う）");
             }
             if (m_bCaptureHdr)
             {
@@ -2850,6 +2850,16 @@ namespace NorvesLib::Core::Engine
         if(platformApp)
         {
             platformApp->PumpMessages();
+            // WM_SIZE・WM_DPICHANGED で変わったクライアント領域の物理 px を描画へ渡す。同じ寸法なら RenderWorld::Resize は何もしない。
+            if (auto* mainWindow = sourceEngine->GetMainWindow())
+            {
+                int clientWidth = 0;
+                int clientHeight = 0;
+                if (mainWindow->GetClientSize(clientWidth, clientHeight))
+                {
+                    sourceEngine->GetRenderWorld().Resize(static_cast<uint32_t>(clientWidth), static_cast<uint32_t>(clientHeight));
+                }
+            }
             exitRequested=platformApp->IsExitRequested();
             if(exitRequested) exitCode=platformApp->GetExitCode();
         }

@@ -151,7 +151,7 @@ RenderGraph 対応済み view では pass chain を登録して graph 経路を�
 - **合成と表示**　Canvas があるとき、`CompositePass` は `Composite.Color` を Canvas の寸法で作り、寸法の異なるシーンと Canvas のテクスチャを同じ UV で読んで重ねる。Canvas がなければシーンをそのまま通す。表示時は、その出力を UV で読み、出力先のビューポート全体に描く。
 - **撮影**　`--capture-png` は Canvas を無効にして最終出力を写す。`--capture-ui` を併用すると Canvas を残し、製品の UI も写す。ImGui のオーバーレイは撮影時には既定で描かず、ランチャーなどが明示的に撮影を有効にした場合だけ描く。
 - **入力**　製品の UI の標準順位は `InputRouter::PriorityUI`（500）。ゲーム入力（0）より先に受け取り、オーバーレイ（1000）とデバッグオーバーレイによる入力の遮断（999）がそれに優先する。
-- **DPI**　`WinMain` の冒頭でプロセスを Per-Monitor V2 に設定する。`BootConfig::WindowWidth` と `WindowHeight` は起動時のクライアント領域の物理 px 数で、`AdjustWindowRectExForDpi` がその寸法に必要な外枠を求める。`WM_DPICHANGED` を受けると OS が提案した矩形にウィンドウを移し、変化したクライアント領域の寸法はスワップチェーンの再作成（`OutOfDate`）を通じて描画に反映される。
+- **DPI**　`WinMain` の冒頭でプロセスを Per-Monitor V2 に設定する。`BootConfig::WindowWidth` と `WindowHeight` は起動時のクライアント領域の物理 px 数で、`AdjustWindowRectExForDpi` がその寸法に必要な外枠を求める。`WM_DPICHANGED` を受けると OS が提案した矩形にウィンドウを移す。`WM_SIZE` がクライアント領域の幅と高さを物理 px で保持し、`ApplicationProcessor::ProcessPlatformMessages` がメッセージ処理の直後にメインウィンドウの `IWindow::GetClientSize` でその寸法を読み、`RenderWorld::Resize` へ渡す。`RenderWorld` は寸法が変わったときだけ変更を保留し、次の `BeginFrame` で描画の完了を待つ。その後、`RenderingCoordinator::Resize` がスワップチェーンを再作成し、RenderScale の寸法を更新して Canvas とキャンバスのカメラ、各 View を新しい寸法に合わせて作り直す。スワップチェーンの `OutOfDate` による再作成経路も残る。
 
 ## 描画の拡張の段（GR25）
 

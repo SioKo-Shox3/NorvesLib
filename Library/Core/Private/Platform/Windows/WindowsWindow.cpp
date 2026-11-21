@@ -675,6 +675,17 @@ namespace NorvesLib
                 return handle;
             }
 
+            bool WindowsWindow::GetClientSize(int &width, int &height) const
+            {
+                if (!m_hWnd || m_width <= 0 || m_height <= 0)
+                {
+                    return false;
+                }
+                width = m_width;
+                height = m_height;
+                return true;
+            }
+
             HWND WindowsWindow::GetHWND() const
             {
                 return m_hWnd;

@@ -56,6 +56,7 @@ namespace NorvesLib
                 ECursorMode GetRequestedCursorMode() const noexcept override { return m_RequestedCursorMode; }
                 ECursorMode GetCursorMode() const noexcept override { return m_EffectiveCursorMode; }
                 virtual NativeWindowHandle GetNativeHandle() const override;
+                virtual bool GetClientSize(int &width, int &height) const override;
 
                 /**
                  * @brief HWNDを取得
