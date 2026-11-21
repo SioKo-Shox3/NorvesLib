@@ -12763,3 +12763,13 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 操舵の系（PreFixedTick で SoA を集め、ハッシュを作り直し、操舵を解いて書き戻す）: 着地(直し 0 回)
 - U8 LateTick の Animator への公開と操舵のデバッグ描画: 着地(直し 0 回)
 - U9 設計文書と更新段階の割当表（最後。タスクの verify）: 着地(直し 0 回)
+
+## G13-GR22-STEERING-MOTOR（2026-11-21）
+- Done: 操舵の純関数（`Private/AI/Steering/SteeringBehaviors.*`: Seek・Flee・Arrive・Pursue・KeepDistance・Wander（固定シード）・PathFollow（`Math::PolylinePath`）・RecordTrail / FollowTrail（64 点・0.25 s のリング）・Separation・Alignment・Cohesion・CombineWeighted・`ApplySteeringLimits`（加速度と速度に依る旋回率の上限）と、地上の 16 方向のコンテキスト操舵）。近傍の XZ の一様格子 `Spatial::UniformGridHash`（既定 8 m。PreFixedTick ごとに SoA から作り直し、`AIModule::GetNeighborHash()` で GR24 と共用する）。
+- Done: Public の `SteeringAgentComponent`（PROPERTY: Dimension・MaxSpeed・MaxAcceleration・TurnRateBySpeed・NavProfileName・MotorProfilePath・WanderSeed。要求: Idle・Wander・Arrive・MoveTo・Pursue・Flee・KeepDistance・FollowTrail。Initialize / Finalize で AIModule に登録）。運動の層 `AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` に世代つきで結び、操舵の速度を `LocomotionIntent` にして `QuadrupedLocomotionModel::Step` を回し、`MoveDelta` で動かす。プロファイルは `LocomotionProfileCache` と `Assets/AI/Locomotion/Wolf.json`（locomotion.v1。値は仮）。`NorvesModule_AI` は `NorvesModule_Physics` を PRIVATE にリンクする。
+- Done: `SteeringSystem` が `FixedModulePre.PreFixedTick` で位置を集めてハッシュを作り直し、全個体を同じ入力から解いて書き戻す。固定駆動の CharacterBody は同じ歩の `Physics.CharacterFixed` で消費するので、モジュールの登録の順に依らない。`LateTick` で Animator へ `AnimDriveSignals` と GaitId・GaitWeight0..3・PitchAngle・BankAngle を渡し、`SetSteeringDebugDrawEnabled` で操舵の速度・望みの速度・目標・距離帯・経路を描く（Release では無効）。契約は `Docs/Architecture/AIModule.md`、更新段階の割当は `Docs/Architecture/TickStages.md`。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（`NorvesModule_AI.lib`・`Game.exe` を生成、error 0）。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol` は一致。
+- done-when (4) の試験（`AISteeringTest`・`AIUniformGridHashTest`・`AIGaitSelectTest`・`AIFixedStepContractTest`）と `Test/Modules/Physics/CMakeLists.txt`・`Docs/Testing.md` の更新は、試験を作らない・回さない決まりにより作っていない。verify の ctest の行は回していない。
+- 人が見るときの見どころ: 今は `SteeringAgentComponent` を置いたシーンが無いので、どのシーンでも見た目は変わらない。シーンに置いたときは、Arrive で行き過ぎないこと・KeepDistance の帯で震えないこと・三方が壁の行き止まりから開いた向きへ逃げること・歩様の切り替わりが落ち着いていることを、操舵のデバッグ描画を有効にして見る。撮影・計測の確かめは回さない決まり。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュを共用する）。
+- Notes: 判断: 可変駆動の CharacterBody は固定ステップより前に要求するので、直近の固定歩の操舵の速度を使う（同じ歩で消費するのは固定駆動のとき）。足元のナビのタイルが未読み込み・通行不能なら、ナビ由来の危険は使わず近傍の危険だけを使う。Wolf.json の歩様の上限（1.8・4.5・9・15 m/s）と操舵の既定値（最高速度 6 m/s・加速度 8 m/s²・旋回率 6/4/3/2 rad/s）は未調整の仮の値。
