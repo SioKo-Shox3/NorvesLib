@@ -12773,3 +12773,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: TerrainComponent の `LayerTablePath` の記述は provider から参照できないので、層→表面名は高さ場の層名から作る仮の材質の記述（`MakeProvisionalTerrainMaterialDesc`）を使う。草のしきい値 0.35 は根拠の無い仮の値（データで替える）。優先度は地形 200 > 草 100 なので、草が種別を決めるのは地形の無い所だけで、地形の上の濃い草は `VegetationDensity01` で返る。
 - U6 接地の自己ヒットを足ごとに撃ち直し、取得できないときは番号も戻し、型を Engine で登録して tick を消費者より先にする: 着地(直し 0 回)
 - U7 地形の材質表の層→表面名を地形の provider に結ぶ: 着地(直し 0 回)
+- U8 犬の水しぶきが接地の状態の点と法線を読み、文書を直してタスクのビルドを通す: 着地(直し 0 回)

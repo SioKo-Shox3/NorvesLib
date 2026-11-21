@@ -3,6 +3,7 @@
 
 #include "Animation/AnimationEvents.h"
 #include "Component/AnimatorComponent.h"
+#include "Component/GroundContactComponent.h"
 #include "Component/SkinnedMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/TimeChannels.h"
@@ -183,6 +184,11 @@ namespace NorvesLib::Core::Component
         BindEvents();
         auto* owner = GetOwner();
         auto* mesh = owner ? owner->GetComponent<SkinnedMeshComponent>() : nullptr;
+        const auto* groundContact = owner ? owner->GetComponent<GroundContactComponent>() : nullptr;
+        if (groundContact && (!groundContact->IsActive() || groundContact->IsPendingDestroy()))
+        {
+            groundContact = nullptr;
+        }
         auto* engine = Engine::GEngine;
         auto* system = GetLiveSystem();
         if (system && owner)
@@ -245,20 +251,37 @@ namespace NorvesLib::Core::Component
 
             auto& terrainSystem = engine->GetTerrainSystem();
             Scene::GroundQueryHit hit;
-            const auto result = engine->GetSceneQuery().QueryGround(
-                foot.position + Math::Vector3(0.0f, GroundProbeUp, 0.0f), GroundProbeUp + GroundProbeDown, hit);
-            if (result != Scene::EPhysicsSceneQueryResult::Success || !hit.bHit)
+            // PostPhysics の優先度 -1 で更新した接地状態から、足音・足跡と同じ接地点と法線を使う。
+            // FallbackJoint に対応する足が当たっていなければ従来の照会を使う。放出量の計算は共通。
+            if (groundContact)
             {
-                // 物理の地面が取れない場合は、照会の始点以下の地形の高さ場を使う。
-                Rendering::Terrain::GroundSample sample;
-                if (!terrainSystem.SampleGround(foot.position.x, foot.position.z, sample) || !sample.bValid ||
-                    sample.Height - foot.position.y > GroundProbeUp)
+                const auto& contacts = groundContact->GetGroundContactState();
+                const int32_t index = groundContact->FindFootIndex(leg.FallbackJoint);
+                if (contacts.StepSerial != 0 && index >= 0 && static_cast<uint32_t>(index) < contacts.FootCount &&
+                    contacts.Foot[index].bHit)
                 {
-                    continue;
+                    hit.bHit = true;
+                    hit.Point = contacts.Foot[index].Point;
+                    hit.Normal = contacts.Foot[index].Normal;
                 }
-                hit.bHit = true;
-                hit.Point = Math::Vector3(foot.position.x, sample.Height, foot.position.z);
-                hit.Normal = sample.Normal;
+            }
+            if (!hit.bHit)
+            {
+                const auto result = engine->GetSceneQuery().QueryGround(
+                    foot.position + Math::Vector3(0.0f, GroundProbeUp, 0.0f), GroundProbeUp + GroundProbeDown, hit);
+                if (result != Scene::EPhysicsSceneQueryResult::Success || !hit.bHit)
+                {
+                    // 物理の地面が取れない場合は、照会の始点以下の地形の高さ場を使う。
+                    Rendering::Terrain::GroundSample sample;
+                    if (!terrainSystem.SampleGround(foot.position.x, foot.position.z, sample) || !sample.bValid ||
+                        sample.Height - foot.position.y > GroundProbeUp)
+                    {
+                        continue;
+                    }
+                    hit.bHit = true;
+                    hit.Point = Math::Vector3(foot.position.x, sample.Height, foot.position.z);
+                    hit.Normal = sample.Normal;
+                }
             }
             if (!(foot.position.y - hit.Point.y <= MaxFootHeight))
             {
