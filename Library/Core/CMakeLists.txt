@@ -1150,6 +1150,12 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
 
+# 表示文字列はキーだけを扱い、日本語のログは UTF-8 のコンソールにそのまま出力する。
+# Core のヘッダを使う側も実行時の文字コードを UTF-8 にそろえる。
+if(MSVC)
+    target_compile_options(${MODULE_NAME} PUBLIC $<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>)
+endif()
+
 target_compile_definitions(${MODULE_NAME}
     PUBLIC
         NORVES_BUILD_DEBUG=$<IF:$<CONFIG:Debug>,1,0>

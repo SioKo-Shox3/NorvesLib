@@ -12691,3 +12691,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U4 ITextMetrics と TextLayout の本体(折り返し・禁則・揃え・行間・省略・基準線): 着地(直し 0 回)
 - U6 FontAtlas を使う ITextMetrics の実装: 着地(直し 0 回)
 - U5 TextLayout のインラインのタグ({icon:Action}・色)と結果のキャッシュ: 着地(直し 0 回)
+- U7 Core と Game に /utf-8 を常時付け、NORVES_ENABLE_CORE_TEXT の既定を ON にする(単独のコミット): 着地(直し 0 回)
