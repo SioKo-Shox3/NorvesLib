@@ -9,8 +9,10 @@
 Game / AudioComponent / AudioGameModeOwner
           ↓
 ISoundSystem / SoundSystem ← SoundBank ← AudioClipLoader
-          ↓
-IAudioService
+          ├──→ AudioMixerDomain ← IAudioMixer ← IAudioModule::GetMixer()
+          │          │
+          ↓          ↓
+         IAudioService
           ↓
 IAudioBackend → XAudio2Backend または NullAudioBackend
 ```
@@ -18,6 +20,7 @@ IAudioBackend → XAudio2Backend または NullAudioBackend
 | 層・要素 | 役割 |
 |---|---|
 | `NorvesAudioDomain` | バックエンド非依存の静的ライブラリ。`Library/Modules/Audio/CMakeLists.txt` に構成がある。 |
+| `IAudioMixer` / `AudioMixerDomain` | 音声モジュールが所有するミキサーの公開窓口と実装。バスの構成・音量・ダッキングの状態を保持し、サービスに反映する。 |
 | `IAudioService` | voice の生成・再生・停止・破棄、世代付きハンドル、PCM の保持とイベントを管理する。 |
 | `ISoundSystem` / `SoundSystem` | 音の定義とバンク、フェード、同時発音の制限と奪取、cooldown・dedupe、持ち主のキーを扱う。 |
 | `SoundBank` | JSON のバンクを解析し、音の定義とクリップの参照を検証する。 |
@@ -56,6 +59,57 @@ AUDIO_SMOKE stage=shutdown voices=0 callbacks=0 shutdown_complete=1
 各定義の `source_ref` に「仮・合成」と記録されている。
 音を差し替えるときは、バンクの `clips` と出所を表す `source_ref` を設定する。
 
+## バスとミキサー
+
+バス構成と音量の正本は、音声モジュールが所有する `AudioMixerDomain` にある。GameThread からは `IAudioModule::GetMixer()` でそのモジュールの `IAudioMixer` を参照する。バスの親子関係はコードで固定し、`Se`、`Ambient`、`Music`、`Ui` の親はすべて `Master` とする。
+
+XAudio2 は各バスに 2 ch・48 kHz の submix voice を作る。source voice は作成時の send で出力バスへ、子バスは Master の submix へ、Master の submix は mastering voice へ送る。`ProcessingStage` は `kAudioBusCount − 深さ` で決まり、深さ 1 の子（段 4）を深さ 0 の Master（段 5）より先に処理する。Null バックエンドはバスの作成状態と音量を保持する。
+
+既存の 4 引数の `IAudioBackend::CreateVoice`（ハンドル、フォーマット、周波数比の上限、mailbox）は仮想関数のままで、既定の実装では送り先を Se に設定して記述構造体版へ渡す。
+
+### voice の送り先と音量
+
+`SoundSystem` は選んだクリップごとに、次の順で最初に決まったバスを `AudioVoiceDesc::OutputBus` に設定する。
+
+1. バンクの音の定義に `bus` があれば、そのバスを使う。値は `master`、`se`、`ambient`、`music`、`ui` のいずれか。
+2. NVAUD のカテゴリがあれば、`Sfx` と `Footstep` は Se、`Ambience` は Ambient、`Music` は Music、`Ui` は Ui に送る。
+3. どの指定もなければ Se に送る。定義の `category` は送り先に使わない。
+
+同梱の `Ambience.RainLoop` はバンクで `bus: ambient` を指定しているため、クリップのカテゴリに関係なく Ambient に送られ、GR76 の環境音の音量（Ambient のスライダー）で雨音を調整できる。
+
+`GetBusVolume` が返すバス自身の線形ゲインは `10^(volume_db/20) × slider² × ダッキングの線形利得 × ポーズ用の利得`。スライダーは [0, 1] に収め、二乗の写像を仮に使う。ポーズ対象のバスには `SetPauseGain` の値、対象外には 1 を掛ける。`GetEffectiveBusGain` は、そのバスから Master までの各ゲインを一度ずつ掛けた値を返す。
+
+GR76 の設定は `SoundSystem::SetMasterVolume` から Master のスライダーへ、`SetCategoryVolume` から Effect は Se、Ambience は Ambient のスライダーへ反映する。通常のモジュール構成では全体・区分の音量をバスで一度だけ掛ける。ミキサーを結合せずに `SoundSystem` を使う場合だけ、従来どおり voice 側で両方を掛ける。
+
+### ダッキング
+
+`SoundSystem::Update` は毎フレーム、インスタンスの回収と停止処理の後で、活動中の物理 voice を出力バス別に数え、定義の `duck_tag`（任意の空でない文字列）を集め直す。休眠中と物理 voice に停止を発行済みのものは除く。回収されたインスタンスは次の集計に残らない。
+
+規則はトリガのバスに 1 件以上の活動があるか、指定タグが集計に含まれると作動する。活動中は目標を `duck_db` とし、保持時間を毎フレーム `hold_ms` に戻す。活動が消えた後は、保持時間が尽きるまで同じ目標を保つ。フレームの途中で保持時間が尽きたら、そのフレームの残り時間を release に使い、0 dB へ戻し始める。
+
+減衰は dB 上の 1 次系で、1 フレームごとに `現在値 += (目標値 − 現在値) × (1 − exp(−dt/τ))` とする。時間の単位は ms。深くするときは τ = AttackMs / 5、戻すときは τ = ReleaseMs / 5 とし、τ = 0 なら即座に目標値にする。目標が 0 dB のときだけ、減衰の絶対値が 0.001 dB 未満になったところで 0 dB に丸める。同じバスに複数の規則が掛かるときは、そのフレームで最も深い減衰を線形利得に変換する。
+
+`SoundSystem::Shutdown` が呼ぶ `ResetActivity()` とミキサーの `Shutdown()` は、全規則の減衰を 0 dB、残りの保持時間を 0 ms、全バスのダッキングの線形利得を 1 に即座に戻す。
+
+### Mixer.json の書式と読み込み
+
+最初の `SoundSystem::LoadBank` で、バンクと同じ AssetSystem から論理パス `Audio/Mixer.json`（実ファイル `Assets/Audio/Mixer.json`）を一度だけ読む。明示的に `IAudioMixer::LoadConfig` を試行済みなら自動読み込みは省く。UTF-8 の JSON オブジェクトで、`version` は数値の 1 が必須。`buses` と `ducking` は省略できる。リバーブの欄は `G16-GR73-REVERB-OCCLUSION` で追加する。
+
+| 欄 | 値と省略時の扱い |
+|---|---|
+| `buses` | 小文字のバス名をキーとするオブジェクト。指定のないバス・項目は既定値を使う |
+| `volume_db` / `pause` | 各バスの基準音量（−96 ～ +12 dB、既定 0 dB）とポーズ対象かどうか（真偽値）。既定の対象は Se・Ambient・Music |
+| `ducking` | 規則の配列。既定は空で、同梱の設定も 0 件。規則の採否と値は聴感で決める |
+| `trigger_bus` / `trigger_tag` | 規則ごとにいずれか一方が必須。小文字のバス名、または定義の `duck_tag` に照合する空でない文字列 |
+| `target` / `duck_db` | 下げるバスの小文字名と、目標の減衰量（−96 ～ 0 dB）。両方必須 |
+| `attack_ms` / `hold_ms` / `release_ms` | 各 0 ～ 60000 の整数。省略時は順に 100、0、500 ms |
+
+ファイルが見つからない場合や、未知のキー・重複・値の範囲外など不正な項目が一つでもある場合は、設定全体に既定値を適用して再生を続ける。診断ごとに `AUDIO_MIXER config=default reason=... detail=...` を記録する。
+
+`ReapplyBackendState()` は Master から順に全バスの作成を試み、続いて全バスの現在の音量を再送する。音声モジュールの初期化は、サービスの初期化後に全バスの作成と音量の反映が成功したときだけ完了する。バスの設定に失敗すると `AUDIO_MIXER bus_setup=failed result=<n>` を記録する。使用中のバックエンドが Null 以外で、切替が許可されていれば、`bus_setup_failed` を理由に Null バックエンドへ切り替え、全バスの作成と音量の反映をやり直す。切替できない場合や再試行にも失敗した場合は、初期化済みのサービスを停止し、モジュールの初期化は失敗を返す。
+
+G19 の GR118 はバックエンド再初期化後に `ReapplyBackendState()` でバスを復元する。voice の作り直しは GR118、ゲームのポーズ状態に応じたポーズ用ゲインとダッキングの駆動は G15 の GR119 が担う。
+
 ## 持ち主のキー
 
 `SoundPlayParams::OwnerKey` の 0 は持ち主なしを表す。
@@ -80,7 +134,7 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 4. この通常の Module Tick はシミュレーションの進行 gate の外にある。音声の `Tick` は `IAudioService::Tick()`、次いで `SoundSystem::Update(deltaSeconds)` を呼ぶ。
 5. サービスの `Tick` は callback が各 voice のメールボックスに入れた `Drained` / `VoiceError` を消費して状態を進め、古い世代や終了後の通知を扱う。
 6. 続く `SoundSystem::Update` は `Drained` の voice を破棄して論理インスタンスを回収し、残った音のフェードと音量、停止を進める。休眠への移行と復帰もここで行う。時間には上限付きの可変フレーム delta を使う。
-7. 終了時は `ModuleRegistry::ShutdownAll` が登録の逆順で終了する。音声モジュールは先に `SoundSystem`、次にサービスを終了し、サービスは callback を静止させてから voice とバックエンドを破棄する。
+7. 終了時は `ModuleRegistry::ShutdownAll` が登録の逆順で終了する。音声モジュールは `SoundSystem` を終了し、ミキサーとサービスの結合を外してからサービスを終了する。サービスは callback を静止させてから voice とバックエンドを破棄する。
 
 呼び出し元は `Library/Core/Private/Module/ModuleRegistry.cpp` と
 `Library/Core/Private/Engine/ApplicationProcessor.cpp`、音声の更新は
@@ -125,7 +179,7 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 |---|---|
 | 距離利得 × 等パワーの左右のパン係数 | `IAudioService::SetVoiceOutputGains` に左右の線形利得を渡す。近距離ほどパンは中央に寄る。3D の voice に `SetVoicePan` は使わない |
 | ピッチの周波数比 × ドップラー比 | `SoundSystem` が 1/1024（`kAudioMinVoiceFrequencyRatio`）から voice 作成時の上限までに丸め、`IAudioService::SetVoiceFrequencyRatio` に渡す。有限の低いピッチで比が 0 になっても下限で鳴る。最終ピッチを pitch（半音）とすると、3D の voice 作成時の上限は min(max(12, pitch) + 12, 120) 半音（`kAudioMaxVoicePitchSemitones` = 120）。pitch > 120 の再生は既存の voice を奪う前に `InvalidState` で拒否する |
-| 背後の音量倍率 | 既存の voice 音量（10^((volume_db + 揺らぎ_db)/20) × 再生の音量 × フェード利得 × 区分の音量 × 全体の音量）に一度だけ掛ける |
+| 背後の音量倍率 | 既存の voice 音量（10^((volume_db + 揺らぎ_db)/20) × 再生の音量 × フェード利得）に一度だけ掛ける |
 | 背後の高域の係数 | 値を保持する。フィルタへの適用は `G16-GR73-ACOUSTICS-AI-WIRE` の範囲 |
 
 真後ろでの音量減衰は 6 dB、高域の係数は 0.5。`MinDistance` の内側では、近距離の広がりと同じ係数 s = d/MinDistance で背後の効果も弱まる。式と受入れ条件は [GR73 3D 定位とリスナーの受入れ記録](../AudioValidation/GR73Acceptance.md)を参照。

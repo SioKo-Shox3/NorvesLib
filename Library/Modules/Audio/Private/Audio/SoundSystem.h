@@ -14,6 +14,8 @@
 
 namespace NorvesLib::Modules::Audio::Private
 {
+    class AudioMixerDomain;
+
     struct SoundSystemConfig
     {
         uint32_t MaxConcurrentVoices = 32;
@@ -28,6 +30,7 @@ namespace NorvesLib::Modules::Audio::Private
         SoundSystem(const SoundSystem&) = delete;
         SoundSystem& operator=(const SoundSystem&) = delete;
 
+        void BindMixer(AudioMixerDomain* mixer);
         void Update(float deltaSeconds);
         /** モジュールが Update の前に渡すリスナー状態。非有限の成分があれば前の状態を保つ。 */
         void SetListener(const AudioListenerState& listener);
@@ -76,6 +79,7 @@ namespace NorvesLib::Modules::Audio::Private
             AudioVoiceDesc VoiceDesc; ///< 作成時のループ区間とピッチ上限を保持し、開始フレームは作成のたびに指定する。
             double PlayFrame = 0.0; ///< 仮想時計で進めるクリップ内の再生位置（フレーム）。
             SoundId DefinitionId;
+            Core::Identity DuckTag;
             SoundPlayParams Params;
             uint64_t OwnerKey = 0;
             double AgeSeconds = 0.0;
@@ -167,6 +171,7 @@ namespace NorvesLib::Modules::Audio::Private
         void UpdateSpatial(Instance& instance, float deltaSeconds);
 
         IAudioService& m_Service;
+        AudioMixerDomain* m_Mixer = nullptr;
         IAudioOcclusion* m_Occlusion = nullptr;
         Random::Generator m_Generator;
         SoundSystemConfig m_Config;

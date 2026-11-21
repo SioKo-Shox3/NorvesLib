@@ -15,7 +15,7 @@ namespace NorvesLib::Modules::Audio
 {
     bool IsPlayableVoiceDesc(uint64_t frameCount, uint64_t pcmBytes, const AudioVoiceDesc& desc) noexcept
     {
-        if (pcmBytes == 0 || pcmBytes > kAudioMaxVoicePcmBytes)
+        if (pcmBytes == 0 || pcmBytes > kAudioMaxVoicePcmBytes || static_cast<uint32_t>(desc.OutputBus) >= kAudioBusCount)
         {
             return false;
         }
@@ -46,6 +46,13 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return state == AudioVoiceState::Created || state == AudioVoiceState::Submitted ||
                    state == AudioVoiceState::Playing;
+        }
+
+        [[nodiscard]] AudioResult BusOperationResult(AudioResult result) noexcept
+        {
+            return result == AudioResult::Success || result == AudioResult::AlreadyInState
+                ? result
+                : AudioResult::BackendFailure;
         }
 
         struct BackendEvent
@@ -145,7 +152,12 @@ namespace NorvesLib::Modules::Audio::Private
                 record.MaxFrequencyRatio = std::exp2(desc.MaxPitchSemitones / 12.0f);
                 const VoiceHandle handle{index, record.Generation};
 
-                if (m_Backend->CreateVoice(handle, clip->GetFormat(), record.MaxFrequencyRatio, *record.Mailbox) != AudioResult::Success)
+                const AudioBackendVoiceDesc backendDesc{
+                    .Format = clip->GetFormat(),
+                    .MaxFrequencyRatio = record.MaxFrequencyRatio,
+                    .OutputBus = desc.OutputBus,
+                };
+                if (m_Backend->CreateVoice(handle, backendDesc, *record.Mailbox) != AudioResult::Success)
                 {
                     ReleaseSlot(index);
                     return AudioResult::BackendFailure;
@@ -171,6 +183,26 @@ namespace NorvesLib::Modules::Audio::Private
                 ++m_ActiveVoiceCount;
                 outHandle = handle;
                 return AudioResult::Success;
+            }
+
+            AudioResult CreateBus(AudioBusId bus, AudioBusId parent) override
+            {
+                if (!m_bInitialized || m_bShutdown || static_cast<uint32_t>(bus) >= kAudioBusCount ||
+                    (bus != AudioBusId::Master && static_cast<uint32_t>(parent) >= kAudioBusCount))
+                {
+                    return AudioResult::InvalidState;
+                }
+                return BusOperationResult(m_Backend->CreateBus(bus, parent));
+            }
+
+            AudioResult SetBusVolume(AudioBusId bus, float gain) override
+            {
+                if (!m_bInitialized || m_bShutdown || static_cast<uint32_t>(bus) >= kAudioBusCount ||
+                    !std::isfinite(gain) || gain < 0.0f)
+                {
+                    return AudioResult::InvalidState;
+                }
+                return BusOperationResult(m_Backend->SetBusVolume(bus, gain));
             }
 
             AudioResult SetVoiceVolume(VoiceHandle handle, float volume) override

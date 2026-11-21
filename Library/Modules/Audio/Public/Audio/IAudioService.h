@@ -26,7 +26,7 @@ namespace NorvesLib::Modules::Audio
         virtual AudioResult Shutdown() = 0;
         [[nodiscard]] virtual AudioDiagnostics GetDiagnostics() const = 0;
 
-        /** @brief 再生範囲とピッチ上限を指定してボイスを作成する。 */
+        /** @brief 再生範囲、ピッチ上限、送り先を指定してボイスを作成する。送り先が未作成なら Master、次いで出力へ送る。 */
         virtual AudioResult CreateVoice(const Core::Container::TSharedPtr<AudioClipResource>& clip,
                                         const AudioVoiceDesc& desc,
                                         VoiceHandle& outHandle) = 0;
@@ -68,6 +68,15 @@ namespace NorvesLib::Modules::Audio
          * @details 有限で 0 より大きい値を受け、作成時の上限と下限 1/1024 に丸めてバックエンドへ渡す。
          */
         virtual AudioResult SetVoiceFrequencyRatio(VoiceHandle handle, float ratio) = 0;
+
+        /**
+         * @brief 初期化後に GameThread でバスを作成する。Shutdown で全バスを破棄する。
+         * @details Master は親を無視して出力へ送り、他のバスは作成済みの親へ送る。
+         * 作成済みなら設定を保って AlreadyInState を返す。
+         */
+        virtual AudioResult CreateBus(AudioBusId bus, AudioBusId parent) = 0;
+        /** @brief 初期化後に GameThread で、作成済みのバスの音量を有限で 0 以上の線形倍率に設定する。 */
+        virtual AudioResult SetBusVolume(AudioBusId bus, float gain) = 0;
 
         /**
          * @brief 声に遮蔽の利得 (dB) とローパスの遮断周波数 (Hz) をすぐに適用する。平滑化は呼び手が行う。

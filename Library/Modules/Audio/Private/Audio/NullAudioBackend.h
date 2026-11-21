@@ -10,8 +10,11 @@ namespace NorvesLib::Modules::Audio::Private
     {
     public:
         AudioResult Initialize(IAudioBackendEventSink& eventSink, uint64_t shutdownEpoch) override;
-        AudioResult CreateVoice(VoiceHandle handle, const AudioPcmFormat& format,
-                                float maxFrequencyRatio, AudioBackendEventMailbox& mailbox) override;
+        using IAudioBackend::CreateVoice;
+        AudioResult CreateVoice(VoiceHandle handle, const AudioBackendVoiceDesc& desc,
+                                AudioBackendEventMailbox& mailbox) override;
+        AudioResult CreateBus(AudioBusId bus, AudioBusId parent) override;
+        AudioResult SetBusVolume(AudioBusId bus, float gain) override;
         AudioResult SubmitVoice(VoiceHandle handle, Core::Container::Span<const uint8_t> pcmBytes,
                                 const AudioBufferDesc& bufferDesc) override;
         AudioResult SetVoiceVolume(VoiceHandle handle, float volume) override;
@@ -27,6 +30,12 @@ namespace NorvesLib::Modules::Audio::Private
         void Shutdown() override;
 
     private:
+        struct Bus
+        {
+            bool bCreated = false;
+            float Volume = 1.0f;
+        };
+
         struct Voice
         {
             VoiceHandle Handle;
@@ -38,6 +47,7 @@ namespace NorvesLib::Modules::Audio::Private
         Voice* Resolve(VoiceHandle handle);
         void PublishDrained(Voice& voice);
 
+        Bus m_Buses[kAudioBusCount]{};
         Core::Container::VariableArray<Voice> m_Voices;
         IAudioBackendEventSink* m_EventSink = nullptr;
         uint64_t m_ShutdownEpoch = 0;
