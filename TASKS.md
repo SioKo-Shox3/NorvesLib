@@ -8561,7 +8561,7 @@
 - notes: ロードマップ 2856 行と 2895 行（CutSerial を最初の独立のコミットにする）、要件 `#### GR62` の設計案の 5。10-02 の後に `SourceCameraId`（SceneProxy.h:448）が入り、TAA はカメラの切り替えで履歴を捨てる（TemporalAA.h:220）が、同じカメラの中のカットと、前のカメラの受け渡し（RenderingCoordinator.cpp:4811）には印が無い。1 フレームだけ立てるブール値では、そのパケットが捨てられたとき（TemporalAA.h:196 の差し替え）カットをまたいで再投影するので、通し番号にする（要件の設計案）。段階をまたぐ注意 4415・4479 行の直す点（カメラの不連続の唯一の印）をここで規約にする。`needs-gr: GR30` は G5 の GR30 の項目が同じ TAA・velocity の経路（TemporalAA.h・GBuffer の velocity）を触るので、その後に載せるため（ロードマップ 2882 行の硬い依存）。自動露出をカットで即座に合わせる処理は入れない（非ゴール 2873 行。ショットは手動露出が前提）。試験を足す理由: 取りこぼしたパケットをまたぐカットは、そのフレームだけ筋が引く形で黙って起き、撮影の 1 枚では気づけない。危険地帯（RenderThread・TAA・PT の連番・Public API の CameraProxy）。評価者の反証を省かない。
 
 ## G14-GR62-LENS-SHUTTER: 物理カメラの値（焦点距離・撮像面・ゲートフィット）と、露出から切り離したシャッター角の動きぼけを足す
-- status: done
+- status: doing
 - after: G14-GR62-CUT-SERIAL
 - gr: GR62
 - done-when: (1) `CameraProxy` に `CameraCinematicProxy Cinematic` を足す。中身は Lens(FocalLengthMm(0 = FOV で指定)・SensorWidthMm・SensorHeightMm(既定 24)・GateFit{Horizontal, Vertical, Fill}・bFocusBreathing(既定 true))、Bokeh(BladeCount(0 = 円板)・BladeRotationRad・MaxCocRadiusFraction(0 = 今の 16 画素))、Shutter(ShutterAngleDegrees(0 = 従来)・VirtualFrameRate(0 = 実フレーム))、Framing(LetterboxAspect・LetterboxAmount・FadeColor[3]・FadeAmount)。既定は今の描画と同じで、露出(Aperture・ShutterSpeed・ISO)は変えない。
