@@ -82,26 +82,23 @@ namespace NorvesLib::Modules::AI
         {
             return;
         }
-        const auto componentId = agent.GetComponentId();
         for (const auto& record : m_Records)
         {
-            if (record.Agent == &agent || record.ComponentId == componentId)
+            if (record.Agent == &agent)
             {
                 return;
             }
         }
         auto& record = m_Records.emplace_back();
         record.Agent = &agent;
-        record.ComponentId = componentId;
         agent.m_bRegistered = true;
     }
 
     void SteeringSystem::UnregisterAgent(SteeringAgentComponent& agent, INavigationService& nav)
     {
-        const auto componentId = agent.GetComponentId();
-        const auto it = std::find_if(m_Records.begin(), m_Records.end(), [componentId](const AgentRecord& record)
+        const auto it = std::find_if(m_Records.begin(), m_Records.end(), [&agent](const AgentRecord& record)
         {
-            return record.ComponentId == componentId;
+            return record.Agent == &agent;
         });
         if (it != m_Records.end())
         {
@@ -118,7 +115,8 @@ namespace NorvesLib::Modules::AI
     {
         auto* agent = m_Records[index].Agent;
         const auto* owner = agent ? agent->GetOwner() : nullptr;
-        return owner && owner->GetWorld() == &world ? agent : nullptr;
+        // 運動の層や ReadTarget と同じく、各 Entity の操舵は先頭の SteeringAgentComponent が受け持つ。
+        return owner && owner->GetWorld() == &world && owner->GetComponent<SteeringAgentComponent>() == agent ? agent : nullptr;
     }
 
     void SteeringSystem::Reset(INavigationService& nav)
@@ -169,7 +167,7 @@ namespace NorvesLib::Modules::AI
                 nav.CancelPath(record.Path);
                 nav.ReleasePath(record.Path);
             }
-            record = AgentRecord{.Agent = record.Agent, .ComponentId = record.ComponentId, .Revision = request.Revision};
+            record = AgentRecord{.Agent = record.Agent, .Revision = request.Revision};
             if (request.Kind == ESteeringRequest::Wander)
             {
                 InitializeWander(record.Wander, agent->WanderSeed.Get());

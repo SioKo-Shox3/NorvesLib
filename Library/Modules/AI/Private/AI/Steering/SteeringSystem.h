@@ -44,9 +44,8 @@ namespace NorvesLib::Modules::AI
     private:
         struct AgentRecord
         {
-            // Initialize で登録し EndPlay/Finalize/デストラクタで必ず外す Component の非所有参照。PhysicsModule::RegisterCharacter と同じ形。
+            // 登録・解除の照合に使う Component の非所有参照。Initialize で登録し、EndPlay/Finalize/デストラクタで外す。
             SteeringAgentComponent* Agent = nullptr;
-            uint64_t ComponentId = 0;
             uint32_t Revision = 0;
             Steering::KeepDistanceState KeepDistance;
             Steering::WanderState Wander;
