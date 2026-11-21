@@ -188,8 +188,9 @@ namespace NorvesLib::Core::Rendering
                                    m_Request.Sampler;
         if (bCanAlphaOver)
         {
-            RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(m_Request.SceneTexture->GetWidth(),
-                                                                   m_Request.SceneTexture->GetHeight(),
+            // RenderScale による UI の縮小を避けるため、合成先は画面解像度のキャンバスに合わせる。
+            RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(m_Request.CanvasTexture->GetWidth(),
+                                                                   m_Request.CanvasTexture->GetHeight(),
                                                                    RHI::Format::R16G16B16A16_FLOAT,
                                                                    "Composite.Color");
             outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
@@ -262,10 +263,20 @@ namespace NorvesLib::Core::Rendering
         m_Request.DescriptorSet->BindSampler(1, m_Request.Sampler);
         m_Request.DescriptorSet->Update();
 
+        // シーンとキャンバスは別々の寸法のテクスチャとして同じ UV で読み、出力全体に描く。
+        const uint32_t width = m_Result.OutputTexture->GetWidth();
+        const uint32_t height = m_Result.OutputTexture->GetHeight();
+        RHI::Viewport viewport{};
+        viewport.width = static_cast<float>(width);
+        viewport.height = static_cast<float>(height);
+        RHI::ScissorRect scissor{};
+        scissor.right = static_cast<int32_t>(width);
+        scissor.bottom = static_cast<int32_t>(height);
+
         context.EnqueueFullscreenPass(renderPass,
                                       framebuffer,
-                                      context.GetActiveLocalViewport(),
-                                      context.GetActiveLocalScissor(),
+                                      viewport,
+                                      scissor,
                                       pipeline,
                                       m_Request.DescriptorSet);
 

@@ -120,6 +120,12 @@ namespace NorvesLib::Modules::Audio
          * @return 古いハンドルは StaleHandle、2D 音源・非有限の位置・ボイスの停止発行後は InvalidState。
          */
         virtual AudioResult SetEmitterPosition(SoundInstanceHandle handle, const Math::Vector3& position) = 0;
+        /**
+         * @brief false で呼び出し側の休眠要求を立て、true で外す。距離の条件と合わせて次の Update で切り替える。
+         * GR75 は −55 dB 未満で休眠を求め、−52 dB を超えると解除する。IsAudible は休眠中も位置同期のため真を返す。
+         * @return 古いハンドルは StaleHandle、停止要求後は InvalidState、同じ指定は AlreadyInState、変更時は Success。
+         */
+        virtual AudioResult SetInstanceAudible(SoundInstanceHandle handle, bool bAudible) = 0;
         [[nodiscard]] virtual bool IsPlaying(SoundInstanceHandle handle) const = 0;
         /**
          * ハンドルが有効で、物理ボイスに停止を発行するまでは真を返す。

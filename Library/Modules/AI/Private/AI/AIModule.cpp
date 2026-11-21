@@ -1,11 +1,14 @@
 ﻿#include "AI/AIModule.h"
 
+#include "AI/Steering/SteeringAgentComponent.h"
 #include "Asset/AssetFileReader.h"
+#include "Engine/Engine.h"
 #include "Logging/LogMacros.h"
+#include "Object/IClass.h"
 
 #if NORVES_ENABLE_DEBUG_OUTPUT
 #include "AI/Navigation/NavDebugDraw.h"
-#include "Engine/Engine.h"
+#include "AI/Steering/SteeringDebugDraw.h"
 #include "Engine/NorvesEngine.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
@@ -47,7 +50,47 @@ namespace NorvesLib::Modules::AI
 
     void AIModule::RegisterReflectedTypes()
     {
-        // 現在の AI モジュールには登録するリフレクション型がない。
+        Core::ClassRegistry::Get().RegisterClass(SteeringAgentComponent::StaticClass());
+    }
+
+    const Core::World* AIModule::GetEngineWorld() const
+    {
+        return m_Engine ? &m_Engine->GetWorld() : nullptr;
+    }
+
+    void AIModule::RegisterAgent(SteeringAgentComponent& agent)
+    {
+        if (IsOwnerThread())
+        {
+            m_Steering.RegisterAgent(agent);
+        }
+    }
+
+    void AIModule::UnregisterAgent(SteeringAgentComponent& agent)
+    {
+        if (IsOwnerThread())
+        {
+            m_Steering.UnregisterAgent(agent, m_Navigation);
+        }
+    }
+
+    uint32_t AIModule::GetAgentCount() const
+    {
+        return IsOwnerThread() ? m_Steering.GetAgentCount() : 0u;
+    }
+
+    Core::Container::Span<const Core::EntityHandle> AIModule::GetNeighborEntities() const
+    {
+        if (!IsOwnerThread())
+        {
+            return {};
+        }
+        return m_Steering.GetNeighborEntities();
+    }
+
+    Core::Locomotion::QuadrupedLocomotionParams AIModule::GetLocomotionProfile(Core::Container::AnsiStringView path)
+    {
+        return IsOwnerThread() ? m_LocomotionProfiles.Get(path) : Core::Locomotion::QuadrupedLocomotionParams{};
     }
 
     bool AIModule::Initialize()
@@ -84,11 +127,13 @@ namespace NorvesLib::Modules::AI
         return true;
     }
 
-    void AIModule::PreFixedTick(float)
+    void AIModule::PreFixedTick(float dt)
     {
         if (IsOwnerThread() && m_bInitialized)
         {
+            const auto stepAgents = m_Steering.BeginStep(m_Navigation, m_Engine->GetWorld());
             m_Navigation.RunBudget();
+            m_Steering.Compute(dt, m_Navigation, stepAgents);
         }
     }
 
@@ -113,29 +158,70 @@ namespace NorvesLib::Modules::AI
 #endif
     }
 
-    void AIModule::LateTick(float)
+    void AIModule::SetSteeringDebugDrawEnabled(bool bEnabled)
     {
 #if NORVES_ENABLE_DEBUG_OUTPUT
-        if (!IsNavDebugDrawEnabled() || !m_bInitialized)
+        if (IsOwnerThread())
+        {
+            m_bSteeringDebugDrawEnabled = bEnabled;
+        }
+#else
+        (void)bEnabled;
+#endif
+    }
+
+    bool AIModule::IsSteeringDebugDrawEnabled() const
+    {
+#if NORVES_ENABLE_DEBUG_OUTPUT
+        return IsOwnerThread() && m_bSteeringDebugDrawEnabled;
+#else
+        return false;
+#endif
+    }
+
+    void AIModule::LateTick(float)
+    {
+        if (!IsOwnerThread() || !m_bInitialized)
+        {
+            return;
+        }
+        const auto& world = m_Engine->GetWorld();
+        for (uint32_t i = 0; i < m_Steering.GetAgentCount(); ++i)
+        {
+            auto* agent = m_Steering.ResolveAgent(i, world);
+            if (agent && SteeringSystem::CanSteer(*agent))
+            {
+                agent->PublishMotorVisual();
+            }
+        }
+
+#if NORVES_ENABLE_DEBUG_OUTPUT
+        if (!m_bNavDebugDrawEnabled && !m_bSteeringDebugDrawEnabled)
         {
             return;
         }
         const auto& camera = m_Engine->GetRenderWorld().GetRenderingCoordinator().GetMainCamera();
         const Math::Vector3 center(camera.PositionX, camera.PositionY, camera.PositionZ);
         auto& queue = Core::GEngine.GetDebugDraw();
-        const NavDebugDrawSettings settings{};
-        SubmitNavGridDebug(m_Navigation.GetGrid(), center, settings, queue);
-
-        const Math::Vector4 green(0.0f, 1.0f, 0.0f, 1.0f);
-        const Math::Vector4 yellow(1.0f, 1.0f, 0.0f, 1.0f);
-        for (uint32_t i = 0; i < m_Navigation.GetPathSlotCount(); ++i)
+        if (m_bNavDebugDrawEnabled)
         {
-            const auto status = m_Navigation.GetSlotStatus(i);
-            if (status == ENavPathStatus::Succeeded || status == ENavPathStatus::Partial)
+            const NavDebugDrawSettings settings{};
+            SubmitNavGridDebug(m_Navigation.GetGrid(), center, settings, queue);
+            const Math::Vector4 green(0.0f, 1.0f, 0.0f, 1.0f);
+            const Math::Vector4 yellow(1.0f, 1.0f, 0.0f, 1.0f);
+            for (uint32_t i = 0; i < m_Navigation.GetPathSlotCount(); ++i)
             {
-                SubmitNavPathDebug(m_Navigation.GetSlotPath(i), center, settings,
-                                   status == ENavPathStatus::Partial ? yellow : green, queue);
+                const auto status = m_Navigation.GetSlotStatus(i);
+                if (status == ENavPathStatus::Succeeded || status == ENavPathStatus::Partial)
+                {
+                    SubmitNavPathDebug(m_Navigation.GetSlotPath(i), center, settings,
+                                       status == ENavPathStatus::Partial ? yellow : green, queue);
+                }
             }
+        }
+        if (m_bSteeringDebugDrawEnabled)
+        {
+            SubmitSteeringDebug(m_Steering, world, center, {}, queue);
         }
 #endif
     }
@@ -144,6 +230,8 @@ namespace NorvesLib::Modules::AI
     {
         if (IsOwnerThread())
         {
+            m_Steering.Reset(m_Navigation, GetEngineWorld());
+            m_LocomotionProfiles.Clear();
             m_Navigation.Reset();
             m_bInitialized = false;
         }
@@ -155,7 +243,7 @@ namespace NorvesLib::Modules::AI
         {
             return;
         }
-        if (m_bInitialized)
+        if (m_bInitialized || m_Steering.GetAgentCount() != 0)
         {
             Shutdown();
         }

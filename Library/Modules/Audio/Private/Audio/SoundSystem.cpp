@@ -2,6 +2,7 @@
 
 #include "Audio/AudioClipResource.h"
 #include "Audio/AudioClipLoader.h"
+#include "Audio/AudioDomain.h"
 #include "Asset/AssetSystem.h"
 #include "Logging/LogMacros.h"
 
@@ -13,6 +14,7 @@ namespace NorvesLib::Modules::Audio::Private
 {
     namespace
     {
+        constexpr float kSoundVirtualEnterDistanceScale = 1.05f;
         constexpr float kMinimumFadeSeconds = 2.0f / 60.0f;
 
         bool IsValidFade(const SoundFade& fade)
@@ -292,11 +294,15 @@ namespace NorvesLib::Modules::Audio::Private
 
         uint32_t definitionCount = 0;
         uint32_t oldestIndex = SoundInstanceHandle::InvalidIndex;
-        for (uint32_t index = 0; index < m_Instances.size(); ++index)
+        if (!candidate.bVirtual && definition.MaxInstances > 0)
         {
-            const Instance& instance = m_Instances[index];
-            if (instance.bActive && instance.DefinitionId == definition.Id)
+            for (uint32_t index = 0; index < m_Instances.size(); ++index)
             {
+                const Instance& instance = m_Instances[index];
+                if (!instance.bActive || instance.bVirtual || instance.DefinitionId != definition.Id)
+                {
+                    continue;
+                }
                 ++definitionCount;
                 if (oldestIndex == SoundInstanceHandle::InvalidIndex ||
                     instance.PlaySequence < m_Instances[oldestIndex].PlaySequence)
@@ -329,7 +335,7 @@ namespace NorvesLib::Modules::Audio::Private
             outStealIndex = oldestIndex;
             return AudioResult::Success;
         }
-        if (m_Diagnostics.ActiveInstanceCount >= m_Config.MaxConcurrentVoices)
+        if (!candidate.bVirtual && GetPhysicalVoiceCount() >= m_Config.MaxConcurrentVoices)
         {
             // 新規は目標音量と最も新しい通し番号で、既存と同じ順序に入れる。
             const Instance* lowest = &candidate;
@@ -337,7 +343,7 @@ namespace NorvesLib::Modules::Audio::Private
             for (uint32_t index = 0; index < m_Instances.size(); ++index)
             {
                 const Instance& instance = m_Instances[index];
-                if (instance.bActive && IsLowerVoiceRank(instance, *lowest))
+                if (instance.bActive && !instance.bVirtual && IsLowerVoiceRank(instance, *lowest))
                 {
                     lowest = &instance;
                     lowestIndex = index;
@@ -434,8 +440,6 @@ namespace NorvesLib::Modules::Audio::Private
         instance.PlaySequence = UINT64_MAX;
         instance.bSpatial = !bGlobal && (params.Spatialization == AudioSpatialization::World3D ||
                                          definition.Spatial == SoundSpatialMode::ThreeD);
-        Core::Container::TSharedPtr<AudioClipResource> clip;
-        AudioSpatialResult spatial;
         if (instance.bSpatial)
         {
             if (params.Spatialization == AudioSpatialization::World3D)
@@ -446,7 +450,8 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 return AudioResult::InvalidState;
             }
-            spatial = instance.ComputeSpatial(m_Listener);
+            instance.ComputeSpatial(m_Listener);
+            instance.bVirtual = instance.bVirtualByDistance;
         }
         uint32_t stealIndex;
         const AudioResult admission = CheckPlayAdmission(definition, instance, stealIndex);
@@ -459,18 +464,19 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return AudioResult::InvalidState;
         }
-        const AudioVoiceDesc desc{definition.bLoop, definition.LoopBeginFrame, definition.LoopLengthFrames, 0,
+        instance.VoiceDesc = {definition.bLoop, definition.LoopBeginFrame, definition.LoopLengthFrames, 0,
             std::min(std::max(12.0f, pitch) + (instance.bSpatial ? 12.0f : 0.0f), kAudioMaxVoicePitchSemitones)};
         if (instance.bSpatial)
         {
-            instance.MaxFrequencyRatio = std::exp2(desc.MaxPitchSemitones / 12.0f);
+            instance.MaxFrequencyRatio = std::exp2(instance.VoiceDesc.MaxPitchSemitones / 12.0f);
             // 再生できない 3D 音源のために既存のボイスを奪わない。
-            clip = SelectClip(definition);
-            if (!clip)
+            instance.Clip = SelectClip(definition);
+            if (!instance.Clip || !instance.Clip->IsValid() ||
+                !IsPlayableVoiceDesc(instance.Clip->GetFrameCount(), instance.Clip->GetPcmBlob().GetSize(), instance.VoiceDesc))
             {
                 return AudioResult::InvalidState;
             }
-            if (clip->GetFormat().ChannelCount == 2)
+            if (instance.Clip->GetFormat().ChannelCount == 2)
             {
                 return AudioResult::Rejected;
             }
@@ -479,8 +485,7 @@ namespace NorvesLib::Modules::Audio::Private
         instance.Gain = instance.FadeSeconds > 0.0f ? 0.0f : 1.0f;
         instance.FadeStartGain = instance.Gain;
         instance.FadeCurve = params.FadeIn.Curve;
-        const float volume = GetVoiceVolume(instance);
-        if (!IsValidVolume(volume))
+        if (!IsValidVolume(GetVoiceVolume(instance)))
         {
             return AudioResult::InvalidState;
         }
@@ -495,22 +500,57 @@ namespace NorvesLib::Modules::Audio::Private
 
         if (!instance.bSpatial)
         {
-            clip = SelectClip(definition);
+            instance.Clip = SelectClip(definition);
         }
-        AudioResult result = m_Service.CreateVoice(clip, desc, instance.Voice);
+        if (instance.Clip)
+        {
+            instance.PcmBlob = instance.Clip->GetPcmBlob();
+            instance.Format = instance.Clip->GetFormat();
+            instance.FrameCount = instance.Clip->GetFrameCount();
+        }
+        if (!instance.bVirtual)
+        {
+            const AudioResult result = StartInstanceVoice(instance, 0);
+            if (result != AudioResult::Success)
+            {
+                return result;
+            }
+        }
+
+        const uint32_t index = AcquireSlot();
+        instance.Generation = m_Instances[index].Generation;
+        instance.bActive = true;
+        instance.PlaySequence = ++m_PlaySequence;
+        m_Instances[index] = std::move(instance);
+        ++m_Diagnostics.ActiveInstanceCount;
+        if (m_Instances[index].bVirtual)
+        {
+            ++m_Diagnostics.Voice.VirtualVoiceCount;
+        }
+        outHandle = SoundInstanceHandle{index, m_Instances[index].Generation};
+        RecordPlay(id, position, bGlobal);
+        return AudioResult::Success;
+    }
+
+    AudioResult SoundSystem::StartInstanceVoice(Instance& instance, uint32_t startFrame)
+    {
+        AudioVoiceDesc desc = instance.VoiceDesc;
+        desc.StartFrame = startFrame;
+        const float volume = GetVoiceVolume(instance);
+        AudioResult result = m_Service.CreateVoice(instance.Clip, desc, instance.Voice);
         if (result == AudioResult::Success)
         {
             result = m_Service.SetVoiceVolume(instance.Voice, volume);
         }
         if (result == AudioResult::Success && instance.bSpatial)
         {
+            const AudioSpatialResult spatial = instance.ComputeSpatial(m_Listener);
             result = m_Service.SetVoiceOutputGains(instance.Voice, spatial.LeftGain, spatial.RightGain);
             if (result == AudioResult::Success)
             {
                 instance.LastLeftGain = spatial.LeftGain;
                 instance.LastRightGain = spatial.RightGain;
-                const float ratio = GetSpatialFrequencyRatio(instance.Params.PitchSemitones, instance.DopplerRatio,
-                                                             instance.MaxFrequencyRatio);
+                const float ratio = GetInstanceFrequencyRatio(instance);
                 result = m_Service.SetVoiceFrequencyRatio(instance.Voice, ratio);
                 if (result == AudioResult::Success)
                 {
@@ -531,20 +571,128 @@ namespace NorvesLib::Modules::Audio::Private
             if (instance.Voice.IsValid())
             {
                 m_Service.AbortVoice(instance.Voice);
+                instance.Voice = {};
             }
             return result;
         }
 
-        const uint32_t index = AcquireSlot();
-        instance.Generation = m_Instances[index].Generation;
-        instance.bActive = true;
-        instance.PlaySequence = ++m_PlaySequence;
         instance.LastVoiceVolume = volume;
-        m_Instances[index] = std::move(instance);
-        ++m_Diagnostics.ActiveInstanceCount;
-        outHandle = SoundInstanceHandle{index, m_Instances[index].Generation};
-        RecordPlay(id, position, bGlobal);
         return AudioResult::Success;
+    }
+
+    uint32_t SoundSystem::GetPhysicalVoiceCount() const
+    {
+        return m_Diagnostics.ActiveInstanceCount - m_Diagnostics.Voice.VirtualVoiceCount;
+    }
+
+    void SoundSystem::VirtualizeInstance(Instance& instance)
+    {
+        const AudioResult result = m_Service.AbortVoice(instance.Voice);
+        if (result != AudioResult::Success && result != AudioResult::StaleHandle)
+        {
+            AudioVoiceState state = AudioVoiceState::Destroyed;
+            if (m_Service.GetVoiceState(instance.Voice, state) == AudioResult::Success &&
+                state != AudioVoiceState::Quarantined)
+            {
+                // 停止に失敗して鳴り続けるボイスは保持し、次の Update で休眠を再び試す。
+                return;
+            }
+        }
+        instance.Voice = {};
+        instance.bVirtual = true;
+        ++m_Diagnostics.Voice.VirtualVoiceCount;
+        ++m_Diagnostics.Voice.VirtualizeCount;
+    }
+
+    void SoundSystem::TryDevirtualizeInstance(Instance& instance)
+    {
+        if (!IsValidVolume(GetVoiceVolume(instance)) || GetPhysicalVoiceCount() >= m_Config.MaxConcurrentVoices)
+        {
+            return;
+        }
+        const auto definition = m_Definitions.find(instance.DefinitionId);
+        if (definition != m_Definitions.end() && definition->second.MaxInstances > 0)
+        {
+            uint32_t definitionCount = 0;
+            for (const Instance& other : m_Instances)
+            {
+                if (other.bActive && !other.bVirtual && other.DefinitionId == instance.DefinitionId)
+                {
+                    ++definitionCount;
+                    if (definitionCount >= definition->second.MaxInstances)
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+        if (!instance.Clip || !instance.Clip->IsValid() || instance.Clip->GetFrameCount() != instance.FrameCount)
+        {
+            instance.Clip = Core::Container::MakeShared<AudioClipResource>(instance.PcmBlob, instance.Format, instance.FrameCount);
+        }
+        if (StartInstanceVoice(instance, GetResumeFrame(instance)) == AudioResult::Success)
+        {
+            instance.bVirtual = false;
+            --m_Diagnostics.Voice.VirtualVoiceCount;
+            ++m_Diagnostics.Voice.DevirtualizeCount;
+        }
+    }
+
+    float SoundSystem::GetInstanceFrequencyRatio(const Instance& instance) const
+    {
+        if (instance.bSpatial)
+        {
+            return GetSpatialFrequencyRatio(instance.Params.PitchSemitones, instance.DopplerRatio, instance.MaxFrequencyRatio);
+        }
+        const float maxRatio = std::exp2(instance.VoiceDesc.MaxPitchSemitones / 12.0f);
+        return std::clamp(std::exp2(instance.Params.PitchSemitones / 12.0f), kAudioMinVoiceFrequencyRatio, maxRatio);
+    }
+
+    uint64_t SoundSystem::Instance::GetPlaybackEndFrame() const
+    {
+        if (FrameCount == 0)
+        {
+            return 0;
+        }
+        if (VoiceDesc.bLoop && VoiceDesc.LoopLengthFrames != 0)
+        {
+            return static_cast<uint64_t>(VoiceDesc.LoopBeginFrame) + VoiceDesc.LoopLengthFrames;
+        }
+        return FrameCount;
+    }
+
+    bool SoundSystem::AdvancePlayFrame(Instance& instance, float deltaSeconds) const
+    {
+        const double endFrame = static_cast<double>(instance.GetPlaybackEndFrame());
+        if (endFrame == 0.0)
+        {
+            return false;
+        }
+        instance.PlayFrame += static_cast<double>(deltaSeconds) * instance.Format.SampleRate *
+                              GetInstanceFrequencyRatio(instance);
+        if (instance.PlayFrame < endFrame)
+        {
+            return false;
+        }
+        if (instance.VoiceDesc.bLoop)
+        {
+            const double beginFrame = instance.VoiceDesc.LoopBeginFrame;
+            instance.PlayFrame = beginFrame + std::fmod(instance.PlayFrame - beginFrame, endFrame - beginFrame);
+            return false;
+        }
+        instance.PlayFrame = endFrame;
+        return true;
+    }
+
+    uint32_t SoundSystem::GetResumeFrame(const Instance& instance) const
+    {
+        const uint64_t endFrame = instance.GetPlaybackEndFrame();
+        if (endFrame == 0)
+        {
+            return 0;
+        }
+        const double lastFrame = static_cast<double>(std::min<uint64_t>(endFrame - 1, UINT32_MAX));
+        return static_cast<uint32_t>(std::clamp(std::floor(instance.PlayFrame), 0.0, lastFrame));
     }
 
     float SoundSystem::ResolveFadeSeconds(const SoundFade& fade, uint32_t defaultMs, bool bStopping)
@@ -649,7 +797,7 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return AudioResult::InvalidState;
         }
-        if (volume == instance.LastVoiceVolume ||
+        if (instance.bVirtual || volume == instance.LastVoiceVolume ||
             (instance.bSpatial && volume != 0.0f &&
              std::fabs(volume - instance.LastVoiceVolume) <= kAudioSpatialParameterEpsilon))
         {
@@ -666,6 +814,15 @@ namespace NorvesLib::Modules::Audio::Private
     AudioSpatialResult SoundSystem::Instance::ComputeSpatial(const AudioListenerState& listener)
     {
         const AudioSpatialResult spatial = ComputeAudioSpatial(listener, Position, Velocity, SpatialSettings);
+        // 帯の内側では直前の距離判定を維持する。
+        if (spatial.Distance > SpatialSettings.MaxDistance * kSoundVirtualEnterDistanceScale)
+        {
+            bVirtualByDistance = true;
+        }
+        else if (spatial.Distance <= SpatialSettings.MaxDistance)
+        {
+            bVirtualByDistance = false;
+        }
         SpatialVolumeScale = spatial.RearVolumeScale;
         RearHighFrequencyFactor = spatial.RearHighFrequencyFactor;
         DopplerRatio = spatial.DopplerRatio;
@@ -683,6 +840,10 @@ namespace NorvesLib::Modules::Audio::Private
         }
 
         const AudioSpatialResult spatial = instance.ComputeSpatial(m_Listener);
+        if (instance.bVirtual)
+        {
+            return;
+        }
         if (std::fabs(spatial.LeftGain - instance.LastLeftGain) > kAudioSpatialParameterEpsilon ||
             std::fabs(spatial.RightGain - instance.LastRightGain) > kAudioSpatialParameterEpsilon)
         {
@@ -722,7 +883,7 @@ namespace NorvesLib::Modules::Audio::Private
         for (uint32_t index = 0; index < m_Instances.size(); ++index)
         {
             Instance& instance = m_Instances[index];
-            if (!instance.bActive)
+            if (!instance.bActive || instance.bVirtual)
             {
                 continue;
             }
@@ -741,8 +902,9 @@ namespace NorvesLib::Modules::Audio::Private
                 }
             }
         }
-        for (Instance& instance : m_Instances)
+        for (uint32_t index = 0; index < m_Instances.size(); ++index)
         {
+            Instance& instance = m_Instances[index];
             if (!instance.bActive)
             {
                 continue;
@@ -750,6 +912,17 @@ namespace NorvesLib::Modules::Audio::Private
             instance.AgeSeconds += deltaSeconds;
             if (instance.bStopVoiceIssued)
             {
+                continue;
+            }
+            if (instance.bVirtual && instance.bStopRequested)
+            {
+                ReleaseSlot(index);
+                continue;
+            }
+            const bool bReachedEnd = AdvancePlayFrame(instance, deltaSeconds);
+            if (instance.bVirtual && bReachedEnd)
+            {
+                ReleaseSlot(index);
                 continue;
             }
             if (instance.bSpatial)
@@ -777,7 +950,19 @@ namespace NorvesLib::Modules::Audio::Private
                 }
             }
             ApplyVolume(instance);
-            if (instance.bStopRequested && instance.FadeElapsedSeconds >= instance.FadeSeconds)
+            if (!instance.bStopRequested)
+            {
+                const bool bWantsVirtual = instance.bVirtualByDistance || instance.bVirtualRequested;
+                if (bWantsVirtual && !instance.bVirtual)
+                {
+                    VirtualizeInstance(instance);
+                }
+                else if (!bWantsVirtual && instance.bVirtual)
+                {
+                    TryDevirtualizeInstance(instance);
+                }
+            }
+            else if (instance.FadeElapsedSeconds >= instance.FadeSeconds)
             {
                 // 失敗時も再送しない。以後の物理寿命はサービスの終端通知と終了処理が持つ。
                 instance.bStopVoiceIssued = true;
@@ -826,6 +1011,11 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return AudioResult::InvalidState;
         }
+        if (instance->bVirtual)
+        {
+            instance->Params.PitchSemitones = semitones;
+            return AudioResult::Success;
+        }
         if (instance->bSpatial)
         {
             const float ratio = GetSpatialFrequencyRatio(semitones, instance->DopplerRatio, instance->MaxFrequencyRatio);
@@ -867,6 +1057,30 @@ namespace NorvesLib::Modules::Audio::Private
         }
         instance->PendingPosition = position;
         instance->bHasPendingPosition = true;
+        return AudioResult::Success;
+    }
+
+    AudioResult SoundSystem::SetInstanceAudible(SoundInstanceHandle handle, bool bAudible)
+    {
+        if (!IsOwnerThread() || m_bShutdown)
+        {
+            return AudioResult::InvalidState;
+        }
+        Instance* instance = Resolve(handle);
+        if (instance == nullptr)
+        {
+            return AudioResult::StaleHandle;
+        }
+        if (instance->bStopRequested)
+        {
+            return AudioResult::InvalidState;
+        }
+        const bool bRequestVirtual = !bAudible;
+        if (instance->bVirtualRequested == bRequestVirtual)
+        {
+            return AudioResult::AlreadyInState;
+        }
+        instance->bVirtualRequested = bRequestVirtual;
         return AudioResult::Success;
     }
 
@@ -938,6 +1152,9 @@ namespace NorvesLib::Modules::Audio::Private
         diagnostics.Voice.StolenVoiceCount = m_Diagnostics.Voice.StolenVoiceCount;
         diagnostics.Voice.RejectedPlayCount = m_Diagnostics.Voice.RejectedPlayCount;
         diagnostics.Voice.SuppressedByCooldownCount = m_Diagnostics.Voice.SuppressedByCooldownCount;
+        diagnostics.Voice.VirtualVoiceCount = m_Diagnostics.Voice.VirtualVoiceCount;
+        diagnostics.Voice.VirtualizeCount = m_Diagnostics.Voice.VirtualizeCount;
+        diagnostics.Voice.DevirtualizeCount = m_Diagnostics.Voice.DevirtualizeCount;
         return diagnostics;
     }
 
@@ -980,6 +1197,10 @@ namespace NorvesLib::Modules::Audio::Private
 
     void SoundSystem::ReleaseSlot(uint32_t index)
     {
+        if (m_Instances[index].bVirtual)
+        {
+            --m_Diagnostics.Voice.VirtualVoiceCount;
+        }
         const uint32_t generation = m_Instances[index].Generation;
         m_Instances[index] = Instance{};
         m_Instances[index].Generation = generation;

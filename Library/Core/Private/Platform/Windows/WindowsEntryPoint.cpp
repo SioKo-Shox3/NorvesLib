@@ -9,6 +9,12 @@
 
 namespace
 {
+    void EnableProcessDpiAwareness()
+    {
+        // 表示倍率が 100% を超える環境で OS に引き伸ばされず、ウィンドウの寸法を物理 px で扱うため。
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+
     /**
      * @brief wchar_t 文字列を Container::String（TString<TCHAR>）に変換する
      *
@@ -154,6 +160,8 @@ int WINAPI WinMain(
     LPSTR /* lpCmdLine */,
     int /* nCmdShow */)
 {
+    EnableProcessDpiAwareness();
+
     NorvesLib::Core::Boot::BootConfig config = NorvesLib::Core::Boot::CreateApplicationBootConfig();
     config.Arguments = ParseWindowsCommandLine();
 

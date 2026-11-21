@@ -8,9 +8,9 @@
 
 ## 範囲
 
-モノラル音源の距離減衰、等パワーのパン、近距離の広がり、背後の減衰、ドップラーを扱う。リスナーの選択、Entity に追従する音源の位置、各係数を voice に渡す時点も対象とする。
+モノラル音源の距離減衰、等パワーのパン、近距離の広がり、背後の減衰、ドップラーを扱う。リスナーの選択、Entity に追従する音源の位置、各係数を voice に渡す時点、MaxDistance の外の音と呼び出し側の指定による休眠と復帰（`G16-GR73-VIRTUAL-VOICE`）も対象とする。
 
-休眠 voice（`G16-GR73-VIRTUAL-VOICE`）、バス（`G16-GR73-BUS-MIXER`）、リバーブ（`G16-GR73-REVERB-OCCLUSION`）、voice ごとのフィルタと遮蔽（`G16-GR73-ACOUSTICS-AI-WIRE`）は範囲外とする。
+バス（`G16-GR73-BUS-MIXER`）、リバーブ（`G16-GR73-REVERB-OCCLUSION`）、voice ごとのフィルタと遮蔽（`G16-GR73-ACOUSTICS-AI-WIRE`）は範囲外とする。
 
 ## 定義
 
@@ -87,6 +87,16 @@
 
 3D の左右の利得は、両方とも前回の適用値との差が ε = 1e-4 以下なら更新を省く。3D の周波数比は再生開始時に丸めて送り、成功した値を保存する。毎フレームの更新と `SetPitch` では丸めた比を前回の適用値と同じ ε で比較し、差が ε を超えたときだけ送る。送信に成功した比を次の比較に使う。3D の voice の音量も差が ε 以下なら更新を省くが、非ゼロから厳密に 0 へ変わるときは送る。2D の voice の音量は前回の適用値と完全に一致するときだけ省く。
 
+### 休眠と復帰
+
+休眠中（`bVirtual`）は、物理の voice を持たずに論理インスタンスの再生位置を進める。休眠を望む条件は `bVirtualByDistance || bVirtualRequested` である。距離の理由は 3D のみに適用し、d > MaxDistance × 1.05 で立て、d ≤ MaxDistance で外す。間の帯では前の値を保つ。倍率 1.05 は仮の値である。呼び出し側の理由は `ISoundSystem::SetInstanceAudible` の `false` で立て、`true` で外す。両方の理由が外れたら `Update` で復帰を試みる。
+
+`PlayFrame` は毎 `Update` で dt × サンプルレート × 周波数比だけ進む。周波数比は 2D ならピッチの比、3D ならピッチの比 × ドップラー比を [1/1024, voice 作成時の上限] に収めた値である。ループは終端で [LoopBegin, LoopEnd) に折り返し、`LoopLength` が 0 なら clip の末尾を `LoopEnd` とする。再開時は `floor(PlayFrame)` をループの終端または clip の末尾の手前に収め、`AudioVoiceDesc::StartFrame` に渡す。
+
+全体の `MaxConcurrentVoices` と定義の `MaxInstances` のどちらにも物理の voice だけを数える。定義の `StopOldest` と優先度による奪取も物理の voice のみを対象とする。復帰には両方の上限に空きが必要で、ほかの voice は奪わない。定義が消えているときと `MaxInstances` が 0 のときは、定義ごとの制限はない。
+
+`AudioDiagnostics` の `VirtualVoiceCount` は現在休眠中の数、`VirtualizeCount` は物理の voice から休眠に移った回数、`DevirtualizeCount` は復帰に成功した回数である。距離により休眠状態で開始した音は、この 3 欄のうち `VirtualVoiceCount` にだけ含める。論理サウンド層がこれらを数え、ボイス層の値は 0 とする。`SoundSystemDiagnostics::ActiveInstanceCount` は休眠中も含む。
+
 ## 受入れの閾値
 
 下表の値は、試験で照合せず、式が満たすべき性質を定義する参照値とする。
@@ -103,9 +113,18 @@
 | ドップラーの符号と量 | リスナーは静止、音源は 20 m/s で接近、c = 343 m/s、DopplerScale = 1 | 343/(343 − 20) = 1.0619（±1e-3） |
 | ドップラーの上下限と無効化 | 接近・離脱の速度を変える | 比を [0.5, 2.0] に収め、DopplerScale = 0 で 1.0 |
 | 距離利得の一致 | 同じ曲線・設定・標本距離 | 音の定位は `Core::Scene::EvaluateAcousticDistanceGain` を呼び、`DistanceGain` は各標本でその戻り値と一致 |
+| 休眠に入る距離 | 3D で距離の理由がまだない | d > MaxDistance × 1.05（倍率は仮）。`PlayAt` 時点で条件を満たせば休眠状態で開始 |
+| 距離による復帰 | 3D で距離の理由が立っている | d ≤ MaxDistance で距離の理由を外す |
+| 境界での切替 | 距離だけを変える | 閾値の交差ごとに最大 1 回。MaxDistance < d ≤ MaxDistance × 1.05 の帯内は 0 回 |
+| 再開の位置 | 休眠から復帰する | `floor(PlayFrame)` をループの終端または clip の末尾の手前に収めたフレーム。`LoopBegin` = 0、ピッチ 0 半音、ドップラーなしのループでは経過フレーム数（整数）mod ループ長 |
+| ワンショットの完了 | 休眠中に clip の末尾に達する | その `Update` で回収し、ハンドルは古くなる |
+| 上限と奪取 | 休眠中のインスタンス | 全体・定義ごとの上限に数える件数と、奪取の候補に含める件数はいずれも 0 |
+| 停止・終了後の物理の voice | `Stop` または `StopOwner` の対象の回収後、および `Shutdown` 後の全体 | 対象の物理の voice の作成数 − 破棄数 = 0 |
 
 距離の標本で Min を 2 m とするのは、`InverseClamped` の既定の Min = 1 m、Max = 50 m では、1.0 m から 1.1 m の間に利得が約 0.093 下がるためである。
 
 ## 作者が聴くときの見どころ
 
 `G16-GR73-SPATIAL-CHECK` では、World3D の `AudioComponent` を付けた Entity をカメラの周りで動かす。左右を横切ると音像が移り、同じ距離のまま背後に回ると音量が下がることを聴く。遠近による音量差と、接近時に音程が上がり、離脱時に下がる変化も聴き分ける。
+
+ループする 3D 音源から MaxDistance × 1.05 より遠くへ離れ、MaxDistance の内側に戻る。休眠中の経過分だけ進んだ位置から音が再開し、境界付近の小さな往復で途切れと再開を繰り返さないことを聴く。

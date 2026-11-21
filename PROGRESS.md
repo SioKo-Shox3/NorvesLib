@@ -12920,6 +12920,183 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: 今は `MarkCameraCut` を呼ぶ処理が無いので、普段の見た目は変わらない。ランチャーから入るシーンでカメラを動かし続けたとき、モーションブラーと TAA が途切れずに効くこと（描かずに捨てたパケットの次のフレームでもカメラの動きの分のブラーが残る）。
 - Next: ランナーの評価者の反証（危険地帯）。`CutSerial` を進める側（G14-GR62-DIRECTOR の Cut とカットシーンの出入り、テレポート・ファストトラベル・時間の飛ばしからの `MarkCameraCut`）。
 - Notes: 採った判断: 前のカメラを残す条件に `packet.bHasMainCamera` も入れた（メインカメラが無いパケットでは `camera` が既定値で、一致を見ても意味が無いため）。既知の限界: RenderThread が自分の照合だけでカットと見なしたフレームでは、パストレーサーの instance の前の変換を 1 フレームだけ捨てる（連番でない PT の描画で、そのフレームだけ動く物のシャッターの補間が無い）。カットの次のフレームで、前のカメラと物の前の変換の基準がずれ、モーションブラーが少しずれることがある。HiZ の `CutSerial` の未照合は上の `要起票:` のまま。
+
+### G15-GR68-CANVAS-BOOT 製品の UI のための Canvas の起動の設定・撮影の UI・画面の解像度の Canvas・UI の入力の優先度・高 DPI（2026-11-21、run 20261121-141819）
+- U1 InputRouter に UI の優先度 PriorityUI = 500 を足す: 着地(直し 0 回)
+- U2 BootConfig に bEnableCanvasView と引数で整える関数を足し、--capture-ui で撮影に Canvas を残し、Game が UI の起動のときだけ Canvas を作る: 着地(直し 0 回)
+- U3 CompositePass の出力をキャンバスの寸法にして、シーンとキャンバスを別の大きさのまま UV で合成する: 着地(直し 0 回)
+- U4 プロセスの最初に Per-Monitor V2 の DPI awareness を有効にし、WM_DPICHANGED で OS の提案の矩形へ動かす: 着地(直し 0 回)
+- U5 BootConfig の窓の寸法を物理 px と書き、RenderingFlow.md に Canvas の寸法・合成・撮影・DPI・入力の順位を書く: 着地(直し 0 回)
+- Done(反復 1): (1) `BootConfig::bEnableCanvasView`(既定 false)と `BootConfig::ConfigureFromArguments`(起動引数で起動設定を整える関数。`AppLauncher.cpp` の `RunApplication` が初期化の前に呼ぶ)を足し、`ApplicationProcessor::Initialize` は `--enable-canvas-view` と同じ経路で Canvas を作る。Game(`Game/Boot/GameBoot.cpp`)は `--game-flow`・`--scene=ui-gallery`・`--capture-ui` のときだけ true にする。(2) `--capture-ui` を足し、`--capture-png` と一緒のときだけ Canvas の打ち消しを外す(無い撮影は今のまま)。(3) `CompositePass` はキャンバスがあるとき `Composite.Color` をキャンバスの寸法(画面)で作り、ビューポートを出力全体にして、RenderScale の寸法のシーンと画面の寸法のキャンバスを UV で合成する。(4) `InputRouter::PriorityUI = 500`。(5) `WinMain` の最初で Per-Monitor V2 の DPI aware にし、外枠を `AdjustWindowRectExForDpi` で求めてクライアント領域を `BootConfig::WindowWidth/Height` の物理 px にし、`WM_DPICHANGED` で OS の提案の矩形へ動かす(寸法の変化はスワップチェーンの OutOfDate の再作成の経路で描画へ伝わる)。DPI の有効化は単独のコミット(d149f02f)。BootConfig のコメントと `Docs/Architecture/RenderingFlow.md` の節「Canvas(画面空間の UI)と画面の寸法」に書いた。
+- 証拠(反復 1): `.harness/runs/20261121-141819/G15-GR68-CANVAS-BOOT-U5-verify.txt`(全部を載せた版で `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致)。
+- Next(反復 1): ランナーの評価者の反証(危険地帯: Public API の `BootConfig`・`InputRouter`、`CompositePass`)。画素の確かめは G15-GR68-UI-CHECK。
+- Notes(反復 1): 調べた事実: Canvas とキャンバスのカメラ(`RenderingCoordinator::CreateCanvasView`・`UpdateCanvasCameraForRenderResolution`・`BuildViewportRenderPlan` の canvas 分岐)は前から画面の寸法(`GetCanvasWidth/Height` = `m_Width/m_Height`)で作られていたので変えていない。直したのは CompositePass の出力の寸法とビューポートだけ。
+- Notes(反復 1): 判断: Game の `CreateApplicationBootConfig()` は起動引数が入る前に呼ばれる(`WindowsEntryPoint.cpp`)ので、引数で決める設定のために `BootConfig::ConfigureFromArguments` を足した。`--game-flow` と `--scene=ui-gallery` はまだ Game に実装が無く、引数を見て Canvas を作るだけ。
+- Notes(反復 1): 試験(`CanvasResolutionTest`・`DpiAwarenessPolicyTest`)は作らない決まりなので作らず、試験のためだけの DPI の純関数も作っていない。`Test/` は既に無く、消した試験は無い。撮影・アプリの起動の確かめは回さない決まり。
+- Notes(反復 1): 人が見るときの見どころ: (a) 表示倍率 125〜150% のモニターで Game を起動し、ランチャーと Rendering3DTest がぼけず、窓のクライアント領域が 1280×720 の物理 px になる(ログの `WindowsWindow dpi=... client=1280x720`)。倍率の違うモニターへ窓を動かすと窓の大きさが追従し、描画が崩れない。(b) `--enable-canvas-view` を付け、RenderScale を 0.5 にしたときに Canvas の板(文字など)が画面の解像度のままでぼけない。(c) `--capture-png=... --capture-ui --enable-canvas-view` で撮った PNG に Canvas が載り、`--capture-ui` が無ければ載らない(キャンバスがあると PNG は画面の寸法になる)。(d) 既定の起動(引数なし)ではログに `enable_canvas_view` が出ず、起動画面が変わらない。
+- U6 メインウィンドウのクライアント領域の寸法の変化を RenderWorld::Resize へ伝え、--capture-ui の警告を実際の動きに合わせる: 着地(直し 0 回)
+- Done(反復 2): 差し戻し(`WM_SIZE` で変わったクライアント領域の寸法が描画へ伝わらない)を直した。`IWindow::GetClientSize`(既定は false)を足し、`WindowsWindow` が `WM_SIZE` で保つ物理 px を返す。`ApplicationProcessor::ProcessPlatformMessages` が `PumpMessages()` の直後にメインウィンドウの寸法を読み、既存の `RenderWorld::Resize` へ渡す(同じ寸法なら何もしない。変わったときは次の `BeginFrame` で描画の完了を待ち、`RenderingCoordinator::Resize` がスワップチェーン・RenderScale の寸法・Canvas とキャンバスのカメラ・各 View を作り直す)。`--capture-png` 無しの `--capture-ui` の警告を「撮影には効かない(Canvas の有無は起動設定に従う)」に直し、`RenderingFlow.md` の DPI の箇条を新しい経路に合わせた。
+- 証拠(反復 2): `.harness/runs/20261121-141819/G15-GR68-CANVAS-BOOT-U6-verify.txt`(`cmake --build build --config Debug --target Game -- /m:1` は 1 回目が別の枠の同時ビルドによる C1060(コンパイラのヒープ不足、`World.cpp`)で EXIT=1、同じソースのまま回し直して EXIT=0 で Game.exe まで。変えた `ApplicationProcessor.cpp`・`WindowsWindow.cpp` はコンパイルの一覧に入りエラー無し。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。
+- Next(反復 2): ランナーの評価者の反証(危険地帯: Public API の `IWindow`・`BootConfig`・`InputRouter`)。画素の確かめは G15-GR68-UI-CHECK。
+- Notes(反復 2): 人が見るときの見どころ: (d) Game の窓を表示倍率の違うモニターへ動かすか、窓の端をドラッグして大きさを変えると、ログに `RenderWorld::Resize(w, h) - queued for next BeginFrame` と `RenderingCoordinator::Resize(w, h)` が出て、`--enable-canvas-view` の Canvas の UI が新しい寸法のまま崩れない(引き伸ばされない・切れない)。
+
+## G16-GR73-VIRTUAL-VOICE（2026-11-21、run 20261121-141619）
+- U1 voice の作成を位置付きの口に切り出し、再生の位置を仮想の時計で追う: 着地(直し 0 回)
+- U2 休眠の設計を音の流れの文書と GR73 の受入れ記録に書く: 着地(直し 0 回)
+- U3 休眠と復帰(距離のヒステリシス・呼び出し側の口・診断)を SoundSystem に入れる: 着地(直し 1 回)
+- Done(反復 2、run 20261121-141619): `SoundSystem` に休眠(virtual voice)を入れた。3D の音は距離が MaxDistance × 1.05(仮の値。`SoundSystem.cpp` の `kSoundVirtualEnterDistanceScale`)を超えると休眠し、MaxDistance 以下へ戻ると復帰する(間の帯は前の状態を保つので、境界の往復で切替は交差ごとに最大 1 回)。呼び出し側の口 `ISoundSystem::SetInstanceAudible(handle, bool)` を足した(GR75 の −55dB の休眠が使う)。休眠では `AbortVoice` で物理の voice を止めて破棄し、`SoundInstance` とハンドルは残す。再生の位置は仮想の時計(dt × サンプルレート × 周波数比。ループは折り返し、ワンショットは末尾で完了として回収)で進め、復帰は `StartInstanceVoice(instance, 再開の位置)` で `AudioVoiceDesc::StartFrame` 付きに作り直す(G16-GR74-STREAM-VOICE はこの口の位置をデコーダの Seek に使う)。休眠中は同時発音の上限・定義の MaxInstances・奪取から外し、`PlayAt` の時点で範囲外なら voice を作らずに休眠のまま始める。休眠中の Stop・StopOwner・ReleaseOwner(ループ)・登録解除・バンクの解放は次の `Update` で voice なしに回収し、Shutdown は全部回収する。`AudioDiagnostics` に VirtualVoiceCount・VirtualizeCount・DevirtualizeCount を足した。設計は `Docs/Architecture/AudioFlow.md` の「休眠(virtual voice)」と `Docs/AudioValidation/GR73Acceptance.md` の「休眠と復帰」。
+- 証拠(反復 2): `.harness/runs/20261121-141619/verify-G16-GR73-VIRTUAL-VOICE-iter2-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が cmake exit code 0 で Game.exe まで。`SoundSystem.cpp` を再コンパイル。警告は既存の libwebsockets の MSB8065 だけ。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。done-when の `AudioVirtualVoiceTest`、verify の ctest の行と `Scripts/Test-M9World.ps1 -ContractOnly` は、試験を作らない・回さない決まりにより作っていない・回していない。
+- Next(反復 2): ランナーの評価者の反証(危険地帯: voice の寿命、Public API の `ISoundSystem`・`AudioTypes.h`)。人が聴くときの見どころ: World3D の `AudioComponent` でループの音を鳴らす Entity を MaxDistance の外まで離してから戻し、戻ったときに頭からでなく途中の位置から続くこと、MaxDistance の近くで行き来させても途切れと再開が繰り返さないこと。
+- Notes(反復 2): 採った判断: 休眠・復帰の切替にはフェードを掛けない(距離の理由は距離の利得が 0、呼び出し側の理由は −55dB 未満で呼ぶ前提)。復帰は物理の voice に空きがあるときだけで、満ちていれば休眠のまま毎 `Update` 試す(復帰のためにほかの voice を奪わない)。`AbortVoice` で停止そのものに失敗して voice がまだ鳴っている(隔離されていない)ときは、voice を保持して次の `Update` で休眠を試し直す。既知の限界: ヒステリシスの 1.05 は仮の値。物理の voice がある間の再生の位置は、実際の再生位置ではなく同じ仮想の時計による近似。復帰の作り直しがバックエンドの故障で失敗し続けると、毎 `Update` で作成と破棄を試し続ける。
+- Done(反復 3、run 20261121-141619): 前回の差し戻しの原因を調べた。verify の 3 行目 `Scripts/Test-M9World.ps1 -ContractOnly` は、2026-11-14 の c9226a9b(試験だけが使うスクリプトの削除)で消えたスクリプトを呼んでいて、実装に関係なく「-File の引数が存在しません」で落ちる。1 行目のビルドは exit=0、2 行目の ctest は回さない決まりで通っている(`.harness/runs/20261121-141619/recheck-G16-GR73-VIRTUAL-VOICE-2-*.txt`)。実装は変えていない。
+- Next(反復 3): 判断役が verify から消えたスクリプトの行を外す(推奨は G16-GR73-SPATIAL-LISTENER と同じ `cmake --build build --config Debug --target Game -- /m:1` の 1 行)。外れたらビルドを確かめて done にするだけ。
+- Done(反復 4、run 20261121-141619): 判断役の決定に従い、verify を `cmake --build build --config Debug --target Game -- /m:1` の 1 行にした(消えたスクリプトの行と ctest の行、試験のターゲット `AudioBackendLifetimeTest` を外した。done-when は変えていない)。実装は変えず、ビルドで確かめて done にした。
+- 証拠(反復 4): `.harness/runs/20261121-141619/verify-G16-GR73-VIRTUAL-VOICE-iter4-game-build.txt` と `verify-G16-GR73-VIRTUAL-VOICE-iter4-game-build-exitcode.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK`・C1060 は 0 件。ソースは反復 2 から変わっていないので再コンパイルは無い)。
+- Next(反復 4): ランナーの評価者の反証(危険地帯: voice の寿命。休眠中の Stop・StopOwner・Shutdown で voice が漏れないこと、ヒステリシス、同時発音の上限と奪取から休眠中を外すこと、`AudioDiagnostics` の 3 つの値)。人が聴くときの見どころは反復 2 の Next のとおり。
+- Notes(反復 4): done-when (3) の `AudioVirtualVoiceTest` と M9 の契約の確かめは、試験を作らない・回さない決まりにより作っていない・回していない。撮影・計測の確かめは回さない決まり。
+- U4 休眠の経路で物理の経路が拒む入力を受けないようにする(差し戻しの 3 件): 着地(直し 0 回)
+- Done(反復 5、run 20261121-141619): 評価者の差し戻しの 3 件を直した。(1) 開始時に選んだクリップの PCM(`AssetBlob` を共有)・形式・フレーム数を `SoundSystem::Instance` に控え、仮想の時計(`AdvancePlayFrame`・`GetPlaybackEndFrame`)はその控えで進める。復帰で元のクリップが無効(`Unload()` 済み)かフレーム数が変わっていれば、控えから `AudioClipResource` を作り直してから voice を作る。元のクリップを解放しても、休眠中のワンショットは期限で完了し、ループは戻れる(物理の voice がサービスの記録で PCM を持ち続けるのと同じ扱い)。(2) `CreateVoice` のフレーム数と再生区間の検査を `IsPlayableVoiceDesc`(`AudioDomain.h`)にまとめ、3D の `Play` でクリップを選んだ直後(奪取とスロットの確保の前)にも当てた。空のクリップ・末尾から始まるループ・ループ区間付きのワンショットは、開始の距離によらず `InvalidState` になる。(3) `ApplyVolume` の合成音量の検査を休眠の判定より前へ移し、休眠中の無効な `SetVolume` は値を戻して `InvalidState` を返す。マスター音量・カテゴリ音量の変更で合成音量が無効になったときは、`TryDevirtualizeInstance` が voice を作らずに休眠のまま待つ。
+- 証拠(反復 5): `.harness/runs/20261121-141619/verify-G16-GR73-VIRTUAL-VOICE-iter5-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`AudioDomain.cpp`・`SoundSystem.cpp` を再コンパイル。`error C`・`error LNK`・`warning C` は 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。
+- Next(反復 5): ランナーの評価者の反証(前回の指摘 3 件への対応の差分)。人が聴くときの見どころは反復 2 の Next のとおり。
+- Notes(反復 5): 採った判断: 2D の音は開始の時点で休眠にならないので、クリップの選び方の順(奪取の後)は変えず `CreateVoice` の検査に任せた。3D の物理の開始も、不正な定義では既存の voice を奪う前に拒むようになった。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
+- U5 1 voice の PCM のバイト数の上限を共通の検査に足す: 着地(直し 0 回)
+- Done(反復 1、run 20261121-180853): 判断役の決定で差し替えた done-when (3) を入れた。1 voice に渡せる PCM のバイト数の上限 `kAudioMaxVoicePcmBytes`(2 GiB。`AudioDomain.h`)を置き、`IsPlayableVoiceDesc` が PCM のバイト数も受けて 0 バイトと上限超えを拒む(説明のコメントも付けた)。サービスの `CreateVoice` と 3D の `Play`(奪取とスロットの確保の前)が同じ検査を通るので、上限を超える PCM は開始の距離に関わらず `InvalidState` で拒まれ、休眠のハンドルは出ない。`XAudio2Backend.cpp` の `static_assert` で、定数が `XAUDIO2_MAX_BUFFER_BYTES` を超えないようにした。`Docs/Architecture/AudioFlow.md` の休眠の節に上限を書いた。
+- 証拠(反復 1): `.harness/runs/20261121-180853/verify-G16-GR73-VIRTUAL-VOICE-iter1-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が cmake exit code 0 で Game.exe まで。`AudioDomain.cpp`・`SoundSystem.cpp`・`XAudio2Backend.cpp` を再コンパイル。エラーは 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。
+- Next(反復 1): ランナーの評価者の反証(前回の指摘 1 件への対応の差分)。人が聴くときの見どころは反復 2 の Next のとおり。
+- Notes(反復 1): 採った判断: 上限の定数は `AudioDomain.h` に置き、XAudio2 のバックエンドがそれを include して static_assert で照らす。サービスの共通の検査なので、Null のバックエンドでも同じ上限で拒む。範囲の外に残したもの: 2D の音の奪取と検査の順、ロードし直しでの形式の変化の検出、復帰の失敗を毎 Update 試し直すこと(文書に書いた既知の限界)。done-when (3) の試験は判断役の決定で外れた。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
+
+- U1 表面の記述に草のしきい値の欄を足し、地形の層の表面名を語彙に足す: 着地(直し 0 回)
+- U2 HitEffectEmitter の表面の選択で parent をたどる: 着地(直し 0 回)
+- U3 足ごとの接地の表面を持つ GroundContactComponent: 着地(直し 0 回)
+- U4 地形と草の表面の provider と、濡れの 1 か所の関数: 着地(直し 1 回)
+- U5 Engine で provider を持って結び、HitEffect に登録簿を渡し、文書を直す: 着地(直し 0 回)
+## G13-GR115-GROUND-CONTACT（2026-11-21）
+- Done: 表面の記述に `vegetationDensityThreshold`（既定 0.35。`Surfaces.json` の Grass_Tall に 0.35）と、地形の層の表面名 6 種（Soil・Gravel・Moss・Mud・Sand・Water）を足した。`Scene/TerrainSurfaceProvider.h` に `TerrainSurfaceProvider`（4 頂点の双線形で上位 2 層とウェイトを返す。層→表面名は地形の材質の記述を登録簿で引き、層番号の変換はこの中だけ）・`VegetationSurfaceProvider`（密度がしきい値を超える所を Grass_Tall にし、`VegetationDensity01` を返す）・濡れの 1 か所の関数 `ComputeGroundWetness01`（環境の濡れ、無効なら地形の濡れと、草の水気の偏りを `ComputeEffectiveWetness` で合わせる）を置いた。`Engine::Engine` が 2 つをメンバで持ち、コンストラクタで優先度 200・100 で `BindSurfaceProvider`、デストラクタで外す。
+- Done: `Component/GroundContactComponent.h`（REFLECTION_CLASS・3 つのコンストラクタ。PROPERTY は足の数・足の関節名・足の局所の位置の予備・レイの長さ）。PostPhysics の群で、公開済みの物理のスナップショットの番号が変わったときだけ、体と足ごとに下向きの `RaycastClosest`（自分のコライダーを除く）と `QuerySurface` で `GroundContactState{Foot[4], Body, FootCount, StepSerial}` を更新する。`TickStages.md` の割当表に載せた。
+- Done: `HitEffectEmitter::SetSurfaceRegistry` を足し、`SelectEffect` は完全一致が無ければ登録簿の parent をたどる（登録簿が無ければ完全一致だけ）。Engine が登録簿を渡す。`SurfaceContract.md` に provider・しきい値・接地の状態・エフェクトのフォールバックを書いた。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件、警告は既存の shaderc の LNK4099 だけ）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致し、新規ファイルは BOM+CRLF。
+- done-when (4) の試験（`GroundContactStateTest` の新設、`HitEffectEmissionTest`・`SceneQuerySurfaceTest` のケース足し）と `QuerySurface` の時間の記録は、試験を作らない・回さない決まりにより作っていない。verify の ctest の行は回していない。
+- 人が見るときの見どころ: GroundContactComponent を付けた呼び手はまだ無く、どのシーンでも見た目は変わらない。当たりのエフェクトは、表に無い表面（Gravel・Soil など）に当たると親（Rock・Dirt_Mud）の効果が出る。起動のログに `SURFACE_PROVIDER_BIND_FAILED` が出ないことを見る。撮影・計測の確かめは回さない決まり。
+- Next: 足音の再生（GR75）・踏み倒し（GR44）は、足すときに `GroundContactState` を読む。
+- Notes: 判断: 足 IK（G9-GR14）は足の接地のレイの結果を外へ出していないので、足ごとに自前の下向きのレイを 1 本撃つ。GR59 の水たまりは CPU で水深を引ける形が無い（`SamplePuddlePotential` は凹み度）ので `PuddleDepthM` は 0。provider は照会ごとに `TerrainSystem::FindTerrain` で地形を引くので、地形の登録・解除に合わせず Engine の構築時に 1 回結ぶ。
+- U6 接地の自己ヒットを足ごとに撃ち直し、取得できないときは番号も戻し、型を Engine で登録して tick を消費者より先にする: 着地(直し 0 回)
+- U7 地形の材質表の層→表面名を地形の provider に結ぶ: 着地(直し 0 回)
+- U8 犬の水しぶきが接地の状態の点と法線を読み、文書を直してタスクのビルドを通す: 着地(直し 0 回)
+- Notes: 判断: 犬の足の水しぶき（`FootSplashComponent`）は、所有者に `GroundContactComponent` があり、脚の `FallbackJoint` と同じ関節の足が当たっていれば、その足の `Point` と `Normal` を地面に使う（無ければ従来の `QueryGround` と地形の高さ）。放出量の式（環境の生の濡れ・地形の `SamplePuddlePotential`・足の速度）と着地の通知の保留は変えていない。踏み倒し（GR44）は CPU 側に表面の判定が無いので置き換えるものが無い。
+- Done（差し戻しの直し）: 地形の材質表で読んだ層の表面名を地形の provider に結び、表の無い地形だけ仮の対応を使う。`GroundContactComponent` は自己ヒットのコライダーを標本ごとに覚えて撃ち直し（一度覚えれば以後は足ごとに 1 本。枠が満ちたら生きていない学習の枠を空ける）、物理のスナップショットの番号を取れないときは状態と `StepSerial` を 0 に戻す。`Engine::Engine` が型を登録し（`Game.exe` に型が残り、シーンの記述から名前で作れる）、tick の優先度を -1 にして同じ PostPhysics の消費者より先に更新する。`FindFootIndex` で関節名から足の番号を引ける。犬の足の水しぶきは同じ関節の足の当たりがあればその点と法線を使う。`SurfaceContract.md`・`TickStages.md` を直した。
+- 確かめ（差し戻しの直し）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件、警告は既存の shaderc の LNK4099 だけ）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が全ファイルで一致。verify の ctest の行と done-when (4) の試験は、試験を作らない・回さない決まりにより回していない・作っていない。
+- Notes: 範囲: done-when (1)(3) の直しのため、`paths:` に無い `Library/Core/Private/Component/TerrainComponent.cpp`（表を読めた直後に provider へ結ぶ 1 か所）と `Library/Core/Private/Component/FootSplashComponent.cpp`（地面の点と法線の取り方）を変えた。物理のフィルタに Entity の除外は足していない（物理モジュールの実装に波及するため、自己ヒットは学習で除く）。
+- U9 地形の層→表面名の対応を伸びる配列で持ち、最古の上書きをやめる: 着地(直し 0 回)
+- U11 水しぶきは今の公開番号の接地の結果を当たり・未接地とも採る: 着地(直し 0 回)
+- U10 物理の照会のフィルタに持ち主の Entity を除く欄を足し、接地は足ごとに 1 本のレイにする: 着地(直し 1 回)
+- U12 表面の契約の文書を今の形に直し、タスクのビルドを通す: 着地(直し 0 回)
+- Notes: 既知の限界: 層→表面名は、`TerrainComponent` が `LayerTablePath` の表を読めた高さ場では表の `surface` の名前（`TerrainSurfaceProvider::SetLayerSurfaceNames` で主の高さ場と層数の合う外周の帯に結ぶ。弱参照で持ち、件数の上限なし）、表の無い高さ場では仮の材質の記述（`MakeProvisionalTerrainMaterialDesc`）の名前。草のしきい値 0.35 は根拠の無い仮の値（データで替える）。優先度は地形 200 > 草 100 なので、草が種別を決めるのは地形の無い所だけで、地形の上の濃い草は `VegetationDensity01` で返る。
+- Done（判断役の指示による直し）: 地形の層→表面名の結びを件数の上限なしで持ち（外すのは期限切れの弱参照だけ）、17 件以上の地形を結んでも登録中の地形は表の表面名を保つ。`PhysicsQueryFilter` の末尾に `IgnoreEntity`（既定は無効）を足し、`PhysicsBroadphase.cpp` の `ValidateProxyForQuery` がその Entity の代理形状を候補から落とす。`GroundContactComponent` は持ち主を `IgnoreEntity` に入れて体と各足のレイを 1 本ずつ撃ち、自己ヒットの撃ち直しと自分のコライダーの学習を消した（`SetIgnoredColliders` は持ち主以外に除く最大 4 個）。犬の足の水しぶきは、対応する足の `StepSerial` が今の物理の公開番号と同じなら当たり・未接地とも採り、未接地の足ではその着地で放出しない（番号が古い・取れない・足が無いときだけ従来の照会）。`SurfaceContract.md` を今の形に直した。
+- 確かめ（判断役の指示による直し）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が全ファイルで一致。試験は作らない・回さない決まりにより ctest は回していない。撮影・計測の確かめは回さない決まり。
+- 人が見るときの見どころ: `GroundContactComponent` を付けた呼び手はまだ無く、どのシーンでも既定の見た目は変わらない。付けた犬では、接地の `RayLength` が短く足が床に届かない場面で水しぶきが出なくなる（共有の接地状態が未接地のため）。
+- Next: 地形の provider の層の選び方が層の境の近くで `TerrainHeightField::SampleSurface`（最寄りの頂点）と食い違う件と、`PuddleDepthM` が常に 0 の件は、今回の完了条件の外として残る。
+- Notes: 判断: Public API の `PhysicsQueryFilter::IgnoreEntity` は構造体の末尾に足し、既定の無効なハンドルでは何も除かないので、既存の呼び手の挙動は変わらない。`bHasEntity` が偽の代理形状（Entity の無い静的なコライダー）には効かない。
+
+- U1 操舵の基本の純関数（Seek・Flee・Arrive・Pursue・KeepDistance・Wander と上限の積分）: 着地(直し 0 回)
+- U4 近傍の一様格子ハッシュ: 着地(直し 0 回)
+- U5 SteeringAgentComponent と AIModule への登録・型の登録・Physics のリンク: 着地(直し 0 回)
+- U6 運動の層 AnimalMotor と動物の locomotion.v1 プロファイル: 着地(直し 0 回)
+- U2 経路追従・軌跡追従・群れの 3 則と重みの合成: 着地(直し 2 回)
+- U3 地上の 16 方向のコンテキスト操舵: 着地(直し 0 回)
+- U7 操舵の系（PreFixedTick で SoA を集め、ハッシュを作り直し、操舵を解いて書き戻す）: 着地(直し 0 回)
+- U8 LateTick の Animator への公開と操舵のデバッグ描画: 着地(直し 0 回)
+- U9 設計文書と更新段階の割当表（最後。タスクの verify）: 着地(直し 0 回)
+
+## G13-GR22-STEERING-MOTOR（2026-11-21）
+- Done: 操舵の純関数（`Private/AI/Steering/SteeringBehaviors.*`: Seek・Flee・Arrive・Pursue・KeepDistance・Wander（固定シード）・PathFollow（`Math::PolylinePath`）・RecordTrail / FollowTrail（64 点・0.25 s のリング）・Separation・Alignment・Cohesion・CombineWeighted・`ApplySteeringLimits`（加速度と速度に依る旋回率の上限）と、地上の 16 方向のコンテキスト操舵）。近傍の XZ の一様格子 `Spatial::UniformGridHash`（既定 8 m。PreFixedTick ごとに SoA から作り直し、`AIModule::GetNeighborHash()` で GR24 と共用する）。
+- Done: Public の `SteeringAgentComponent`（PROPERTY: Dimension・MaxSpeed・MaxAcceleration・TurnRateBySpeed・NavProfileName・MotorProfilePath・WanderSeed。要求: Idle・Wander・Arrive・MoveTo・Pursue・Flee・KeepDistance・FollowTrail。Initialize / Finalize で AIModule に登録）。運動の層 `AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` に世代つきで結び、操舵の速度を `LocomotionIntent` にして `QuadrupedLocomotionModel::Step` を回し、`MoveDelta` で動かす。プロファイルは `LocomotionProfileCache` と `Assets/AI/Locomotion/Wolf.json`（locomotion.v1。値は仮）。`NorvesModule_AI` は `NorvesModule_Physics` を PRIVATE にリンクする。
+- Done: `SteeringSystem` が `FixedModulePre.PreFixedTick` で位置を集めてハッシュを作り直し、全個体を同じ入力から解いて書き戻す。固定駆動の CharacterBody は同じ歩の `Physics.CharacterFixed` で消費するので、モジュールの登録の順に依らない。`LateTick` で Animator へ `AnimDriveSignals` と GaitId・GaitWeight0..3・PitchAngle・BankAngle を渡し、`SetSteeringDebugDrawEnabled` で操舵の速度・望みの速度・目標・距離帯・経路を描く（Release では無効）。契約は `Docs/Architecture/AIModule.md`、更新段階の割当は `Docs/Architecture/TickStages.md`。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（`NorvesModule_AI.lib`・`Game.exe` を生成、error 0）。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol` は一致。
+- done-when (4) の試験（`AISteeringTest`・`AIUniformGridHashTest`・`AIGaitSelectTest`・`AIFixedStepContractTest`）と `Test/Modules/Physics/CMakeLists.txt`・`Docs/Testing.md` の更新は、試験を作らない・回さない決まりにより作っていない。verify の ctest の行は回していない。
+- 人が見るときの見どころ: 今は `SteeringAgentComponent` を置いたシーンが無いので、どのシーンでも見た目は変わらない。シーンに置いたときは、Arrive で行き過ぎないこと・KeepDistance の帯で震えないこと・三方が壁の行き止まりから開いた向きへ逃げること・歩様の切り替わりが落ち着いていることを、操舵のデバッグ描画を有効にして見る。撮影・計測の確かめは回さない決まり。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュを共用する）。
+- Notes: 判断: 可変駆動の CharacterBody は固定ステップより前に要求するので、直近の固定歩の操舵の速度を使う（同じ歩で消費するのは固定駆動のとき）。足元のナビのタイルが未読み込み・通行不能なら、ナビ由来の危険は使わず近傍の危険だけを使う。Wolf.json の歩様の上限（1.8・4.5・9・15 m/s）と操舵の既定値（最高速度 6 m/s・加速度 8 m/s²・旋回率 6/4/3/2 rad/s）は未調整の仮の値。
+- U10 KeepDistance を要求の帯どおりに判定し、重なった 2 個体を Separation が安定した ID で引き離す: 着地(直し 0 回)
+- U11 操舵の登録を EntityHandle と ID にし、活動の条件・部分経路の終点・GR24 の近傍の個体の解決を直す: 着地(直し 0 回)
+- U12 分離に近傍の ID を渡し、設計文書を直した契約に合わせる（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 6 の評価）: `KeepDistance` は要求の上下端をそのまま判定に使い（幅 0 も可）、帯へ戻る停止半径を `min(0.1 m, (0.5 − ヒステリシスの割合) × 帯幅)` にして帯の内側で止まる。`Separation` は 0.0001 m 未満の重なりを ID の組で決まる軸の逆向きに離し、操舵の系は所有 Entity の ObjectId を渡す。
+- 差し戻しの直し: 操舵の系は Component のポインタを持たず、ComponentId・所有 Entity の ObjectId・EntityHandle で登録して固定歩ごとに Engine の World から引き直す。近傍のハッシュと同じ添字の `AIModule::GetNeighborEntities()` を GR24 へ公開する。収集とモーターの条件は `SteeringSystem::CanSteer`（所有 Entity の階層での有効と Tick、Component の有効と Tick、破棄予定でない）にそろえた。`MoveTo` の完走は、`Partial` なら折れ線の終点、`Succeeded` なら終点から目的地へ NavRaycast が通るときだけ目的地へ Arrive する。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT_CODE=0（`NorvesModule_AI.lib`・`Game.exe` を生成、error 0、変更ファイルの警告 0）。`git diff --numstat` と `--ignore-cr-at-eol` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。
+- Notes: 評価の残課題（done-when の外）: `AIModule::Shutdown` 後の再 `Initialize` で生きている個体は登録し直されない。壁の近くの目的地ではコンテキスト操舵が正面を外して壁沿いにそれることがある（シーンに置いたときに見る点）。
+- U13 操舵の登録簿を Component の非所有の参照にし、所有者の ID とハンドルを歩ごとに読み、操舵できない目標の速度を零として読む: 着地(直し 0 回)
+- U14 運動の結び付きを所有者の ObjectId が 0 の間は結ばず、外すときは体の ComponentId で外す: 着地(直し 0 回)
+- U15 設計文書の登録・運動の結び付き・目標の速度の記述を実装に合わせる（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 8 の評価と判断役の判断）: 操舵の登録簿は `PhysicsModule::RegisterCharacter` と同じく非所有の `SteeringAgentComponent` の参照と ComponentId を持つ（`Initialize` で登録し、`EndPlay`・`Finalize`・デストラクタで外す）。所有 Entity の ObjectId と EntityHandle は登録の時に保存せず、固定歩ごとに所有者から読み、近傍の添字と同じ `Gather` で積む。運動の結び付きは所有者の ObjectId が 0 の間は結ばず、操舵の系が各歩の開始時に結ぶ。ObjectId か体が変わったら、古い `BeforeSimulation` を体の ComponentId で外してから結び直す。`Pursue`・`KeepDistance` の相手が操舵できない（`CanSteer` が偽）ときは、`Gather` の読む順に関わらずその速度を零として読む。上の「操舵の系は Component のポインタを持たず…ObjectId・EntityHandle で登録して…引き直す」はこの直しで置き換えた。
+- 経路 1 `World::CreateComponentOfClass`（World に入った Entity へ後から足す）: `World.cpp:1337` → `Entity::AddComponent`（`Entity.cpp:755-761`。`AddInner` の後に `Initialize`）で登録する。所有者は採番済みなので、次の `PreFixedTick` から操舵・近傍のハッシュ・運動の結び付き（`SteeringSystem.cpp:154-160`）の対象になる。体が準備済みなら同じ歩の `BeforeSimulation` で動き、そのフレームの `LateTick` で Animator へ公開し、デバッグ描画に入る。
+- 経路 2 `World::SpawnPrefab`（シーンの読み込み。ルートと子）: `AttachRootEntity`/`AttachChildEntity`（`World.cpp:5288-5290`・`5323-5325`）が行を作るか予約し、`InitializeEntitySubtreeForWorld` で `Initialize`・登録（この時点の ObjectId は 0）、その後に `AssignFreshObjectIdsRecursive` で採番する。登録は ObjectId に依らないので最初の `PreFixedTick` で解決され、採番後の ObjectId で運動を結ぶ。新しい体の運動は、体が `bReady` になった後の要求から（`AnimalMotor.cpp:156`）。子 Entity 自身の CharacterBody は、Physics が親を持つ Entity の体を `InvalidState` にする（`PhysicsModuleCharacter.cpp:129`）。このため子の動物は操舵・近傍・デバッグ描画には入るが、動かず、Animator へも公開されない。
+- 経路 3 `World::SpawnEntityOfClass`: `World.cpp:1308-1321` から経路 2 と同じ Attach → 初期化・登録 → 採番の順で進む。最初の歩から操舵・近傍の対象になり、運動は体の準備の後から。生成の後に Component を足す場合は経路 1 になる。
+- 経路 4 World へ入れる前の `AddComponent`: `Initialize` は所有者の World が null のまま走り、`AIModule` はモジュールの登録簿から引く（`SteeringAgentComponent.cpp:13-16`）ので登録される。`ResolveAgent`（`SteeringSystem.cpp:117-122`）は所有者の World が Engine の World になるまで null を返す。`AttachRootEntity` の後の最初の歩から、登録し直さずに操舵・近傍・運動の結び付きの対象になる。
+- 経路 5 段の最中の生成: `BindEntitySubtreeRows` が `ReserveEntityRowCreate` で行を予約し（`World.cpp:5408-5411`）、初期化・登録・採番はそのまま進む。行の確定前の `PreFixedTick` でも、位置と ObjectId は近傍に入り、ハンドルだけが無効になる（`SteeringSystem.cpp:219-221`）。同期点で行ができた後の収集から有効なハンドルを読む。体も収集の途中で加わった場合は、Physics の `JoinSerial`（`PhysicsModuleCharacter.cpp:29`・`70`）により運動の要求が次の収集からになる。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0（`NorvesModule_AI.lib`・`Game.exe` を生成。警告は前からある shaderc の LNK4099 だけ）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより ctest は回していない。上の 5 経路は、コードの呼び出しの順を読んで確かめた。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 既知の限界: Physics は親を持つ Entity の CharacterBody を動かさないので、動物は Prefab のルート（親なし）に置く。人がシーンに置いて見るときは、プレハブから出した動物とシーンの読み込みの動物が最初の数歩から動き出すことを、操舵のデバッグ描画を有効にして見る。
+- Notes: 要起票: World::AttachRootEntity/AttachChildEntity で Component の Initialize が ObjectId の採番より前に走り、Initialize で ObjectId を捕まえる Component がプレハブ経由で壊れる。順を入れ替えるかを調べる(Core・危険地帯)
+- U16 操舵の登録簿を Component の参照で照合し、所有者の先頭の操舵 Component だけを解決する: 着地(直し 0 回)
+- U17 運動の結び付きの再利用に操舵 Component の ID を含め、外すときは購読の識別子で外す: 着地(直し 0 回)
+- U18 設計文書の登録簿の照合・先頭の操舵 Component・運動の結び直しの記述を実装に合わせる（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 2 の評価）: 操舵の登録簿は登録・解除の照合を非所有の `SteeringAgentComponent` の参照だけで行い、公開の PROPERTY で書き換えられる `ComponentId` を持たない（登録の後に ID を書き換えてから破棄しても記録が消える）。`ResolveAgent` は所有者の先頭の `SteeringAgentComponent` だけを返し、1 つの Entity の 2 個目以降は操舵・近傍のハッシュ・Animator への公開・デバッグ描画の対象にしない（運動の層・`ReadTarget` と同じ決まり。自分を近傍とみなさない）。`AnimalMotor` は所有者の ObjectId・体の ComponentId・操舵 Component の ComponentId のどれかが変わったら結び直し、古い `BeforeSimulation` の購読は所有者の今の体から購読の識別子で外す。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0（`NorvesModule_AI.lib`・`Game.exe` を生成）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。
+- 経路（コードの読みで確かめた）: 登録の後に ComponentId を書き換えて破棄すると、`SteeringSystem::UnregisterAgent` が参照で照合して記録を消す。破棄の前に固定歩が来れば `BeginStep` → `EnsureMotorBinding` → `EnsureBinding` が ID の不一致で結び直す。操舵 Component が 2 個あると、2 個目は `ResolveAgent` が null を返して `Gather` で飛ばされ、近傍の格子に入らない。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 判断: 1 つの Entity に操舵 Component が複数あるときは先頭だけを使う（先頭が破棄予定・Tick 無効の間も 2 個目へ切り替えない）。
+- U19 操舵 Component を外したときも体から購読を外し、コールバックを接続ごとの番号で照合し、Shutdown でモーターを外す（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 3 の評価と再開の判断）: `AnimalMotor` は結ぶときに所有 Entity の `EntityHandle` を持ち、`RemoveComponent` で所有者が先に外れて `Detach` に null が渡ったときは、AIModule の Engine の World で `ResolveEntityHandle` して、その Entity の `CharacterBodyComponent` から購読の識別子で外す（World・Entity・体の生ポインタは保存しない）。コールバックの照合をモーターごとの世代から接続ごとに一意の番号（静的な通し番号）に替え、配信中にコピーされた古い呼び出しが同じ `ComponentId` の後任へ届かないようにした。`AIModule::Shutdown` → `SteeringSystem::Reset` で登録中の各モーターも外す。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0・error 0 件（`NorvesModule_AI.lib`・`Game.exe` を生成。変えた 4 つの .cpp の .obj は編集より新しい）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。撮影・計測の確かめは回さない決まり。
+- 経路 1（操舵 Component の即時の `RemoveComponent`）: `RemoveInner` が Outer を消してから `Finalize` → `DetachMotorAndUnregister` → `Detach(null, Engine の World)` が保存したハンドルで所有者を引いて体から外すので購読は残らない。接続番号を 0 にするので、コピー済みの呼び出しも `StepMotor` に届かず、1 歩の `MoveDelta` は 1 回まで。
+- 経路 2（段の最中の予約の取り外し）: `MarkForDestroy` の後は `CanSteer` が偽でコールバックが `StepMotor` を呼ばず、回収の `RemoveComponentImmediately` で経路 1 と同じく外す。ECS の行の作成が予約中でハンドルが取れない間は結ばないので、外せない購読はできない。
+- 経路 3（体の `RemoveComponent`）: 体の `EndPlay`・`Finalize` が `BeforeSimulation.Clear()` で購読ごと消す。予約中の歩では、コールバックが体の破棄予定を見て `StepMotor` の前で止まるので二重には動かない。
+- 経路 4（Entity の破棄）: `Entity::Finalize` は行を切ってから Component を一覧から外して 1 つずつ破棄する。体が先なら購読ごと消え、操舵側が先なら接続番号を 0 にした後で体が `Clear` する。間に固定歩は来ない。
+- 経路 5（World の破棄）: `World::Finalize` → `DestroyEntitySubtree` は Entity の行の参照を消してから Component を終了するので、破棄中の `ResolveEntityHandle` は null を返し（行が死んでいる・参照が消えている・WorldId が違うときはすべて null）、体には触れない。体が自分の終了で購読を消す。破棄中は外さない形で安全。
+- 経路 6（`AIModule::Shutdown`）: `Reset` が登録中の各モーターを外してから登録簿を消すので、以後の固定歩に古い操舵速度の `MoveDelta` は入らない。エンジンの終了では `ShutdownAll` → `Shutdown` → `Uninstall` の順で、最後に `m_Engine` が null になる。
+- 経路 7（同じ Entity の 2 個目の操舵 Component への引き継ぎ）: A を外すと経路 1 のとおり購読が消え、次の `BeginStep` で先頭の B が新しい接続番号で 1 件だけ購読する。B が A と同じ `ComponentId` でも番号が違うので、コピー済みの A の呼び出しは B の `StepMotor` を呼ばず、1 歩の `StepMotor` は 1 回。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 判断: 解除は所有 Entity のすべての `CharacterBodyComponent` から購読の識別子で外す（体の `ComponentId` は公開の PROPERTY で書き換えられるため。識別子で照合するので外れるのは自分の購読だけ）。
+- Notes: 判断: ECS の行の作成が予約中で所有 Entity のハンドルが取れない間は、運動の購読を保留し、ハンドルが取れる次の固定歩で結ぶ。
+- Notes: 人が見ること（設計の選択として残した）: `CanSteer` が偽の相手は速度を零として読むので `Pursue` の予測が外れる。帯の幅が 0 の `KeepDistance` は接近と後退を繰り返す余地がある。先頭の操舵 Component が操舵できなくても 2 個目へは切り替えない。
+- Notes: 要起票: QuadrupedLocomotionComponent を RemoveComponent で外すと GetOwner() が null になり、体の BeforeSimulation に購読が残る（`Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:172-181` の `Detach` が所有者 null のとき `Remove` を飛ばす。`RemoveInner` が `Finalize` より先に Outer を消すため）。
+- U20 運動の結び付きを体の ECS の行（番号と世代）で照合し、同じ ComponentId の別の体へ替わっても結び直す（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 1 の評価）: `AnimalMotor` は体の同一性を体の `ComponentId` ではなく ECS の行（`Component::GetEcsEntity()` の番号と世代）で見る。結ぶときに行を保存し、`EnsureBinding` の再利用の判定・`GetBoundBody`・コールバックで今の体の行と比べる。体の行が null（段の最中に足されて作成が予約中）の間は購読を保留し、行ができた最初の固定歩で結ぶ。`AIModule.md` の運動の節を合わせた。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0・error 0 件（`AnimalMotor.cpp`・`SteeringAgentComponent.cpp`・`SteeringSystem.cpp` を再コンパイルし、`NorvesModule_AI.lib`・`Game.exe` を生成）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより `ctest` と `PhysicsDynamicsTest`（ターゲットなし）は回していない。
+- 経路（コードの読みで確かめた）: 固定歩の間に体 A を外して同じ `ComponentId` の体 B を足すと、A の終了処理が購読を消し、B の行が予約中の歩はモーターが接続を外して保留し、行ができた次の `PreFixedTick` で B に 1 件だけ購読する。段の外の入れ替えは次の `PreFixedTick` で行の違いを見て `Detach` → 購読の順に結び直す。体だけを外すと `StepMotor`・`MoveDelta` は 0 回。操舵 Component の即時の取り外しと 2 個目への引き継ぎは前回どおり（保存したハンドルで外し、古い呼び出しは接続番号で退ける）。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 判断: 体の行が予約中の歩はモーターを結ばない（所有 Entity のハンドルの保留と同じ扱い。行ができる次の固定歩から結ぶ）。
+
+## G13-GR116-ACOUSTIC-EVALUATOR 統合ブランチの取り込みの後の確かめ（2026-11-21、run 20261121-194912 の反復 3、完了）
+
+- Done: `feature/scene-launcher`（G13-GR115-GROUND-CONTACT の統合を含む）を取り込み、衝突を両側を合わせて解いた。`Engine` は地形・草の表面の provider の結び付けの後に音の評価器の情報源を設定し、`GetTerrainSurfaceProvider()` と `GetAcoustics()` を両方持つ（`m_Acoustics` は provider より後に宣言して先に破棄する）。物理の照会の除外は「動く物」「高さ場」「`IgnoreEntity`」の 3 つを並べた。`SurfaceContract.md` は `audio.transmissionLossDb` の段落と `vegetationDensityThreshold` の段落を両方残した。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件。`AcousticTransmission.cpp`・`Engine.cpp`・`PhysicsBroadphase.cpp` を再コンパイル）。解いた 4 ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致。試験は作らない・回さない決まりにより ctest は回していない。撮影・計測の確かめは回さない決まり。
+- Notes: 音の評価器の静的幾何の寄与は RaycastAll の当たりの `Surface` を直に読むので、今回入った `SceneQuery::QuerySurface` の地形・草の provider の影響は受けない。
+- U1 評価器の骨組み(公開型・設定の読み込み・距離の dB・寄与源の登録と合成)と Acoustics.json: 着地(直し 0 回)
+- U2 既定の 4 つの寄与源(静的幾何・草・地形・雨の騒音床)と供給元の差し込み: 着地(直し 0 回)
+- U4 設計の文書 Docs/Architecture/AcousticTransmission.md: 着地(直し 0 回)
+- U3 Engine のメンバ GetAcoustics と Game の起動での設定の読み込み(最後。タスクの verify): 着地(直し 0 回)
+- Done(反復 2、run 20261121-132223): `Scene::AcousticTransmissionEvaluator`(`Library/Core/Public/Scene/AcousticTransmission.h`)を `Engine::Engine` のメンバにし、`GetAcoustics()` で引けるようにした(GameThread 専用・シングルトンにしない)。距離の dB は `Scene/AcousticDistance.h` の `EvaluateAcousticDistanceGain`(InverseClamped・基準距離はクラスごと)を共有し、可聴半径→dB(`HearingRadiusToThresholdDb`)と高域の損失→カットオフも同じ所に置いた。既定の 4 つの寄与源(静的幾何 = RaycastAll・MaxHits 4・trigger を除く・表面の `transmissionLossDb` か `wallClassFallbackLossDb`、草 = `GrassField` を 1.5 m 刻み最大 24 点で草丈より低い区間だけ、地形 = `TerrainSystem::SampleGround` の丘の陰、雨 = `AcousticNoiseFloorModel` の騒音床とマスキング)を評価器の構築で登録し、借りる先は Engine の構築子が `SetSources` で渡す。Game の起動で `Data/Surfaces.json` の後に `Data/Acoustics.json` を読む(失敗は警告して既定値で続行)。免除の印は `SoundClass` ごとに Acoustics.json に持ち、既定は全クラス免除なし。設計は `Docs/Architecture/AcousticTransmission.md`。
+- 証拠(反復 2): `.harness/runs/20261121-132223/verify-U3-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が Build exit code: 0 で Game.exe まで。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。
+- Next(反復 2): ランナーの評価者の反証(危険地帯: Public API の `Engine`)。声への適用は G13-GR116-AUDIO-ACOUSTICS、AI の聴覚は GR24 がこの評価器を呼ぶ。
+- Notes(反復 2): 判断: G11 の雨の遮蔽は GPU の深度マップだけで、CPU から屋根の下かを引く口が無いので、`IRainShelterSource` の既定は `OpenSkyRainShelterSource`(いつも開けた空)。口ができたら `GetAcoustics().GetNoiseFloorModel().SetShelterSource()` で差し替える。気象を渡していない評価器は雨のマスキングを寄与させない(騒音床 −120 dB)。既知の限界: 静的幾何は地形の高さから 5 cm 以内の当たりを地形の当たりとして数えない(地面に接した薄い床も外れうる)。草と地形は経路上の最大 24 の中点で見るので、遠いと細い草むら・尾根を見逃しうる。done-when (3) の `AcousticTransmissionTest` は試験を作らない決まり(絶対規則 11)で作っていない。ctest の verify 行は回していない。評価の時間は `Acoustics.Evaluate`(Debug/Stats.h)に記録する形にした(未計測)。
+- U5 差し戻しの直し(地形の当たりの見分けと壁の枠・草の上端をまたぐ区間・サンプルの間の尾根): 着地(直し 0 回)
+- U6 物理の照会の条件に「静的のみ」と「高さ場を除く」を足し、打ち切りの前に絞る: 着地(直し 0 回)
+- U7 表面の透過損失に鍵があったかの印を残し、Surfaces.json の仮の 0 を消す: 着地(直し 0 回)
+- U8 評価器を静的のみ・高さ場を除く照会で 4 件に戻し、鍵を持つ表面の損失を採る(最後。タスクの verify): 着地(直し 0 回)
+- Done(反復 4〜5、run 20261121-132223): 評価者の差し戻しの残り 2 件を、判断役の判断どおり paths を広げて直した。物理の照会の条件 `PhysicsQueryFilter` に `MobilityPolicy`(Any / StaticOnly。既定 Any)と `bExcludeHeightFields`(既定 false)を足し、`ValidateProxyForQuery` で `Accepts` の後、件数の打ち切りの前に絞る(既定値なので今の呼び出し側の動きは変わらない)。音の評価器の静的幾何は StaticOnly・高さ場を除く `RaycastAll`(MaxHits 4)を撃ち、返った当たりを全部壁に数える(`SampleGround` の高さの差と法線による地形の見分けと 8 件の照会は消した)。`SurfaceAudioDesc` に `bHasTransmissionLossDb` を足して `LoadGroups` で鍵の有無を残し、評価器は鍵を持つ最初の表面の値を明示した 0 も含めて採る(負は 0。鍵が無ければ `wallClassFallbackLossDb`)。`Surfaces.json` の Default・Dirt_Mud・Rock・Concrete・Metal・Water_Shallow・Wood から仮の `transmissionLossDb: 0` を消し(Grass_Tall の 3 は残す)、今の壁の損失(12 dB)を保った。理由は `AcousticTransmission.md` と `SurfaceContract.md` に書いた。
+- 証拠(反復 5): `.harness/runs/20261121-132223/verify-U8-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が build exit code = 0 で Game.exe まで。`AcousticTransmission.cpp` をコンパイルし `Core.lib` を作り直している。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。試験は作らない・回さない決まりなので、verify の ctest の行と done-when (3) の `AcousticTransmissionTest` は作っていない・回していない。
+- Next(反復 5): ランナーの評価者の反証(危険地帯: Public API の `Engine`・`PhysicsQueryTypes.h`・`SurfaceTypes.h`)。声への適用は G13-GR116-AUDIO-ACOUSTICS、AI の聴覚は GR24 がこの評価器を呼ぶ。
+- Notes(反復 5): 既知の限界: 静的幾何を静的な代理だけにしたので、Kinematic の扉や動く物体は音を遮らない(扉の寄与は G13-GR116-AUDIO-ACOUSTICS で足す)。音源や聞き手が自分の静的コライダーの内側にいると壁 1 枚に数えるので、呼び出し側が `Filter` の `IgnoreColliders`・`IgnoreBodies` で自分を除く。
+- U9 地形の遮蔽を草と同じ刻みの区間ごとの照会に直し、設計の文書に精度の仕様と評価時間の未計測を書く(最後。タスクの verify): 着地(直し 0 回)
+- Done(反復 1・run 20261121-194912): 判断役の判断(評価者の案 1)どおり、地形の寄与源 `TerrainAcousticContributor::Contribute` の前向き・後ろ向きの `RaycastGround` と 9 点の深さ取りを、経路全体ではなく草と同じ刻み(`PathSampleCount`)の区間ごとに行う形にした。区間 i は `[max(m, D·i/N), min(D − m, D·(i+1)/N)]`(m = min(0.05 m, D/4))、後ろ向きが外れたら区間の終点を出口にし、照会は最大 48 回。中点の深さ取りは残した。`Docs/Architecture/AcousticTransmission.md` の地形の節を区間ごとの照会と精度の仕様に書き直し、評価時間は未計測(案は 32 声・各 10 Hz で 1 フレーム 0.1 ms、根拠は要件の案)と書いた。
+- 手計算(反復 1): 平地に高さ 2 m の三角の尾根を x=2〜4 m(頂 3 m)と x=44〜46 m(頂 45 m)に置き、高さ 1 m の水平経路 (0,1,0)→(48,1,0) を通す。D=48・水平長 48 > 36 なので刻み 3 m・N=16。区間 0 `[0.05, 3]` は前向きが x=2.5 で当たり(入口 2.5)、後ろ向きは起点 x=3 が地中(地面 2 m)で距離 0(出口 3)、9 点の x=3 で深さ 1 m。区間 15 `[45, 47.95]` は前向きの起点 x=45 が地中で距離 0(入口 45)、後ろ向きが x=45.5 で当たり(出口 45.5)、x=45 で深さ 1 m。最大の深さ 1 m > minDepthM 0.1 なので、地形の損失は min(24, 6 + 1×3) = 9 dB を 1 回加え、見通しを切る(前の実装は入口 2.5〜出口 45.5 の 9 点が全部谷で深さ 0 だった)。
+- 証拠(反復 1): `.harness/runs/20261121-194912/verify-U9-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が Build exit code: 0 で `Core.lib` と `Game.exe` まで。`AcousticTransmission.cpp` をコンパイルし、error は 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。試験は作らない・回さない決まりにより `AcousticTransmissionTest` は作っていない。
+- Next(反復 1): ランナーの評価者の反証(危険地帯: Public API の `Engine`・`PhysicsQueryTypes.h`・`SurfaceTypes.h`)。声への適用は G13-GR116-AUDIO-ACOUSTICS、AI の聴覚は GR24 がこの評価器を呼ぶ。
+- Notes(反復 1): 地形の遮蔽の精度は仕様として緩めた: 1 区間に尾根が 2 本以上入るとき、または区間内の 9 点の間に頂がある細い尾根は拾わない(区間の長さは近距離で 1.5 m、200 m の経路では約 11.8 m)。正確な高さ場の三角形たどりは、取りこぼしが問題になったときの後続の候補。評価の時間は測っていない(撮影・計測の確かめは回さない決まり)。音は AI の聴覚(GR24)と声への適用(G13-GR116-AUDIO-ACOUSTICS)が呼ぶまでゲームで聞こえる変化は無い。
+## G13-GR116-ACOUSTIC-EVALUATOR(2026-11-21)
+- Done: `AcousticTransmissionEvaluator`(`Engine::Engine` のメンバと `GetAcoustics()`。GameThread 専用)を Core に置いた。寄与源は登録型の `IAcousticMediumContributor` で、既定の 4 つ(静的幾何の `RaycastAll` の透過損失・草の区間ごとの吸収・地形の区間ごとの `RaycastGround` の照会・雨の騒音床による高域の損失)を持つ。距離の減衰は `AcousticDistance.h` を呼ぶ。値は `Assets/Data/Acoustics.json`(仮の値。既定は全クラス免除なし)、設計と地形の精度の仕様は `Docs/Architecture/AcousticTransmission.md`。統合ブランチの取り込みで `Engine.h` の衝突は、評価器と言語ごとの文字列表の両方を残して解いた。`cmake --build build --config Debug --target Game -- /m:1` は EXIT=0。
+- Next: 声への適用(G13-GR116-AUDIO-ACOUSTICS)と聴覚(GR24)からの呼び出し。
+- Notes: CPU から屋根の下かを引く口が無いので `IRainShelterSource` は既定(開けた空)のまま。評価の時間は未計測(案は 32 声・各 10 Hz で 1 フレーム 0.1 ms)。この評価器はまだどの声・AI からも呼ばれないので、ゲーム上の見どころは無い。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
 - U1 物理レンズの値・FOV の確定・共有のシャッターの計算を足し、PT・DOF・パケットへ通す: 着地(直し 0 回)
 - U2 ラスタの動きぼけをカメラのシャッター角で掛け、長さの上限 64 と可変の標本数にする: 着地(直し 0 回)
 - U3 CameraComponent に物理レンズ・シャッター角・絞り羽根の PROPERTY を足し、ピント距離も保存する: 着地(直し 0 回)
