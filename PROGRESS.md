@@ -12709,3 +12709,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: LUT が片方だけのプロファイルどうしの補間は両方の枠を同じパスにして Blend=0。EaseIn=t²・EaseOut=t(2−t)。`SetSource` は不正なパスでも保持値を消して false。値の範囲はすべて仮。
 - U1 UBO の拡張と tonemapping.frag の Grade・Look 2 枚・ディザ: 着地(直し 0 回)
 - U2 色収差・レンズダート・ビネットを bValid のときプロファイルから読む: 着地(直し 0 回)
+- U3 RenderingFlow.md にトーンマップとグレーディングの節を足す: 着地(直し 0 回)
