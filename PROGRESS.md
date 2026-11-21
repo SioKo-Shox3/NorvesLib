@@ -12819,3 +12819,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 BootConfig に bEnableCanvasView と引数で整える関数を足し、--capture-ui で撮影に Canvas を残し、Game が UI の起動のときだけ Canvas を作る: 着地(直し 0 回)
 - U3 CompositePass の出力をキャンバスの寸法にして、シーンとキャンバスを別の大きさのまま UV で合成する: 着地(直し 0 回)
 - U4 プロセスの最初に Per-Monitor V2 の DPI awareness を有効にし、WM_DPICHANGED で OS の提案の矩形へ動かす: 着地(直し 0 回)
+- U5 BootConfig の窓の寸法を物理 px と書き、RenderingFlow.md に Canvas の寸法・合成・撮影・DPI・入力の順位を書く: 着地(直し 0 回)

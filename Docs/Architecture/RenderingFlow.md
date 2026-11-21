@@ -144,6 +144,15 @@ RenderGraph 対応済み view では pass chain を登録して graph 経路を�
 - Shutdown は RenderThread を先に停止し、その後 RenderResources、RenderingCoordinator、RHI 参照を解放する。
 - SwapChain 依存リソースは Resize/dirty presentation のタイミングで再作成する。
 
+## Canvas(画面空間の UI)と画面の寸法
+
+- **起動**　Canvas は既定では作らない。`BootConfig::bEnableCanvasView` または `--enable-canvas-view` で有効にする。Game は初期化前の `ConfigureFromArguments` で、`--game-flow`、`--scene=ui-gallery`、`--capture-ui` のいずれかがあるときだけこの設定を有効にする。
+- **寸法**　シーンの描画寸法には `RenderScale` を適用する。Canvas とそのカメラの正射影は、`RenderScale` にかかわらず画面の幅と高さに合わせる。
+- **合成と表示**　Canvas があるとき、`CompositePass` は `Composite.Color` を Canvas の寸法で作り、寸法の異なるシーンと Canvas のテクスチャを同じ UV で読んで重ねる。Canvas がなければシーンをそのまま通す。表示時は、その出力を UV で読み、出力先のビューポート全体に描く。
+- **撮影**　`--capture-png` は Canvas を無効にして最終出力を写す。`--capture-ui` を併用すると Canvas を残し、製品の UI も写す。ImGui のオーバーレイは撮影時には既定で描かず、ランチャーなどが明示的に撮影を有効にした場合だけ描く。
+- **入力**　製品の UI の標準順位は `InputRouter::PriorityUI`（500）。ゲーム入力（0）より先に受け取り、オーバーレイ（1000）とデバッグオーバーレイによる入力の遮断（999）がそれに優先する。
+- **DPI**　`WinMain` の冒頭でプロセスを Per-Monitor V2 に設定する。`BootConfig::WindowWidth` と `WindowHeight` は起動時のクライアント領域の物理 px 数で、`AdjustWindowRectExForDpi` がその寸法に必要な外枠を求める。`WM_DPICHANGED` を受けると OS が提案した矩形にウィンドウを移し、変化したクライアント領域の寸法はスワップチェーンの再作成（`OutOfDate`）を通じて描画に反映される。
+
 ## 描画の拡張の段（GR25）
 
 ゲーム側は `RenderExtensionDesc` の `Name`・`Stage`・`Order` と `RenderExtensionFactory` を指定してパスを登録する。`Stage` が決める差し込み位置と書き込み先の例は次のとおり。`ShadowCaster` 以外のパスは `Declare` で RenderGraph 資源の読み書きを宣言し、後続が参照する名前へ接続する。

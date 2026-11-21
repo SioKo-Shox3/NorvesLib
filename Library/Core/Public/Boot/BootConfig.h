@@ -32,12 +32,16 @@ namespace NorvesLib::Core::Boot
         Container::String WindowTitle = TEXT("NorvesLib Application");
 
         /**
-         * @brief ウィンドウ幅（ピクセル）
+         * @brief 起動時のクライアント領域の幅（物理 px）。
+         * Per-Monitor V2 では DPI によらず、表示倍率が 100% を超えても指定した幅で描画する。
+         * DPI の異なるモニターへ移動すると、OS が提案した矩形に合わせて幅も変わる。
          */
         int WindowWidth = 1280;
 
         /**
-         * @brief ウィンドウ高さ（ピクセル）
+         * @brief 起動時のクライアント領域の高さ（物理 px）。
+         * Per-Monitor V2 では DPI によらず、表示倍率が 100% を超えても指定した高さで描画する。
+         * DPI の異なるモニターへ移動すると、OS が提案した矩形に合わせて高さも変わる。
          */
         int WindowHeight = 720;
 
