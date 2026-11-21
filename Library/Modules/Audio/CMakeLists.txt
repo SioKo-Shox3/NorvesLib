@@ -45,6 +45,8 @@ add_library(NorvesAudioDomain STATIC
     Private/Audio/AudioListenerComponent.cpp
     Private/Audio/AudioListenerResolver.cpp
     Private/Audio/AudioListenerResolver.h
+    Private/Audio/AudioOcclusionUpdater.h
+    Private/Audio/AudioOcclusionUpdater.cpp
     Private/Audio/AudioSpatialHost.h
     Private/Audio/AudioSpatial.cpp
     Private/Audio/SoundBank.h
@@ -102,6 +104,8 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
     Private/Audio/AudioListenerComponent.cpp
     Private/Audio/AudioListenerResolver.cpp
     Private/Audio/AudioListenerResolver.h
+    Private/Audio/AudioOcclusionUpdater.h
+    Private/Audio/AudioOcclusionUpdater.cpp
     Private/Audio/AudioSpatialHost.h
     Private/Audio/AudioSpatial.cpp
     Private/Audio/SoundBank.h
