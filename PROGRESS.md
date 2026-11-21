@@ -12759,3 +12759,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U3 足ごとの接地の表面を持つ GroundContactComponent: 着地(直し 0 回)
 - U4 地形と草の表面の provider と、濡れの 1 か所の関数: 着地(直し 1 回)
 - U5 Engine で provider を持って結び、HitEffect に登録簿を渡し、文書を直す: 着地(直し 0 回)
+
+## G13-GR115-GROUND-CONTACT（2026-11-21）
+- Done: 表面の記述に `vegetationDensityThreshold`（既定 0.35。`Surfaces.json` の Grass_Tall に 0.35）と、地形の層の表面名 6 種（Soil・Gravel・Moss・Mud・Sand・Water）を足した。`Scene/TerrainSurfaceProvider.h` に `TerrainSurfaceProvider`（4 頂点の双線形で上位 2 層とウェイトを返す。層→表面名は地形の材質の記述を登録簿で引き、層番号の変換はこの中だけ）・`VegetationSurfaceProvider`（密度がしきい値を超える所を Grass_Tall にし、`VegetationDensity01` を返す）・濡れの 1 か所の関数 `ComputeGroundWetness01`（環境の濡れ、無効なら地形の濡れと、草の水気の偏りを `ComputeEffectiveWetness` で合わせる）を置いた。`Engine::Engine` が 2 つをメンバで持ち、コンストラクタで優先度 200・100 で `BindSurfaceProvider`、デストラクタで外す。
+- Done: `Component/GroundContactComponent.h`（REFLECTION_CLASS・3 つのコンストラクタ。PROPERTY は足の数・足の関節名・足の局所の位置の予備・レイの長さ）。PostPhysics の群で、公開済みの物理のスナップショットの番号が変わったときだけ、体と足ごとに下向きの `RaycastClosest`（自分のコライダーを除く）と `QuerySurface` で `GroundContactState{Foot[4], Body, FootCount, StepSerial}` を更新する。`TickStages.md` の割当表に載せた。
+- Done: `HitEffectEmitter::SetSurfaceRegistry` を足し、`SelectEffect` は完全一致が無ければ登録簿の parent をたどる（登録簿が無ければ完全一致だけ）。Engine が登録簿を渡す。`SurfaceContract.md` に provider・しきい値・接地の状態・エフェクトのフォールバックを書いた。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件、警告は既存の shaderc の LNK4099 だけ）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致し、新規ファイルは BOM+CRLF。
+- done-when (4) の試験（`GroundContactStateTest` の新設、`HitEffectEmissionTest`・`SceneQuerySurfaceTest` のケース足し）と `QuerySurface` の時間の記録は、試験を作らない・回さない決まりにより作っていない。verify の ctest の行は回していない。
+- 人が見るときの見どころ: GroundContactComponent を付けた呼び手はまだ無く、どのシーンでも見た目は変わらない。当たりのエフェクトは、表に無い表面（Gravel・Soil など）に当たると親（Rock・Dirt_Mud）の効果が出る。起動のログに `SURFACE_PROVIDER_BIND_FAILED` が出ないことを見る。撮影・計測の確かめは回さない決まり。
+- Next: 足音の再生（GR75）・踏み倒し（GR44）は、足すときに `GroundContactState` を読む。
+- Notes: 判断: 足 IK（G9-GR14）は足の接地のレイの結果を外へ出していないので、足ごとに自前の下向きのレイを 1 本撃つ。GR59 の水たまりは CPU で水深を引ける形が無い（`SamplePuddlePotential` は凹み度）ので `PuddleDepthM` は 0。provider は照会ごとに `TerrainSystem::FindTerrain` で地形を引くので、地形の登録・解除に合わせず Engine の構築時に 1 回結ぶ。
+- Notes: 判断: 犬の足の水しぶき（`FootSplashComponent`）は表面の種別を判定しておらず、足の接地の通知の時点で自前の照会と生の濡れを読む。`GroundContactState` は時点（固定ステップ）と濡れの式（草の水気の偏りを含む）が違い、読み替えると水しぶきの量が変わるので置き換えていない。踏み倒し（GR44）は今のコードに無いので置き換えるものが無い。
+- Notes: 既知の限界: TerrainComponent の `LayerTablePath` の記述は provider から参照できないので、層→表面名は高さ場の層名から作る仮の材質の記述（`MakeProvisionalTerrainMaterialDesc`）を使う。草のしきい値 0.35 は根拠の無い仮の値（データで替える）。優先度は地形 200 > 草 100 なので、草が種別を決めるのは地形の無い所だけで、地形の上の濃い草は `VegetationDensity01` で返る。
