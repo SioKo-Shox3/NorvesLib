@@ -31,7 +31,7 @@ Kinematic の速度は物理の一歩の中で `(現在位置 − 歩の開始�
 
 ## 格子、通行条件、連結成分
 
-`NavGridDesc` の既定は `(OriginX, OriginZ) = (0, 0)`、`CellSize = 1` m、`TileCells = 64`。セル幅は有限の正数、一辺は 1～1024 セル。各軸で `floor((位置 − 原点) / CellSize)` がセル座標になる。負の座標も負の無限大側に切り下げる。`NavTile` は同じ属性を一つの配列にまとめる構造（SoA）で、全配列が同じ添字 `localZ * TileCells + localX` を使う。
+`NavGridDesc` の既定は `(OriginX, OriginZ) = (0, 0)`、`CellSize = 1` m、`TileCells = 64`。セル幅は有限の正数、一辺は 1～1024 セル。各軸で `floor((位置 − 原点) / CellSize)` がセル座標になる。負の座標も負の無限大側に切り下げる。`NavTile` は同じ属性を一つの配列にまとめる構造（SoA）で、全配列が同じ添字 `localZ * TileCells + localX` を使う。`NavTile::Grid` はベイク時の格子設定（XZ 原点・セル幅・タイル一辺のセル数）を保持する。[NavTile.h](../../Library/Modules/AI/Public/AI/Navigation/NavTile.h)
 
 | 配列 | セルに保持する値 |
 |---|---|
@@ -42,7 +42,7 @@ Kinematic の速度は物理の一歩の中で `(現在位置 − 歩の開始�
 | `GrassQ` | 草密度 0～255。0 は割増なし、255 はプロファイルで指定した草の割増全量。 |
 | `Region` | タイル内の 4 連結成分を表す 16 ビット番号。遮蔽セルは 0、各成分は 1～`RegionCount`。 |
 
-正の半径 `r` の通行しきい値は `min(255, ceil(8 * r / CellSize))`。読み込み済みセルに対する `IsNavCellPassable` は、遮蔽フラグがすべて 0 で、かつ `ClearanceQ >= thresholdQ` のとき真になる。例えば既定のセル幅で半径 0.5 m なら、必要な `ClearanceQ` は 4。未読み込みのセルは通れない。[NavTypes.h](../../Library/Modules/AI/Public/AI/Navigation/NavTypes.h)
+有限の正の半径 `r` の通行しきい値は `ceil(8 * r / CellSize)` で求める。これが 255 を超えると、しきい値は 256（`kNavClearanceThresholdUnreachable`）になる。どのセルもこの値を満たせないため、A* 探索・通行判定・最寄り点検索・視線判定・コスト照会のすべてで通行不能となる。読み込み済みセルに対する `IsNavCellPassable` は、遮蔽フラグがすべて 0 で、かつ `ClearanceQ >= thresholdQ` のとき真になる。例えば既定のセル幅で半径 0.5 m なら、必要な `ClearanceQ` は 4。未読み込みのセルは通れない。[NavTypes.h](../../Library/Modules/AI/Public/AI/Navigation/NavTypes.h)
 
 局所の `Region` は半径によらず遮蔽フラグだけで決まる。角を切らない斜め移動は縦横の二歩でも到達できるため、4 連結とその 8 近傍の到達範囲は一致する。タイルの読み込み・置換・解放時には、境界の辺を共有する非ゼロの成分同士を併合し、格子全体で番号を振り直す。`GetConnectivityRegion` の 0 は未読み込みまたは遮蔽を表す。異なるタイルの局所番号を直接比較してはいけない。また、全体番号が同じでも、大きな半径では途中の狭い通路を通れないことがある。
 
@@ -50,10 +50,10 @@ Kinematic の速度は物理の一歩の中で `(現在位置 − 歩の開始�
 
 `NavGridBaker::Bake(input, outTile)` は指定タイルを一枚生成し、成功時だけ出力を置き換える。`INavTerrainSource` の `SampleHeight`、`SampleWaterDepth`、`SampleGrassDensity` はワールド XZ で地面高・水深・草密度を返す。地形を省略すると `FlatNavTerrainSource` の平地（地面 Y = 0 m、水深 0 m、草密度 0）を使う。[NavGridBaker.h](../../Library/Modules/AI/Public/AI/Navigation/NavGridBaker.h)・[INavTerrainSource.h](../../Library/Modules/AI/Public/AI/Ports/INavTerrainSource.h)
 
-1. タイルの四辺に `ClearanceApronCells` の余白（既定 16 セル、上限 256）を取り、余白を含む各セル中心で地形を採る。高さが非有限なら `StaticBlocked` を立てる。
+1. タイルの四辺に最低 33 セルの余白を取る。これは量子化の上限 31.875 セル（255 / 8）に半セルを足し、整数に切り上げた幅である。`ClearanceApronCells` の既定値は 33 で、設定によって各辺 256 セルまで広げられる。余白を含む各セル中心で地形を採る。高さが非有限なら `StaticBlocked` を立てる。
 2. X と Z の高さの中心差分から傾斜角を求める。片側しか使えない場合は片側差分を使う。角度が `MaxWalkableSlopeDegrees`（既定 40°）を超えれば急斜面、縦横の隣との高低差が `CliffStepHeight`（既定 1 m）を超えれば崖とする。水深は `DeepWaterDepth`（既定 0.6 m）以上なら深水、それ未満で `ShallowWaterDepth`（既定 0.05 m）以上なら浅瀬となる。
-3. 静的障害物の XZ 足跡を押印する。`NavObstacleFootprint` は中心・二軸の半幅・Y 軸まわりの回転角で表す箱で、箱内に中心を持つセルに `StaticBlocked` を立てる。
-4. 余白を含む遮蔽セルを種として、行・列の順に厳密なユークリッド二乗距離変換を行う。中心間距離をセル単位で求め、半セルを引いて `ClearanceQ` に量子化する。計算範囲に種が一つもなければ 255 を格納する。距離の保証はサンプルした余白までである。
+3. 静的障害物の XZ 足跡を押印する。`NavObstacleFootprint` は中心・二軸の半幅・Y 軸まわりの回転角で表す箱である。セルの正方形と回転した箱の重なりを分離軸（格子の 2 軸と箱の 2 軸）で調べ、境界で接するだけのセルも含めて `StaticBlocked` を立てる。セル中心の間を通る細い壁もこれで塞がる。
+4. 余白を含む遮蔽セルを種として、行・列の順に厳密なユークリッド二乗距離変換を行う。中心間距離をセル単位で求め、半セルを引いて `ClearanceQ` に量子化する。計算範囲に種が一つもなければ 255 を格納する。この余白により、タイル内の `ClearanceQ` が表せる上限まで、余白の外の遮蔽セルを見落として値を過大にすることはない。
 5. 余白を除いたタイルに属性を格納し、最後に 4 連結の `Region` を付ける。傾斜の量子化は地形分類時、クリアランスの量子化はタイルへの格納時に済む。[NavGridBaker.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavGridBaker.cpp)
 
 ## 整数コストの経路探索
@@ -77,14 +77,14 @@ step  = base + (base * extra) / 128
 
 | `INavigationService` の操作 | 呼び出し側が得る結果 |
 |---|---|
-| `LoadTile` / `UnloadTile` / `GetGrid` | タイルを渡して読み込みまたは置換する。座標で解放し、格子は読み取り専用で借りる。置換・解放したタイルへの参照は失効する。 |
+| `LoadTile` / `UnloadTile` / `GetGrid` | 格子が空なら最初に読み込むタイルの格子設定を採用する。タイルがある間は、原点・セル幅・一辺のセル数のいずれかが異なる読み込みや置換を `Mismatch` で拒む。座標で解放し、格子は読み取り専用で借りる。置換・解放したタイルへの参照は失効する。[NavGrid.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavGrid.cpp) |
 | `RequestPath` | 始点・終点・プロファイル・ε を渡し、要求を識別する `PathHandle` を受け取る。始点を通れないときは 2 m 以内の通行可能な中心に寄せる。候補がなければ有効な枠の状態が `Failed` になる。 |
 | `GetPathStatus` | `Pending`、`Succeeded`、`Partial`、`Failed`、`Cancelled` を区別する。無効または解放済みの枠は `Invalid`。 |
 | `GetPath` / `BuildPathPolyline` | 成功または部分到達の平滑化済み点列を借りる。他の状態では点列は空。折れ線を手元に保持する場合は `BuildPathPolyline` でコピーする。 |
 | `CancelPath` / `ReleasePath` | 前者は `Pending` を中止して `Cancelled` にする。後者は状態を問わず枠を返す。解放後はハンドルのコピーも借りた点列も使えない。 |
-| `IsPathStale` | 経路のセル列が通ったタイルの座標と世代を記録し、一枚でも置換または解放されていれば真。経路外のタイルだけが更新されても、その経路は古くならない。 |
+| `IsPathStale` | 経路のセル列に加え、返す折れ線の各線分で `Raycast` が通行を調べたセル（角の両脇や格子線の両側を含む）について、タイルの座標と世代を記録する。1 点の経路でもその点で照会する。記録したタイルが一枚でも置換または解放されていれば真。[NavigationService.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavigationService.cpp) |
 | `FindNearestWalkable` / `IsWalkable` | 指定の探索半径内で XZ 距離が最小の通行可能セル中心を地面高で返す（同距離なら Z、X の昇順）。後者は指定位置のセルを通れるか返す。どちらもエージェントの半径を使う。 |
-| `NavRaycast` / `SampleCost` | 線分が最初に当たるセル・位置・進行割合を返す。後者は指定セルに直進で入るコストを返し、通行不能なら `kNavCostImpassable` を返す。 |
+| `NavRaycast` / `SampleCost` | 線分が最初に当たるセル・位置・進行割合を返す。XZ の変位がゼロでも、始点が格子線上なら両側のセルが判定対象になる（格子点では 4 セル）。後者は指定セルに直進で入るコストを返し、通行不能なら `kNavCostImpassable` を返す。[NavGridQueries.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavGridQueries.cpp) |
 | `FindProfile` / `SetExpansionBudget` / `GetExpansionBudget` | 名前でプロファイルを引く。予算は固定ステップ 1 歩で展開できる節点の合計として設定・取得する。 |
 
 **探索中の版管理。** `PreFixedTick` では最も古い要求から 1 本ずつ進める。1 本が終われば残った展開数を次の要求に渡し、予算を使い切れば次の歩に持ち越す。既定の **1500 展開は未計測の仮値**。処理中に格子の版が変わった場合、サービスは新しい版で `Begin` し直す。`NavPathfinder::Step` 自体は版の不一致で追加展開せず `Failed` になる。完成後の `IsPathStale` では格子全体の版より細かい、通過タイルごとの世代を使う。
@@ -120,6 +120,6 @@ step  = base + (base * extra) / 128
 | 濃い青の × | 深水 |
 | 水色の斜線 | 浅瀬 |
 
-経路は呼び出し側が指定した色で隣り合う点を結び、各点に縦線を立てる。`SubmitNavPathDebug` は渡された点列全体を対象とし、格子描画の半径は適用しない。描画コードは `NORVES_ENABLE_DEBUG_OUTPUT` で囲み、Debug と RelWithDebInfo にだけ含める。[NavDebugDraw.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavDebugDraw.cpp)
+`LateTick` は格子と経路の描画に同じカメラ位置と半径を渡す。`SubmitNavPathDebug` は経路の各線分をその XZ 円の内側に切り詰め、呼び出し側が指定した色で描く。経路点の縦線は円内と円周上の点にだけ立てる。描画コードは `NORVES_ENABLE_DEBUG_OUTPUT` で囲み、Debug と RelWithDebInfo にだけ含める。[NavDebugDraw.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavDebugDraw.cpp)・[AIModule.cpp](../../Library/Modules/AI/Private/AI/AIModule.cpp)
 
 この格子が扱う障害物は静的な XZ 足跡である。動く障害物の更新、実地形データと地形ポートの接続、ベイク済みナビ資産の生成・読み込みは対象外。HPA* による階層探索は実測で必要性が示された場合に限る。同じ XZ に複数の歩行面を持つ橋の上下や建物内部の階層は、この単層表現の対象外である。
