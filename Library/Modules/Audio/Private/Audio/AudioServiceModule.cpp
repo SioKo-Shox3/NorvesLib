@@ -3,10 +3,12 @@
 
 #include "Audio/AudioListenerComponent.h"
 #include "Audio/AudioListenerResolver.h"
+#include "Audio/AudioOcclusionUpdater.h"
 #include "Audio/AudioSpatialHost.h"
 #include "Audio/NullAudioBackend.h"
 #include "Audio/SoundSystem.h"
 #include "CoreTypes.h"
+#include "Engine/Engine.h"
 #include "Logging/LogMacros.h"
 
 #include <algorithm>
@@ -82,6 +84,7 @@ namespace NorvesLib::Modules::Audio::Private
                 if (m_Service)
                 {
                     m_SoundSystem = Core::Container::MakeUnique<SoundSystem>(*m_Service, Random::Generator{});
+                    m_SoundSystem->SetAudioOcclusion(GetAudioServiceOcclusion(*m_Service));
                 }
             }
 
@@ -102,6 +105,7 @@ namespace NorvesLib::Modules::Audio::Private
                     return false;
                 }
                 m_Engine = &engine;
+                SetAudioServiceAcousticsEvaluator(*m_Service, &engine.GetAcoustics());
                 m_CameraListenerSource.SetEngine(&engine);
                 return true;
             }
@@ -128,7 +132,12 @@ namespace NorvesLib::Modules::Audio::Private
                     m_SoundSystem.reset();
                     m_Service->Shutdown();
                     m_Service = CreateAudioServiceForBackend(Core::Container::MakeUnique<NullAudioBackend>());
+                    if (m_Engine)
+                    {
+                        SetAudioServiceAcousticsEvaluator(*m_Service, &m_Engine->GetAcoustics());
+                    }
                     m_SoundSystem = Core::Container::MakeUnique<SoundSystem>(*m_Service, Random::Generator{});
+                    m_SoundSystem->SetAudioOcclusion(GetAudioServiceOcclusion(*m_Service));
                     result = m_Service->Initialize();
                     if (result == AudioResult::Success)
                     {
@@ -154,6 +163,18 @@ namespace NorvesLib::Modules::Audio::Private
                     m_Service->Tick();
                     const AudioListenerState listener = m_ListenerResolver.Resolve(m_CameraListenerSource,
                         Core::Container::Span<AudioListenerComponent* const>(m_Listeners), deltaSeconds);
+                    // GR73 の解決位置を次の更新に渡し、退避中は外す。呼び手が明示した位置があれば、そちらを優先する。
+                    if (auto* occlusion = GetAudioServiceOcclusion(*m_Service))
+                    {
+                        if (m_ListenerResolver.IsUsingFallback())
+                        {
+                            occlusion->ClearResolvedListenerPosition();
+                        }
+                        else
+                        {
+                            occlusion->SetResolvedListenerPosition(listener.Position);
+                        }
+                    }
                     m_SoundSystem->SetListener(listener);
                     for (AudioComponent* emitter : m_SpatialEmitters)
                     {
@@ -172,6 +193,7 @@ namespace NorvesLib::Modules::Audio::Private
                 if (m_Service)
                 {
                     m_SoundSystem->Shutdown();
+                    m_SoundSystem->SetAudioOcclusion(nullptr);
                     m_Service->Shutdown();
                 }
             }
@@ -180,6 +202,10 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 if (m_Engine == &engine)
                 {
+                    if (m_Service)
+                    {
+                        SetAudioServiceAcousticsEvaluator(*m_Service, nullptr);
+                    }
                     m_Engine = nullptr;
                     m_CameraListenerSource.SetEngine(nullptr);
                 }
@@ -213,6 +239,11 @@ namespace NorvesLib::Modules::Audio::Private
             ISoundSystem& GetSoundSystem() override
             {
                 return *m_SoundSystem;
+            }
+
+            IAudioOcclusion* GetAudioOcclusion() override
+            {
+                return m_Service ? GetAudioServiceOcclusion(*m_Service) : nullptr;
             }
 
             const AudioBackendStatus& GetBackendStatus() const override

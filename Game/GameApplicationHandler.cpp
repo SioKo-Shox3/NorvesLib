@@ -676,6 +676,9 @@ namespace Game
         // --orbit-degrees-per-second=<deg/s>: カメラを一定の速さで回す（-360〜360、撮影で動くカメラを確かめる）。
         constexpr const TCHAR *kOrbitDegreesPerSecondOption = TEXT("--orbit-degrees-per-second=");
         float s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
+        // --camera-shutter-angle=<度>: 起動画面のカメラのシャッター角（0〜360、開発ビルドだけ。露出は変えず動きぼけだけに効く。既定 0 は動きぼけなし）。
+        constexpr const TCHAR *kCameraShutterAngleOption = TEXT("--camera-shutter-angle=");
+        float s_Rendering3DTestCameraShutterAngleDegrees = 0.0f;
         // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は taa）。
         constexpr const TCHAR *kAntiAliasingOption = TEXT("--anti-aliasing=");
         bool s_bRendering3DTestTemporalAA = true;
@@ -1305,6 +1308,7 @@ namespace Game
         s_bRendering3DTestHasHeightFogDensity = false;
         s_bRendering3DTestHasHeightFogFalloff = false;
         s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
+        s_Rendering3DTestCameraShutterAngleDegrees = 0.0f;
         s_bRendering3DTestTemporalAA = true;
         s_Rendering3DTestRenderScale = 1.0f;
         s_VramBudgetCapMb = 0;
@@ -1601,6 +1605,19 @@ namespace Game
                 }
                 continue;
             }
+
+#if NORVES_BUILD_DEVELOPMENT
+            String shutterAngleValue;
+            if (TryStripPrefix(args[i], kCameraShutterAngleOption, shutterAngleValue))
+            {
+                if (!TryParseBoundedFloat(shutterAngleValue, 0.0f, 360.0f, s_Rendering3DTestCameraShutterAngleDegrees))
+                {
+                    LOG_ERROR("Rendering3DTest の起動引数を解釈できない: --camera-shutter-angle は 0〜360 の度で指定する");
+                    return false;
+                }
+                continue;
+            }
+#endif
 
             String antiAliasingValue;
             if (TryStripPrefix(args[i], kAntiAliasingOption, antiAliasingValue))
@@ -4468,6 +4485,11 @@ namespace Game
             {
                 LOG_WARNING_F("表面の語彙を読めません。Default だけで続行します: %s", surfaceResult.Detail.c_str());
             }
+            const auto acousticsResult = engine->GetAcoustics().LoadSettingsFromAssetFile("Data/Acoustics.json");
+            if (!acousticsResult.Succeeded())
+            {
+                LOG_WARNING_F("音の通りにくさの設定を読めません。既定値で続行します: %s", acousticsResult.Detail.c_str());
+            }
             if (!m_InputSettings.Initialize(engine->GetInputMapper()))
             {
                 const auto& error = m_InputSettings.GetLastError();
@@ -6136,6 +6158,7 @@ namespace Game
                 mode->GetData().m_bHasStartupHeightFogFalloff = s_bRendering3DTestHasHeightFogFalloff;
                 mode->GetData().m_StartupHeightFogFalloff = s_Rendering3DTestHeightFogFalloff;
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
+                mode->GetData().m_StartupCameraShutterAngleDegrees = s_Rendering3DTestCameraShutterAngleDegrees;
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
                 mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe ||

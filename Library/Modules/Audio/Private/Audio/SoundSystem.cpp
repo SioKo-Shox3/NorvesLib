@@ -376,11 +376,14 @@ namespace NorvesLib::Modules::Audio::Private
 
     AudioResult SoundSystem::StealInstance(uint32_t index)
     {
-        const AudioResult result = m_Service.AbortVoice(m_Instances[index].Voice);
+        Instance& instance = m_Instances[index];
+        const AudioResult result = m_Service.AbortVoice(instance.Voice);
         if (result != AudioResult::Success && result != AudioResult::StaleHandle)
         {
             return result;
         }
+        // 再登録で平滑化の値が既定に戻って音量が跳ぶため、声を手放すときだけ追跡を外す。
+        UntrackVoice(instance);
         ReleaseSlot(index);
         ++m_Diagnostics.Voice.StolenVoiceCount;
         return AudioResult::Success;
@@ -437,6 +440,7 @@ namespace NorvesLib::Modules::Audio::Private
         instance.Category = definition.Category;
         instance.FadeOutMs = definition.FadeOutMs;
         instance.Priority = definition.Priority;
+        instance.SoundClass = definition.SoundClass;
         instance.PlaySequence = UINT64_MAX;
         instance.bSpatial = !bGlobal && (params.Spatialization == AudioSpatialization::World3D ||
                                          definition.Spatial == SoundSpatialMode::ThreeD);
@@ -570,6 +574,7 @@ namespace NorvesLib::Modules::Audio::Private
         {
             if (instance.Voice.IsValid())
             {
+                UntrackVoice(instance);
                 m_Service.AbortVoice(instance.Voice);
                 instance.Voice = {};
             }
@@ -577,7 +582,24 @@ namespace NorvesLib::Modules::Audio::Private
         }
 
         instance.LastVoiceVolume = volume;
+        TrackVoiceIfSpatial(instance);
         return AudioResult::Success;
+    }
+
+    void SoundSystem::TrackVoiceIfSpatial(const Instance& instance)
+    {
+        if (m_Occlusion && instance.bSpatial && instance.Voice.IsValid() && !instance.bStopVoiceIssued)
+        {
+            m_Occlusion->TrackVoiceAcoustics(instance.Voice, instance.Position, instance.SoundClass, instance.Priority);
+        }
+    }
+
+    void SoundSystem::UntrackVoice(const Instance& instance)
+    {
+        if (m_Occlusion && instance.Voice.IsValid())
+        {
+            m_Occlusion->UntrackVoice(instance.Voice);
+        }
     }
 
     uint32_t SoundSystem::GetPhysicalVoiceCount() const
@@ -594,10 +616,12 @@ namespace NorvesLib::Modules::Audio::Private
             if (m_Service.GetVoiceState(instance.Voice, state) == AudioResult::Success &&
                 state != AudioVoiceState::Quarantined)
             {
-                // 停止に失敗して鳴り続けるボイスは保持し、次の Update で休眠を再び試す。
+                // 停止に失敗して鳴り続けるボイスと遮蔽の追跡記録を保持し、次の Update で休眠を再び試す。
                 return;
             }
         }
+        // 奪取と同じく、声を手放すときだけ追跡を外す。
+        UntrackVoice(instance);
         instance.Voice = {};
         instance.bVirtual = true;
         ++m_Diagnostics.Voice.VirtualVoiceCount;
@@ -837,6 +861,10 @@ namespace NorvesLib::Modules::Audio::Private
         {
             instance.Position = instance.PendingPosition;
             instance.bHasPendingPosition = false;
+            if (m_Occlusion && !instance.bVirtual && instance.Voice.IsValid())
+            {
+                m_Occlusion->SetVoiceSourcePosition(instance.Voice, instance.Position);
+            }
         }
 
         const AudioSpatialResult spatial = instance.ComputeSpatial(m_Listener);
@@ -859,6 +887,32 @@ namespace NorvesLib::Modules::Audio::Private
             m_Service.SetVoiceFrequencyRatio(instance.Voice, ratio) == AudioResult::Success)
         {
             instance.LastFrequencyRatio = ratio;
+        }
+    }
+
+    void SoundSystem::SetAudioOcclusion(IAudioOcclusion* occlusion)
+    {
+        if (!IsOwnerThread() || m_bShutdown || m_Occlusion == occlusion)
+        {
+            return;
+        }
+        if (m_Occlusion)
+        {
+            for (const Instance& instance : m_Instances)
+            {
+                if (instance.bSpatial)
+                {
+                    UntrackVoice(instance);
+                }
+            }
+        }
+        m_Occlusion = occlusion;
+        if (m_Occlusion)
+        {
+            for (const Instance& instance : m_Instances)
+            {
+                TrackVoiceIfSpatial(instance);
+            }
         }
     }
 
@@ -891,10 +945,12 @@ namespace NorvesLib::Modules::Audio::Private
             const AudioResult result = m_Service.GetVoiceState(instance.Voice, state);
             if (result == AudioResult::StaleHandle)
             {
+                UntrackVoice(instance);
                 ReleaseSlot(index);
             }
             else if (result == AudioResult::Success && state == AudioVoiceState::Drained)
             {
+                UntrackVoice(instance);
                 const AudioResult destroyed = m_Service.DestroyVoice(instance.Voice);
                 if (destroyed == AudioResult::Success || destroyed == AudioResult::StaleHandle)
                 {
@@ -966,6 +1022,7 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 // 失敗時も再送しない。以後の物理寿命はサービスの終端通知と終了処理が持つ。
                 instance.bStopVoiceIssued = true;
+                UntrackVoice(instance);
                 m_Service.StopVoice(instance.Voice);
             }
         }
@@ -1168,6 +1225,7 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return AudioResult::AlreadyInState;
         }
+        SetAudioOcclusion(nullptr);
         m_bShutdown = true;
         for (uint32_t index = 0; index < m_Instances.size(); ++index)
         {

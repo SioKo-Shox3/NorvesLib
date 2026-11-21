@@ -13,6 +13,7 @@ set(AUDIO_PUBLIC_HEADERS
     Public/Audio/AudioSpatial.h
     Public/Audio/AudioTypes.h
     Public/Audio/IAudioModule.h
+    Public/Audio/IAudioOcclusion.h
     Public/Audio/IAudioService.h
     Public/Audio/ISoundSystem.h
     Public/Audio/SoundBankTypes.h
@@ -44,6 +45,8 @@ add_library(NorvesAudioDomain STATIC
     Private/Audio/AudioListenerComponent.cpp
     Private/Audio/AudioListenerResolver.cpp
     Private/Audio/AudioListenerResolver.h
+    Private/Audio/AudioOcclusionUpdater.h
+    Private/Audio/AudioOcclusionUpdater.cpp
     Private/Audio/AudioSpatialHost.h
     Private/Audio/AudioSpatial.cpp
     Private/Audio/SoundBank.h
@@ -101,6 +104,8 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
     Private/Audio/AudioListenerComponent.cpp
     Private/Audio/AudioListenerResolver.cpp
     Private/Audio/AudioListenerResolver.h
+    Private/Audio/AudioOcclusionUpdater.h
+    Private/Audio/AudioOcclusionUpdater.cpp
     Private/Audio/AudioSpatialHost.h
     Private/Audio/AudioSpatial.cpp
     Private/Audio/SoundBank.h
