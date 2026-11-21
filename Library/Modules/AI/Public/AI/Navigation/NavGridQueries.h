@@ -42,6 +42,10 @@ namespace NorvesLib::Modules::AI
         NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius,
                                  Core::Container::VariableArray<NavTileCoord>& outTestedTiles, const NavDynamicOverlay* overlay = nullptr);
 
+        /// 始点セルを除き、当たりまでに通れた各セルの動的な割増を一度ずつ足して outCostExtraPer128 に返す。
+        NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius,
+                                 const NavDynamicOverlay& overlay, uint64_t& outCostExtraPer128);
+
         /// この位置のセルに直進で入るコストを返す。通れなければ kNavCostImpassable。
         uint32_t SampleCost(const NavGrid& grid, const Math::Vector3& position, const NavAgentProfile& profile,
                             const NavDynamicOverlay* overlay = nullptr);

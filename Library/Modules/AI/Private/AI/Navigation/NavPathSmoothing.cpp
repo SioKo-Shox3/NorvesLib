@@ -1,5 +1,6 @@
 ﻿#include "AI/Navigation/NavPathSmoothing.h"
 
+#include "AI/Navigation/NavDynamicOverlay.h"
 #include "AI/Navigation/NavGridQueries.h"
 
 namespace NorvesLib::Modules::AI
@@ -13,6 +14,7 @@ namespace NorvesLib::Modules::AI
             return false;
         }
 
+        const bool bCheckCost = overlay && !overlay->IsEmpty();
         size_t anchor = 0;
         outPoints.push_back(grid.GetCellCenter(cells[anchor]));
         while (anchor < cells.size() - 1)
@@ -20,10 +22,20 @@ namespace NorvesLib::Modules::AI
             const Math::Vector3 start = outPoints.back();
             Math::Vector3 lastVisible = start;
             size_t next = anchor;
+            uint64_t pathExtra = 0;
             for (size_t j = anchor + 1; j < cells.size(); ++j)
             {
                 const Math::Vector3 end = grid.GetCellCenter(cells[j]);
-                if (NavGridQueries::Raycast(grid, start, end, radius, overlay).bHit)
+                if (bCheckCost)
+                {
+                    pathExtra += overlay->GetCostExtraPer128(cells[j]);
+                }
+                // 隣接辺は元の経路に含まれる。折れ点を飛ばすときだけ、角に触れるセルも含めて比べる。
+                uint64_t shortcutExtra = 0;
+                const auto ray = bCheckCost && j > anchor + 1
+                    ? NavGridQueries::Raycast(grid, start, end, radius, *overlay, shortcutExtra)
+                    : NavGridQueries::Raycast(grid, start, end, radius, overlay);
+                if (ray.bHit || shortcutExtra > pathExtra)
                 {
                     break;
                 }

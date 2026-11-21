@@ -201,7 +201,7 @@ namespace NorvesLib::Modules::AI::NavGridQueries
 
     static NavRaycastResult RaycastImpl(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to,
                                        float radius, Core::Container::VariableArray<NavTileCoord>* outTestedTiles,
-                                       const NavDynamicOverlay* overlay)
+                                       const NavDynamicOverlay* overlay, uint64_t* outCostExtraPer128 = nullptr)
     {
         const NavCellCoord startCell = grid.WorldToCell(from.x, from.z);
         NavCellCoord cell = startCell;
@@ -218,6 +218,15 @@ namespace NorvesLib::Modules::AI::NavGridQueries
             return {true, 0.0f, cell, from};
         }
         NavRaycastResult result{false, 1.0f, grid.WorldToCell(to.x, to.z), to};
+        const double startX = static_cast<double>(from.x) - desc.OriginX;
+        const double startZ = static_cast<double>(from.z) - desc.OriginZ;
+        const double endX = static_cast<double>(to.x) - desc.OriginX;
+        const double endZ = static_cast<double>(to.z) - desc.OriginZ;
+        const bool bOnX = cell.X > kMinCell && startX == static_cast<double>(cell.X) * desc.CellSize;
+        const bool bOnZ = cell.Z > kMinCell && startZ == static_cast<double>(cell.Z) * desc.CellSize;
+        // 始点が格子線や角にある場合、最初に調べるセルはこの矩形に収まる。
+        const NavCellCoord startMin{startCell.X - bOnX, startCell.Z - bOnZ};
+        bool bCheckingStart = true;
         uint32_t visited = 0;
         const auto hit = [&](NavCellCoord candidate, double t)
         {
@@ -232,6 +241,13 @@ namespace NorvesLib::Modules::AI::NavGridQueries
             constexpr uint32_t kMaxVisited = 1u << 20;
             if (visited++ < kMaxVisited && IsCellPassable(grid, candidate, threshold, candidate == startCell ? nullptr : overlay))
             {
+                // 各軸を一方向に進むので、再訪し得るのは始点で既に調べたセルだけ。
+                if (outCostExtraPer128 && candidate != startCell &&
+                    (bCheckingStart || candidate.X < startMin.X || candidate.X > startCell.X ||
+                     candidate.Z < startMin.Z || candidate.Z > startCell.Z))
+                {
+                    *outCostExtraPer128 += overlay->GetCostExtraPer128(candidate);
+                }
                 return false;
             }
             result = {true, static_cast<float>(t), candidate,
@@ -247,12 +263,6 @@ namespace NorvesLib::Modules::AI::NavGridQueries
         {
             return result;
         }
-        const double startX = static_cast<double>(from.x) - desc.OriginX;
-        const double startZ = static_cast<double>(from.z) - desc.OriginZ;
-        const double endX = static_cast<double>(to.x) - desc.OriginX;
-        const double endZ = static_cast<double>(to.z) - desc.OriginZ;
-        const bool bOnX = cell.X > kMinCell && startX == static_cast<double>(cell.X) * desc.CellSize;
-        const bool bOnZ = cell.Z > kMinCell && startZ == static_cast<double>(cell.Z) * desc.CellSize;
         if ((bOnX && hit({cell.X - 1, cell.Z}, 0.0)) ||
             (bOnZ && hit({cell.X, cell.Z - 1}, 0.0)) ||
             (bOnX && bOnZ && hit({cell.X - 1, cell.Z - 1}, 0.0)))
@@ -265,6 +275,7 @@ namespace NorvesLib::Modules::AI::NavGridQueries
             return result;
         }
 
+        bCheckingStart = false;
         const int stepX = (dx > 0.0) - (dx < 0.0);
         const int stepZ = (dz > 0.0) - (dz < 0.0);
         for (;;)
@@ -310,6 +321,13 @@ namespace NorvesLib::Modules::AI::NavGridQueries
                              Core::Container::VariableArray<NavTileCoord>& outTestedTiles, const NavDynamicOverlay* overlay)
     {
         return RaycastImpl(grid, from, to, radius, &outTestedTiles, overlay);
+    }
+
+    NavRaycastResult Raycast(const NavGrid& grid, const Math::Vector3& from, const Math::Vector3& to, float radius,
+                             const NavDynamicOverlay& overlay, uint64_t& outCostExtraPer128)
+    {
+        outCostExtraPer128 = 0;
+        return RaycastImpl(grid, from, to, radius, nullptr, &overlay, &outCostExtraPer128);
     }
 
     uint32_t SampleCost(const NavGrid& grid, const Math::Vector3& position, const NavAgentProfile& profile,
