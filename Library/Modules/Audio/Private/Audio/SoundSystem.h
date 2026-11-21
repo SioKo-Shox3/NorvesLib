@@ -27,6 +27,8 @@ namespace NorvesLib::Modules::Audio::Private
         SoundSystem& operator=(const SoundSystem&) = delete;
 
         void Update(float deltaSeconds);
+        /** モジュールが Update の前に渡すリスナー状態。非有限の成分があれば前の状態を保つ。 */
+        void SetListener(const AudioListenerState& listener);
         AudioResult Shutdown();
         AudioResult RegisterDefinition(SoundDefinition definition);
         AudioResult UnregisterDefinition(SoundId id);
@@ -40,7 +42,9 @@ namespace NorvesLib::Modules::Audio::Private
         AudioResult ReleaseOwner(uint64_t ownerKey, const SoundFade& fade) override;
         AudioResult SetVolume(SoundInstanceHandle handle, float volume) override;
         AudioResult SetPitch(SoundInstanceHandle handle, float semitones) override;
+        AudioResult SetEmitterPosition(SoundInstanceHandle handle, const Math::Vector3& position) override;
         [[nodiscard]] bool IsPlaying(SoundInstanceHandle handle) const override;
+        [[nodiscard]] bool IsAudible(SoundInstanceHandle handle) const override;
         void SetMasterVolume(float volume) override;
         [[nodiscard]] float GetMasterVolume() const override;
         void SetCategoryVolume(SoundCategory category, float volume) override;
@@ -64,6 +68,18 @@ namespace NorvesLib::Modules::Audio::Private
             uint64_t PlaySequence = 0;
             uint8_t Priority = 128;
             Math::Vector3 Position;
+            bool bSpatial = false; ///< 3D 音源として再生するか。
+            AudioEmitterSpatialSettings SpatialSettings; ///< この音源の距離減衰とドップラーの設定。
+            Math::Vector3 PendingPosition; ///< 次の更新に使う最新の位置。
+            bool bHasPendingPosition = false; ///< 未反映の位置があるか。
+            Math::Vector3 Velocity; ///< 直近の更新で求めた音源速度。
+            float SpatialVolumeScale = 1.0f; ///< 音量に掛ける背後減衰。
+            float RearHighFrequencyFactor = 1.0f; ///< 背後から届く音の高域係数。
+            float DopplerRatio = 1.0f; ///< ピッチに掛けるドップラー比。
+            float LastLeftGain = 0.0f; ///< 最後に送信に成功した左の利得。
+            float LastRightGain = 0.0f; ///< 最後に送信に成功した右の利得。
+            float MaxFrequencyRatio = 2.0f; ///< 3D ボイスの作成時に設定した周波数比の上限。
+            float LastFrequencyRatio = 0.0f; ///< 最後に送信に成功した周波数比。
             SoundCategory Category = SoundCategory::Effect;
             uint32_t FadeOutMs = 0;
             float BaseGain = 1.0f;
@@ -73,6 +89,9 @@ namespace NorvesLib::Modules::Audio::Private
             double FadeElapsedSeconds = 0.0;
             SoundFadeCurve FadeCurve = SoundFadeCurve::Linear;
             float LastVoiceVolume = 0.0f;
+
+            /** 現在位置での係数を求め、音量とピッチの変更にも使う値を保持する。 */
+            AudioSpatialResult ComputeSpatial(const AudioListenerState& listener);
         };
 
         struct RecentPlay
@@ -101,7 +120,7 @@ namespace NorvesLib::Modules::Audio::Private
         AudioResult Play(SoundId id, const Math::Vector3& position, bool bGlobal,
                          const SoundPlayParams& params, SoundInstanceHandle& outHandle);
         // 上限と抑制の方針は、この入口に集約する。
-        AudioResult CheckPlayAdmission(const SoundDefinition& definition, Instance& candidate);
+        AudioResult CheckPlayAdmission(const SoundDefinition& definition, Instance& candidate, uint32_t& outStealIndex);
         [[nodiscard]] static bool IsLowerVoiceRank(const Instance& left, const Instance& right);
         AudioResult StealInstance(uint32_t index);
         void RecordPlay(SoundId id, const Math::Vector3& position, bool bGlobal);
@@ -114,6 +133,8 @@ namespace NorvesLib::Modules::Audio::Private
         void BeginStop(Instance& instance, const SoundFade& fade);
         [[nodiscard]] float GetVoiceVolume(const Instance& instance) const;
         AudioResult ApplyVolume(Instance& instance);
+        /** 音源の移動を反映し、左右の利得と周波数比の変化をボイスに送る。 */
+        void UpdateSpatial(Instance& instance, float deltaSeconds);
 
         IAudioService& m_Service;
         Random::Generator m_Generator;
@@ -124,6 +145,7 @@ namespace NorvesLib::Modules::Audio::Private
         Core::Container::UnorderedMap<Core::Identity, Core::Container::VariableArray<SoundId>, Core::Identity::Hasher> m_Banks;
         Core::Container::VariableArray<uint32_t> m_FreeIndices;
         SoundSystemDiagnostics m_Diagnostics;
+        AudioListenerState m_Listener; ///< 空間計算に使うリスナーの状態。
         float m_MasterVolume = 1.0f;
         float m_CategoryVolumes[kSoundCategoryCount] = {1.0f, 1.0f};
         double m_TimeSeconds = 0.0;

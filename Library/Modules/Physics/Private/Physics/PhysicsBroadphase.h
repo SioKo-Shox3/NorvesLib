@@ -58,6 +58,10 @@ namespace NorvesLib::Modules::Physics
         bool bTrigger = false;
         // 球・箱・カプセルの表面番号。高さ場は当たり位置で層を照会する。
         uint8_t SurfaceId = Core::Scene::kInvalidPhysicsSurfaceId;
+        // 登録簿の表面。明示が無ければ Default。
+        Core::Scene::SurfaceId Surface{};
+        // Default を明示した場合も true。
+        bool bHasSurface = false;
         // PhysicsModule だけが設定する。既定値では従来どおりすべての組を対象にする。
         EPhysicsProxyMobility Mobility = EPhysicsProxyMobility::Unspecified;
         // PhysicsModule だけが設定する。有効な Dynamic / Kinematic の Body を持たないコライダー。

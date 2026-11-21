@@ -37,11 +37,13 @@ namespace NorvesLib::Modules::Physics
 
     /// Assets/ からの論理パスにある次の JSON を読む（各配列は省略可能）。
     /// {"format":"norves.static-colliders.v1","colliders":[
-    ///   {"shape":"sphere","position":[0,0,0],"radius":1},
+    ///   {"shape":"sphere","position":[0,0,0],"radius":1,"surface":3},
     ///   {"shape":"box","position":[0,0,0],"halfExtents":[1,1,1],"rotation":[0,0,0,1]},
-    ///   {"shape":"capsule","position":[0,0,0],"radius":0.5,"halfHeight":1,"scale":[1,1,1],"surface":3}],
+    ///   {"shape":"capsule","position":[0,0,0],"radius":0.5,"halfHeight":1,"scale":[1,1,1],"surface":"Rock"}],
     ///  "scatter":[{"name":"grassland","species":"rock","shape":"sphere","radius":1,"centerHeight":0.5}]}
-    /// rotation は単位回転、scale は 1、surface は無効値、centerHeight は 0 が既定。
+    /// rotation は単位回転、scale は 1、centerHeight は 0 が既定。
+    /// "surface":"Rock" は登録簿の表面の名前。"surface":3 は結果の SurfaceId に写す従来の層番号。
+    /// 層番号は登録簿の表面には入れない。surface を省略すると両方とも指定なし。
     class StaticColliderPayloadHandler final : public Core::Streaming::IStreamingPayloadHandler
     {
     public:
