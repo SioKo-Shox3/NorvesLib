@@ -8463,7 +8463,7 @@
 - notes: 段階をまたぐ注意（ロードマップ 4475・4388・4419・4420・4458 行）に従い、要件の「Kinematic でヨーだけ回す自前の運動」「GaitTable と SelectGait」「LocomotionOutput」「SetPlaybackRate だけのアダプタ」は作らない: 動物は G4 の `CharacterBodyComponent`（CharacterMover）で動かし、歩様は GR05 の `QuadrupedLocomotionModel`（Core、`QuadrupedLocomotionModel.h:49-62`）を動物のパラメータで使い、歩様の名前（GaitId）の正本は GR05 の locomotion.v1 のデータに置く（Animator は G3 で入っているので単一クリップの再生速度のアダプタは要らない）。AI が Physics にリンクする理由: 動物を自作ライブラリの部品として Game の接着層なしで試験でき、静的なコライダーとの接触を物理が解くのは CharacterBody だけ（Kinematic の RigidBody は解かない。ロードマップ 2833 行）。Physics は AI を知らない（向きは AI → Physics の一方向）。固定ステップの段の今の事実は G13-GR21-AI-MODULE-NAV の notes。近傍のハッシュは G12 の GR09（物理の AABB の木）と役割が違う（エージェントだけの XZ の近傍。重ねない。段階をまたぐ注意 4477 行の確かめ）。参照は生ポインタでなく EntityHandle か ObjectId（EntityHandle は今は全構成で有効、`World.cpp:3893-3900`）。飛ぶ動物は G13-GR22-FLIGHT-FLOCK。危険地帯（新しい Public API・物理の寿命）なので評価者を通す。試験を足す理由: 反証する契約は「止まる・距離を保つ・逃げる・経路に沿うが上限を守って決定的に起き、登録の順に依らない」こと。外れると動物が少し行き過ぎる・震えるだけで、撮影では気づきにくく、黙って起きる。
 
 ## G13-GR21-NAV-OBSTACLES: 動く障害物をナビへ押印し、経路の古さを版で見分け、物理との整合を試験で固め、ナビのスモークの場面を作る
-- status: done
+- status: blocked
 - after: G13-GR21-AI-MODULE-NAV, G13-GR22-STEERING-MOTOR, G4-GR07-BODY-CASES, G4-GR07-DOG-SMOKE-COURSE
 - gr: GR21
 - needs-gr: GR08, GR07
