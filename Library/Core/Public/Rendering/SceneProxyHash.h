@@ -209,6 +209,9 @@ namespace NorvesLib::Core::Rendering
         h.Add(p.Space);
         h.Add(p.RenderSubtype);
         h.Add(p.BlendModeProp);
+        h.Add(p.Sampler);
+        h.Add(p.ShaderKind);
+        h.Add(p.ShaderParams);
         h.Add(p.SourceMeshComponentId);
         h.Add(p.LODSwitchDistance);
         h.Add(p.ImpostorCellResolution);
