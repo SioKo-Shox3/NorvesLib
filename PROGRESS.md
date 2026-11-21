@@ -12829,3 +12829,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 4): `.harness/runs/20261121-141619/verify-G16-GR73-VIRTUAL-VOICE-iter4-game-build.txt` と `verify-G16-GR73-VIRTUAL-VOICE-iter4-game-build-exitcode.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK`・C1060 は 0 件。ソースは反復 2 から変わっていないので再コンパイルは無い)。
 - Next(反復 4): ランナーの評価者の反証(危険地帯: voice の寿命。休眠中の Stop・StopOwner・Shutdown で voice が漏れないこと、ヒステリシス、同時発音の上限と奪取から休眠中を外すこと、`AudioDiagnostics` の 3 つの値)。人が聴くときの見どころは反復 2 の Next のとおり。
 - Notes(反復 4): done-when (3) の `AudioVirtualVoiceTest` と M9 の契約の確かめは、試験を作らない・回さない決まりにより作っていない・回していない。撮影・計測の確かめは回さない決まり。
+- U4 休眠の経路で物理の経路が拒む入力を受けないようにする(差し戻しの 3 件): 着地(直し 0 回)

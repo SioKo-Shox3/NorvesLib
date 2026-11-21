@@ -133,6 +133,7 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 ### 休眠(virtual voice)
 
 休眠中も論理インスタンスと `SoundInstanceHandle` は有効である。`SoundSystem::Instance` は定義から写した値、選んだ clip（`TSharedPtr<AudioClipResource> Clip`）、音量・ピッチ・位置を保持する。物理の voice は手放し、`Voice` は無効の値になる。
+再生開始時に PCM の所有権を共有し、形式とフレーム数を控える。元の clip が `Unload()` された後も、この控えで再生位置を進め、復帰時には同じ PCM から clip を作り直す。
 
 | `SoundSystem::Instance` の欄 | 意味と更新条件 |
 |---|---|

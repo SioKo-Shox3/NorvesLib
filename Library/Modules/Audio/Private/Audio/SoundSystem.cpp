@@ -2,6 +2,7 @@
 
 #include "Audio/AudioClipResource.h"
 #include "Audio/AudioClipLoader.h"
+#include "Audio/AudioDomain.h"
 #include "Asset/AssetSystem.h"
 #include "Logging/LogMacros.h"
 
@@ -470,7 +471,8 @@ namespace NorvesLib::Modules::Audio::Private
             instance.MaxFrequencyRatio = std::exp2(instance.VoiceDesc.MaxPitchSemitones / 12.0f);
             // 再生できない 3D 音源のために既存のボイスを奪わない。
             instance.Clip = SelectClip(definition);
-            if (!instance.Clip)
+            if (!instance.Clip || !instance.Clip->IsValid() ||
+                !IsPlayableVoiceDesc(instance.Clip->GetFrameCount(), instance.VoiceDesc))
             {
                 return AudioResult::InvalidState;
             }
@@ -499,6 +501,12 @@ namespace NorvesLib::Modules::Audio::Private
         if (!instance.bSpatial)
         {
             instance.Clip = SelectClip(definition);
+        }
+        if (instance.Clip)
+        {
+            instance.PcmBlob = instance.Clip->GetPcmBlob();
+            instance.Format = instance.Clip->GetFormat();
+            instance.FrameCount = instance.Clip->GetFrameCount();
         }
         if (!instance.bVirtual)
         {
@@ -598,7 +606,7 @@ namespace NorvesLib::Modules::Audio::Private
 
     void SoundSystem::TryDevirtualizeInstance(Instance& instance)
     {
-        if (GetPhysicalVoiceCount() >= m_Config.MaxConcurrentVoices)
+        if (!IsValidVolume(GetVoiceVolume(instance)) || GetPhysicalVoiceCount() >= m_Config.MaxConcurrentVoices)
         {
             return;
         }
@@ -617,6 +625,10 @@ namespace NorvesLib::Modules::Audio::Private
                     }
                 }
             }
+        }
+        if (!instance.Clip || !instance.Clip->IsValid() || instance.Clip->GetFrameCount() != instance.FrameCount)
+        {
+            instance.Clip = Core::Container::MakeShared<AudioClipResource>(instance.PcmBlob, instance.Format, instance.FrameCount);
         }
         if (StartInstanceVoice(instance, GetResumeFrame(instance)) == AudioResult::Success)
         {
@@ -638,7 +650,7 @@ namespace NorvesLib::Modules::Audio::Private
 
     uint64_t SoundSystem::Instance::GetPlaybackEndFrame() const
     {
-        if (!Clip || Clip->GetFrameCount() == 0)
+        if (FrameCount == 0)
         {
             return 0;
         }
@@ -646,7 +658,7 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return static_cast<uint64_t>(VoiceDesc.LoopBeginFrame) + VoiceDesc.LoopLengthFrames;
         }
-        return Clip->GetFrameCount();
+        return FrameCount;
     }
 
     bool SoundSystem::AdvancePlayFrame(Instance& instance, float deltaSeconds) const
@@ -656,7 +668,7 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return false;
         }
-        instance.PlayFrame += static_cast<double>(deltaSeconds) * instance.Clip->GetFormat().SampleRate *
+        instance.PlayFrame += static_cast<double>(deltaSeconds) * instance.Format.SampleRate *
                               GetInstanceFrequencyRatio(instance);
         if (instance.PlayFrame < endFrame)
         {
@@ -780,16 +792,12 @@ namespace NorvesLib::Modules::Audio::Private
 
     AudioResult SoundSystem::ApplyVolume(Instance& instance)
     {
-        if (instance.bVirtual)
-        {
-            return AudioResult::Success;
-        }
         const float volume = GetVoiceVolume(instance);
         if (!IsValidVolume(volume))
         {
             return AudioResult::InvalidState;
         }
-        if (volume == instance.LastVoiceVolume ||
+        if (instance.bVirtual || volume == instance.LastVoiceVolume ||
             (instance.bSpatial && volume != 0.0f &&
              std::fabs(volume - instance.LastVoiceVolume) <= kAudioSpatialParameterEpsilon))
         {

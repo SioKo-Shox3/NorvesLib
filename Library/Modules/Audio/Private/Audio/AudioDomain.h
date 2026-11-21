@@ -5,6 +5,11 @@
 #include "Audio/IAudioService.h"
 #include "Container/PointerTypes.h"
 
+namespace NorvesLib::Modules::Audio
+{
+    [[nodiscard]] bool IsPlayableVoiceDesc(uint64_t frameCount, const AudioVoiceDesc& desc) noexcept;
+}
+
 namespace NorvesLib::Modules::Audio::Private
 {
     class AudioServiceTestAccess

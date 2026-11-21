@@ -2,6 +2,7 @@
 
 #include "Audio/ISoundSystem.h"
 #include "Audio/SoundBank.h"
+#include "Asset/AssetBlob.h"
 #include "Container/UnorderedMap.h"
 #include "Debug/DebugConfig.h"
 #include "Random/Random.h"
@@ -66,6 +67,9 @@ namespace NorvesLib::Modules::Audio::Private
             bool bLoop = false;
             VoiceHandle Voice;
             Core::Container::TSharedPtr<AudioClipResource> Clip; ///< ボイスの再作成に使う、選択済みのクリップ。
+            Core::Asset::AssetBlob PcmBlob; ///< 休眠からボイスを作り直せるよう、開始時の PCM を共有する。
+            AudioPcmFormat Format; ///< 再生位置の更新とボイスの再作成に使う開始時の形式。
+            uint64_t FrameCount = 0; ///< 再生区間の終端を求めるために控えた開始時のフレーム数。
             AudioVoiceDesc VoiceDesc; ///< 作成時のループ区間とピッチ上限を保持し、開始フレームは作成のたびに指定する。
             double PlayFrame = 0.0; ///< 仮想時計で進めるクリップ内の再生位置（フレーム）。
             SoundId DefinitionId;
