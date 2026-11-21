@@ -16,8 +16,6 @@
 #include "Rendering/CloudLayerPass.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
-#include <algorithm>
-#include <cmath>
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering

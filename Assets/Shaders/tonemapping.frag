@@ -291,10 +291,13 @@ vec3 ApplyGrade(vec3 c)
         c = LimitGradeColor(c);
         if (params.gradeProtectedHueKeep > 0.0 && params.gradeProtectedHueHalfWidthDeg > 0.0)
         {
-            saturation = mix(saturation, 1.0, ProtectedHueWeight(max(c, vec3(0.0))));
+            // 保護率 0 では設定した彩度を、1 では彩度 1 を厳密に保つ。
+            float w = ProtectedHueWeight(max(c, vec3(0.0)));
+            saturation = saturation * (1.0 - w) + w;
         }
         float y = dot(c, luma);
-        c = max(vec3(y) + (c - vec3(y)) * saturation, vec3(0.0));
+        // 彩度 1 で輝度との差を取らず、暗い成分の桁落ちを防ぐ。
+        c = max(vec3(y) * (1.0 - saturation) + c * saturation, vec3(0.0));
     }
 
     float strength = params.gradeHighlightRolloffStrength;
@@ -313,7 +316,8 @@ vec3 ApplyGrade(vec3 c)
 
     float y = dot(max(c, vec3(0.0)), luma);
     float t = smoothstep(-2.0, 2.0, log2(max(y, 1e-6) / pivot));
-    vec3 tint = params.gradeShadowTint.rgb + (params.gradeHighlightTint.rgb - params.gradeShadowTint.rgb) * t;
+    // 両端で色倍率をそのまま使い、小さな明部の倍率も保つ。
+    vec3 tint = params.gradeShadowTint.rgb * (1.0 - t) + params.gradeHighlightTint.rgb * t;
     // 無限大だけを有限値に置き換え、色の倍率が 0 のときに NaN が生じるのを防ぐ。
     c = mix(c, sign(c) * GRADE_COUPLED_MAX, isinf(c));
     // 小さい色倍率を先に反映し、表示変換が飽和する範囲で各成分を切って二次式のあふれを防ぐ。
