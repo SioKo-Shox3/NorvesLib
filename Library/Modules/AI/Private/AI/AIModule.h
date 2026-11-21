@@ -34,6 +34,7 @@ namespace NorvesLib::Modules::AI
         void SetSteeringDebugDrawEnabled(bool bEnabled) override;
         bool IsSteeringDebugDrawEnabled() const override;
 
+        const Core::World* GetEngineWorld() const;
         void RegisterAgent(SteeringAgentComponent& agent);
         void UnregisterAgent(SteeringAgentComponent& agent);
         uint32_t GetAgentCount() const;

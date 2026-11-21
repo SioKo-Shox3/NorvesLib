@@ -12801,3 +12801,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 経路（コードの読みで確かめた）: 登録の後に ComponentId を書き換えて破棄すると、`SteeringSystem::UnregisterAgent` が参照で照合して記録を消す。破棄の前に固定歩が来れば `BeginStep` → `EnsureMotorBinding` → `EnsureBinding` が ID の不一致で結び直す。操舵 Component が 2 個あると、2 個目は `ResolveAgent` が null を返して `Gather` で飛ばされ、近傍の格子に入らない。
 - Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
 - Notes: 判断: 1 つの Entity に操舵 Component が複数あるときは先頭だけを使う（先頭が破棄予定・Tick 無効の間も 2 個目へ切り替えない）。
+- U19 操舵 Component を外したときも体から購読を外し、コールバックを接続ごとの番号で照合し、Shutdown でモーターを外す（最後。タスクの verify）: 着地(直し 0 回)

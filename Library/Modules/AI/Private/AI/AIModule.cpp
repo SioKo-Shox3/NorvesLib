@@ -53,6 +53,11 @@ namespace NorvesLib::Modules::AI
         Core::ClassRegistry::Get().RegisterClass(SteeringAgentComponent::StaticClass());
     }
 
+    const Core::World* AIModule::GetEngineWorld() const
+    {
+        return m_Engine ? &m_Engine->GetWorld() : nullptr;
+    }
+
     void AIModule::RegisterAgent(SteeringAgentComponent& agent)
     {
         if (IsOwnerThread())
@@ -225,7 +230,7 @@ namespace NorvesLib::Modules::AI
     {
         if (IsOwnerThread())
         {
-            m_Steering.Reset(m_Navigation);
+            m_Steering.Reset(m_Navigation, GetEngineWorld());
             m_LocomotionProfiles.Clear();
             m_Navigation.Reset();
             m_bInitialized = false;

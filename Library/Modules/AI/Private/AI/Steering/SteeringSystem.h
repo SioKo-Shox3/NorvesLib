@@ -24,7 +24,7 @@ namespace NorvesLib::Modules::AI
 
         void RegisterAgent(SteeringAgentComponent& agent);
         void UnregisterAgent(SteeringAgentComponent& agent, INavigationService& nav);
-        void Reset(INavigationService& nav);
+        void Reset(INavigationService& nav, const Core::World* world);
         uint32_t GetAgentCount() const { return static_cast<uint32_t>(m_Records.size()); }
         SteeringAgentComponent* ResolveAgent(size_t index, const Core::World& world);
         static bool CanSteer(const SteeringAgentComponent& agent);

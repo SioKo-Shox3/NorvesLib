@@ -77,18 +77,32 @@ namespace NorvesLib::Modules::AI
             return false;
         }
         // 所有者・体・操舵 Component の ID はどれも書き換えられるので、どれかが変われば結び直す。
-        if (IsBound() && m_BoundOwnerId == owner.GetObjectId() && m_BoundBodyId == body->GetComponentId() &&
-            m_BoundAgentId == agent.GetComponentId())
+        if (IsBound() && (m_BoundOwnerId != owner.GetObjectId() || m_BoundBodyId != body->GetComponentId() ||
+                          m_BoundAgentId != agent.GetComponentId()))
+        {
+            Detach(&owner);
+        }
+        if (!m_BoundOwnerHandle.IsValid())
+        {
+            // 行の作成予約中は所有者を引き直せない。解除できるようになる歩まで購読を保留する。
+            m_BoundOwnerHandle = world->GetEntityHandle(owner);
+            if (!m_BoundOwnerHandle.IsValid())
+            {
+                return false;
+            }
+        }
+        if (IsBound())
         {
             return true;
         }
 
-        Detach(&owner);
+        static uint64_t s_NextConnectionId = 1;
+        m_ConnectionId = s_NextConnectionId++;
         m_BoundOwnerId = owner.GetObjectId();
         m_BoundBodyId = body->GetComponentId();
         m_BoundAgentId = agent.GetComponentId();
         m_Before.Bind([world, ownerId = m_BoundOwnerId, agentId = m_BoundAgentId,
-                       bodyId = m_BoundBodyId, generation = m_BindingGeneration](float dt)
+                       bodyId = m_BoundBodyId, connectionId = m_ConnectionId](float dt)
         {
             auto* entity = world->FindEntityByObjectId(ownerId);
             if (!entity || entity->IsPendingDestroy())
@@ -99,7 +113,7 @@ namespace NorvesLib::Modules::AI
             auto* current = entity->GetComponent<Physics::CharacterBodyComponent>();
             if (driver && driver->GetComponentId() == agentId &&
                 current && !current->IsPendingDestroy() && current->GetComponentId() == bodyId &&
-                driver->m_Motor && driver->m_Motor->m_BindingGeneration == generation && SteeringSystem::CanSteer(*driver))
+                driver->m_Motor && driver->m_Motor->m_ConnectionId == connectionId && SteeringSystem::CanSteer(*driver))
             {
                 driver->StepMotor(dt);
             }
@@ -109,18 +123,26 @@ namespace NorvesLib::Modules::AI
         return true;
     }
 
-    void AnimalMotor::Detach(Core::Entity* owner)
+    void AnimalMotor::Detach(Core::Entity* owner, const Core::World* fallbackWorld)
     {
-        ++m_BindingGeneration;
-        // 購読は Bind ごとの識別子で照合されるため、所有者や体の ID が変わっていても自分の購読だけが外れる。
+        m_ConnectionId = 0;
+        if (!owner && fallbackWorld)
+        {
+            owner = fallbackWorld->ResolveEntityHandle(m_BoundOwnerHandle);
+        }
+        // 体の ID が変わっていても、Bind ごとの識別子に一致する購読だけを外す。
         if (owner && IsBound())
         {
-            if (auto* body = owner->GetComponent<Physics::CharacterBodyComponent>())
+            for (auto* component : owner->GetComponents())
             {
-                body->BeforeSimulation.Remove(m_Before);
+                if (auto* body = Core::CastTo<Physics::CharacterBodyComponent>(component))
+                {
+                    body->BeforeSimulation.Remove(m_Before);
+                }
             }
         }
         m_Before.Clear();
+        m_BoundOwnerHandle = {};
         m_BoundOwnerId = 0;
         m_BoundBodyId = 0;
         m_BoundAgentId = 0;

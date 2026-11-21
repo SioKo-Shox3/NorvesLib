@@ -57,16 +57,18 @@ namespace NorvesLib::Modules::AI
 
     void SteeringAgentComponent::DetachMotorAndUnregister()
     {
+        if (!m_bRegistered && (!m_Motor || !m_Motor->IsBound()))
+        {
+            return;
+        }
+        auto* module = Module();
         if (m_Motor)
         {
-            m_Motor->Detach(GetOwner());
+            m_Motor->Detach(GetOwner(), module ? module->GetEngineWorld() : nullptr);
         }
-        if (m_bRegistered)
+        if (m_bRegistered && module)
         {
-            if (auto* module = Module())
-            {
-                module->UnregisterAgent(*this);
-            }
+            module->UnregisterAgent(*this);
         }
     }
 

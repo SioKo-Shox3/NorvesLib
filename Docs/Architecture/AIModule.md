@@ -171,7 +171,11 @@ step  = base + (base * extra) / 128
 
 ## 四足動物の運動と Animator への公開
 
-`AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` を購読する。プレハブやシーンの読み込みでは `Initialize` が所有 Entity の `ObjectId` の採番に先行するため、ID が 0 の間は接続を保留する。操舵系は各固定歩の開始時に `CanSteer` を満たす個体で接続を確認し、採番後の最初の歩で Body に接続する。所有者の `ObjectId`、Body の `ComponentId`、操舵 Component の `ComponentId` のいずれかが接続時の値から変わると、接続の世代を進め、所有者の現在の Body から古い購読を識別子で外して接続を結び直す。`Bind` のたびに新しい識別子が割り当てられるため、解除の対象は自分の購読だけになる。コールバックは購読時の `ObjectId` で World から所有 Entity を引き、個体と Body の `ComponentId`、接続の世代、破棄状態、`CanSteer` を照合してからモーターを進める。[AnimalMotor.cpp](../../Library/Modules/AI/Private/AI/Motor/AnimalMotor.cpp)
+`AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` を購読する。プレハブやシーンの読み込みでは `Initialize` が所有 Entity の `ObjectId` の採番に先行するため、ID が 0 の間は接続を保留する。ECS 行の作成が予約中で所有 Entity のハンドルを取得できない場合も、購読を保留する。操舵系は各固定歩の開始時に `CanSteer` を満たす個体の接続を確認し、所有者の `ObjectId`、体または操舵 Component の `ComponentId` が変われば結び直す。
+
+モーターは接続ごとに一意の番号を静的な通し番号から割り当てる。コールバックは購読時の `ObjectId` で所有 Entity を引き、操舵 Component と体の `ComponentId`、破棄状態、`CanSteer` に加え、接続時の番号が現在のモーターの番号と一致することを確認する。配信中にコピーされた古い呼び出しも、同じ `ComponentId` を持つ後任には届かない。[AnimalMotor.cpp](../../Library/Modules/AI/Private/AI/Motor/AnimalMotor.cpp)
+
+解除時は所有 Entity の各 `CharacterBodyComponent` から、`Bind` 時の識別子で自分の購読を外す。`RemoveComponent` で所有者が先に外れた場合は、接続時に保存したハンドルを Engine の World で解決する。解決できなければ体にはアクセスしない。World の破棄中は Component の終了処理より先に Entity の行から参照が消えるため、古いハンドルは解決されず、体自身が終了処理で購読を消す。`AIModule::Shutdown` でも、登録中の各モーターの購読を外してから登録簿を空にする。[SteeringSystem.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringSystem.cpp)
 
 1. `MakeIntent` は操舵の水平速が 0.001 m/s 未満なら移動入力を零にする。それ以上では速歩の上限（`Gaits[1].SpeedMax`）を超えたときだけ `bSprint` を立てる。操舵の単位方向に `min(speed / speedMax, 1)` を掛けて `LocomotionIntent::Move` に渡す。分母は通常なら速歩、スプリントなら襲歩（`Gaits[3].SpeedMax`）の上限。モデルは同じ上限を入力強度に掛けるので、平地でその場旋回をしていなければ、平滑化前の目標速は襲歩の上限まで操舵の水平速に一致する。
 2. `QuadrupedLocomotionModel::Step` に Body の接地・地面法線・速度・足場速度・重力と、持ち主の向きを渡す。モデルが足場に対する観測速度、上下のしきい値、最短滞在時間から歩様を選ぶ。斜面、旋回、加減速、衝突の結果により実際の速さは目標と異なり得る。[QuadrupedLocomotionModel.cpp](../../Library/Core/Private/Locomotion/QuadrupedLocomotionModel.cpp)

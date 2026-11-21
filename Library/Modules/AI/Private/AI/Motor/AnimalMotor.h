@@ -2,10 +2,12 @@
 
 #include "Delegate/Delegate.h"
 #include "Locomotion/QuadrupedLocomotionModel.h"
+#include "Object/EntityHandle.h"
 
 namespace NorvesLib::Core
 {
     class Entity;
+    class World;
 }
 
 namespace NorvesLib::Modules::Physics
@@ -21,7 +23,7 @@ namespace NorvesLib::Modules::AI
     {
     public:
         bool EnsureBinding(Core::Entity& owner, SteeringAgentComponent& agent);
-        void Detach(Core::Entity* owner);
+        void Detach(Core::Entity* owner, const Core::World* fallbackWorld = nullptr);
         void SetParams(const Core::Locomotion::QuadrupedLocomotionParams& params);
         void Step(Core::Entity& owner, float dt, const Math::Vector3& desiredVelocity);
         void PublishAnimator(Core::Entity& owner);
@@ -37,7 +39,8 @@ namespace NorvesLib::Modules::AI
         Physics::CharacterBodyComponent* GetBoundBody(const Core::Entity& owner) const;
 
         Core::Delegate<void, float> m_Before;
-        uint64_t m_BindingGeneration = 0;
+        uint64_t m_ConnectionId = 0;
+        Core::EntityHandle m_BoundOwnerHandle;
         uint64_t m_BoundOwnerId = 0;
         uint64_t m_BoundBodyId = 0;
         uint64_t m_BoundAgentId = 0;

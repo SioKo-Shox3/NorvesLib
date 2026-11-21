@@ -1,5 +1,6 @@
 ﻿#include "AI/Steering/SteeringSystem.h"
 
+#include "AI/Motor/AnimalMotor.h"
 #include "AI/Navigation/INavigationService.h"
 #include "AI/Steering/SteeringAgentComponent.h"
 #include "Object/Entity.h"
@@ -119,7 +120,7 @@ namespace NorvesLib::Modules::AI
         return owner && owner->GetWorld() == &world && owner->GetComponent<SteeringAgentComponent>() == agent ? agent : nullptr;
     }
 
-    void SteeringSystem::Reset(INavigationService& nav)
+    void SteeringSystem::Reset(INavigationService& nav, const Core::World* world)
     {
         for (const auto& record : m_Records)
         {
@@ -127,9 +128,13 @@ namespace NorvesLib::Modules::AI
             {
                 nav.ReleasePath(record.Path);
             }
-            if (record.Agent)
+            if (auto* agent = record.Agent)
             {
-                record.Agent->m_bRegistered = false;
+                if (agent->m_Motor)
+                {
+                    agent->m_Motor->Detach(agent->GetOwner(), world);
+                }
+                agent->m_bRegistered = false;
             }
         }
         m_Records.clear();
