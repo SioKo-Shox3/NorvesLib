@@ -12815,3 +12815,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(反復 3、run 20261121-094434): 統合ブランチ feature/scene-launcher を取り込んだ後の verify の失敗は、`Core.vcxproj` の 4 か所の C1060(コンパイラのヒープ不足)だけで、ほかの枠のビルドが同時に走っていたためのメモリ不足だった(コンパイルエラー・リンクエラーは無し)。ソースは変えず、同じ verify を回し直して通した。
 - 証拠(反復 3): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-iter3-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK`・C1060 は 0 件)。
 - Next(反復 3): ランナーの評価者の反証。聴感の確かめは G16-GR73-SPATIAL-CHECK。
+- U1 評価器の骨組み(公開型・設定の読み込み・距離の dB・寄与源の登録と合成)と Acoustics.json: 着地(直し 0 回)
