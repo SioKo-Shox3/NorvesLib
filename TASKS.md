@@ -8373,7 +8373,7 @@
 - notes: ロードマップ 2958・3005 行、要件 `#### GR74` の P2。AssetCook はエンコードしない(制作の側が書き出す)。`LOOPSTART`/`LOOPLENGTH` は慣習なので、実装の前に仕様を確かめて NVAUDv1.md に書く(要件の P2 の注意)。圧縮のまま運ぶので、波形を変える設定は再エンコードが要り受けないと決めた。ロードマップ 4589 行の「AssetCook は Core だけにリンク(`Tools/AssetCook/CMakeLists.txt:11`)」は古く、今は `AssetCookLib` が Core・TextureCooker・MeshOptimizer にリンクする(`:170`)。G16-S3 の決定(OGG はそのまま運ぶ)は G16-GR95-IMPORT-SETTINGS の notes。危険地帯: アセットの形式の書き手なので評価者を通す。
 
 ## G16-GR73-SPATIAL-LISTENER: 3D の定位(距離の減衰・等パワーのパン・近距離の広がり・背後の減衰・ドップラー)の純関数とリスナー(カメラ・Entity・Hybrid)を作り、Entity に追従する 3D の AudioComponent を出力の行列と周波数比へ流す
-- status: doing
+- status: done
 - after: G8-GR72-AUDIO-SPI, G8-GR72-SOUND-SYSTEM, G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR73
 - needs-gr: GR72

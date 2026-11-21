@@ -12812,3 +12812,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(反復 2、run 20261121-094434): このタスクのブランチの `TASKS.md` の done-when・verify・paths を、判断役が書き換えて統合ブランチに入っている文言と同じにした(実装は変えていない)。評価者がタスクのブランチの古い完了条件(試験・ドップラーの式どおりのクランプ・0 への音量の ε)で判定していたため。
 - 証拠(反復 2): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-iter2-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK` は 0 件。ソースの変更が無いので差分のビルド)。
 - Next(反復 2): ランナーの評価者の反証(書き換え後の done-when が基準)。聴感の確かめは G16-GR73-SPATIAL-CHECK。
+- Done(反復 3、run 20261121-094434): 統合ブランチ feature/scene-launcher を取り込んだ後の verify の失敗は、`Core.vcxproj` の 4 か所の C1060(コンパイラのヒープ不足)だけで、ほかの枠のビルドが同時に走っていたためのメモリ不足だった(コンパイルエラー・リンクエラーは無し)。ソースは変えず、同じ verify を回し直して通した。
+- 証拠(反復 3): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-iter3-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK`・C1060 は 0 件)。
+- Next(反復 3): ランナーの評価者の反証。聴感の確かめは G16-GR73-SPATIAL-CHECK。
