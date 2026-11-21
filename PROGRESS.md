@@ -12953,3 +12953,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: ポーズの理由を Push する呼び手がまだ無いので、ランチャーと各シーンの動き・見た目は変わらない。
 - Next: ランナーの評価者の反証（危険地帯）。ポーズを使う側（G15-GR119-WINDOW-EVENTS のフォーカス・最小化、G15-GR119-GAME-FLOW のメニュー）。
 - Notes: 要起票: Running になった後に登録したモジュールへ、そのときのポーズの理由を最初に 1 回届ける
+
+## G15-GR119-PAUSE-GATE 完了条件の欄を判断役の書き換えにそろえる（2026-11-22）
+- Done: 作業ブランチの `TASKS.md` にある自分の項目の done-when・verify・paths を、判断役が書き換えた統合ブランチ（`feature/scene-launcher`）の文面にそろえた。盤面の再開のコミットは status だけを戻しており、書き換えた欄が作業ブランチに届いていなかった。そろえた (3) は「集合が空のときは `SyncOrderedTicks` も収集もせずに抜ける」「集合が空でなく、順序が汚れたフレームに限り共通の `SyncOrderedTicks` で付け直してよい」で、今の実装（空の集合での早抜け）がこれを満たす。コードは変えていない。
+- 証拠: `.harness/runs/20261122-015216/verify-G15-GR119-PAUSE-GATE-U9.txt`（`cmake --build build --config Debug --target Game -- /m:1` が `exit=0`、`Game.vcxproj -> ...\Game\Debug\Game.exe` まで生成）。その後にコードの変更は無い。
+- 採った判断: 差し戻しが挙げた「対象が 1 件以上のときも一覧だけを回す」を満たすには、判断役が採らなかった作り（ポーズ用の順序を差分で別に保つ）が要る。判断役の判断（今の実装を正とし (3) を緩める）に従って実装は変えず、書き換えた欄を作業ブランチへ反映した。
+- Next: ランナーの評価者の反証（危険地帯）。
