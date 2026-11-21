@@ -2,6 +2,7 @@
 
 #include "AI/IAIModule.h"
 #include "AI/Motor/LocomotionProfileCache.h"
+#include "AI/Navigation/NavObstacleSystem.h"
 #include "AI/Navigation/NavigationService.h"
 #include "AI/Steering/SteeringSystem.h"
 #include "Container/Span.h"
@@ -29,12 +30,16 @@ namespace NorvesLib::Modules::AI
 
         INavigationService& GetNavigation() override { return m_Navigation; }
         const INavigationService& GetNavigation() const override { return m_Navigation; }
+        bool SetNavObstacleSettings(const NavObstacleSettings& settings) override;
+        NavObstacleSettings GetNavObstacleSettings() const override;
         void SetNavDebugDrawEnabled(bool bEnabled) override;
         bool IsNavDebugDrawEnabled() const override;
         void SetSteeringDebugDrawEnabled(bool bEnabled) override;
         bool IsSteeringDebugDrawEnabled() const override;
 
         const Core::World* GetEngineWorld() const;
+        void RegisterObstacle(NavObstacleComponent& obstacle);
+        void UnregisterObstacle(NavObstacleComponent& obstacle);
         void RegisterAgent(SteeringAgentComponent& agent);
         void UnregisterAgent(SteeringAgentComponent& agent);
         uint32_t GetAgentCount() const;
@@ -50,6 +55,8 @@ namespace NorvesLib::Modules::AI
         const Thread::Thread::ThreadId m_OwnerThreadId = Thread::Thread::GetCurrentThreadId();
         Core::Engine::Engine* m_Engine = nullptr;
         NavigationService m_Navigation;
+        NavObstacleSystem m_Obstacles;
+        NavObstacleSettings m_ObstacleSettings;
         LocomotionProfileCache m_LocomotionProfiles;
         SteeringSystem m_Steering;
         bool m_bInitialized = false;

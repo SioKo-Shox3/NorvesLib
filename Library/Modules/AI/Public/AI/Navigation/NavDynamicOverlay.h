@@ -64,6 +64,7 @@ namespace NorvesLib::Modules::AI
         uint32_t GetCostExtraPer128(NavCellCoord cell) const;
         uint32_t GetTileVersion(NavTileCoord coord) const;
         uint32_t GetSerial() const { return m_Serial; }
+        uint64_t GetGeneration() const { return m_Generation; } // 全消去ごとに進む世代。押印の記録の OverlayGeneration と照合する。
         size_t CountNonZeroCells() const { return m_NonZeroCells; }
         bool IsEmpty() const { return m_NonZeroCells == 0; }
 

@@ -13068,3 +13068,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 動的なオーバーレイ(セルごとの塞ぎ・コストのカウンタとタイルの版)と足跡の塗り: 着地(直し 0 回)
 - U4 `--ai-nav-smoke` の場面(平地・箱の障害物・動く箱・動物の代役): 着地(直し 0 回)
 - U7 探索・平滑化・照会がオーバーレイを読み、経路がタイルの動的な版を持つ(レビュー済みの差分を当て直す): 着地(直し 0 回)
+- U3 NavObstacleComponent と AIModule の PreFixedTick での押印の更新: 着地(直し 1 回)
