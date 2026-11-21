@@ -660,7 +660,7 @@ namespace NorvesLib::Core::Rendering
                 pipelineDesc.renderPass = renderPass;
                 pipelineDesc.descriptorSetLayouts.push_back(CreateBoardDescriptorSetDesc());
                 pipelineDesc.blendState.attachments.push_back(
-                    CanvasView::CreateBoardBlendAttachmentDesc(boardBlendModes[blendIndex]));
+                    CanvasView::CreateBoardBlendAttachmentDesc(boardBlendModes[blendIndex], shaderKind));
                 pipeline = context.Device->CreateGraphicsPipeline(pipelineDesc);
             }
             if (!pipeline)
@@ -1012,6 +1012,15 @@ namespace NorvesLib::Core::Rendering
         }
 
         return blendDesc;
+    }
+
+    RHI::BlendAttachmentDesc CanvasView::CreateBoardBlendAttachmentDesc(BlendMode blendMode, BoardShaderKind shaderKind)
+    {
+        if (NormalizeBoardShaderKind(shaderKind) != BoardShaderKind::Standard && NormalizeBoardBlendMode(blendMode) == BlendMode::Opaque)
+        {
+            return CreateBoardBlendAttachmentDesc(BlendMode::Translucent);
+        }
+        return CreateBoardBlendAttachmentDesc(blendMode);
     }
 
     bool CanvasView::Initialize(const ViewSettings& settings)

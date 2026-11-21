@@ -253,6 +253,7 @@ namespace NorvesLib::Core::Rendering
         LinearMipClamp  ///< 線形・ミップ線形・クランプ。縮小表示する地図などに使う。
     };
 
+    /// RadialFill と CircleMask は BlendMode::Opaque でも被覆率とテクスチャのアルファで合成し、マスクの外では下の画素を残す。
     enum class BoardShaderKind : uint8_t
     {
         /// 標準の板（board2d.frag、既定）。ShaderParams は使わない。

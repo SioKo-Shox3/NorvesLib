@@ -12951,3 +12951,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(反復 2): 採った判断: `DrawCommand.h` を範囲外として欄を足さず、板の経路で読まれない `Draw.MaterialIndex` にサンプラーとシェーダーの種類を詰めた。パイプラインは描画パスに結び付くので、表は記録 1 回の中だけで持つ（永続のキャッシュは作っていない）。
 - Notes(反復 2): 人が見るときの見どころ: 起動画面（Rendering3DTest）とランチャーの文字の板は既定の板なので見た目が変わらないこと。`BoardComponent` で `Sampler` を LinearClamp / LinearMipClamp に、`ShaderKind` を RadialFill（`ShaderParams` = 塗りの割合・開始角・内径の比・向き）/ CircleMask にした板を Canvas に置くと、円弧の塗りと円のマスクが出て、Point の板と混ざらずに描かれること。
 - U4 円弧の角度を画面の向きで測り、真上から時計回りに塗る: 着地(直し 0 回)
+- U5 Opaque とマスクのシェーダーの組を被覆率で合成し、下の板を消さない: 着地(直し 0 回)

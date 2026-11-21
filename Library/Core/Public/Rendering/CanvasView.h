@@ -24,6 +24,9 @@ namespace NorvesLib::Core::Rendering
         static BlendMode NormalizeBoardBlendMode(BlendMode blendMode);
         static RHI::BlendAttachmentDesc CreateBoardBlendAttachmentDesc(BlendMode blendMode);
 
+        /// Opaque とマスクシェーダーの組は被覆率で合成し、マスクの外では下の画素を残す。
+        static RHI::BlendAttachmentDesc CreateBoardBlendAttachmentDesc(BlendMode blendMode, BoardShaderKind shaderKind);
+
         bool Initialize(const ViewSettings& settings) override;
         void Shutdown() override;
         void Render(ViewRenderContext& context) override;
