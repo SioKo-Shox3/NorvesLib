@@ -13,6 +13,7 @@
       "spatial": "2d",
       "category": "ambience",
       "bus": "ambient",
+      "sound_class": "rain",
       "source_ref": "仮・合成(Scripts/GenerateProvisionalAudio.py)"
     },
     {
@@ -30,6 +31,7 @@
       "cooldown_ms": 0,
       "spatial": "2d",
       "category": "effect",
+      "sound_class": "footstep",
       "source_ref": "仮・合成(Scripts/GenerateProvisionalAudio.py)"
     }
   ]

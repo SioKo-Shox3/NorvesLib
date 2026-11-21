@@ -170,7 +170,7 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 
 音声モジュールの `Tick(dt)` は通常の `ModuleRegistry::TickAll` で実行する。最終カメラを読むのは Handler の `OnLateUpdate` の後で、同じフレームの位置と向きが反映される。
 
-1. `IAudioService::Tick()` が voice の終了・エラーの通知を取り込む。
+1. `IAudioService::Tick()` が voice の終了・エラーの通知を取り込んだ後、遮蔽の更新器を回す。
 2. `AudioListenerResolver::Resolve` でリスナーを決め、`SoundSystem::SetListener` で渡す。
 3. 登録された `AudioComponent` のうち `Spatialization == World3D` のものは、`ISoundSystem::IsAudible` が真のインスタンスへ、持ち主の `Entity::GetWorldTransform()` の位置を `ISoundSystem::SetEmitterPosition` で渡す。有効なハンドルでは物理 voice に停止を発行するまで `IsAudible` が真なので、フェードアウト中も音源は持ち主に追従する。休眠中も `IsAudible` は真で、インスタンスは復帰の判定に使う位置を受け取り続ける。
 4. `SoundSystem::Update(dt)` が各 3D インスタンスの音源速度を位置の差分/dt で求める。`ComputeAudioSpatial` にリスナーと音源の状態を渡し、下表の値を反映する。左右の利得は両方とも前回の適用値との差が ε = 1e-4 以下なら更新を省く。3D の周波数比は再生開始時から丸めて送り、送信に成功した比を保存する。毎フレームの更新と `SetPitch` では丸めた比をこの保存値と同じ ε で比較する。3D の voice の音量にも同じ ε を使い、音量が非ゼロから厳密に 0 になるときは送る。2D の voice の音量は完全一致のときだけ更新を省く。
@@ -183,6 +183,22 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 | 背後の高域の係数 | 値を保持する。フィルタへの適用は `G16-GR73-ACOUSTICS-AI-WIRE` の範囲 |
 
 真後ろでの音量減衰は 6 dB、高域の係数は 0.5。`MinDistance` の内側では、近距離の広がりと同じ係数 s = d/MinDistance で背後の効果も弱まる。式と受入れ条件は [GR73 3D 定位とリスナーの受入れ記録](../AudioValidation/GR73Acceptance.md)を参照。
+
+### 遮蔽とローパス
+
+`SoundSystem` は 3D の定義から物理 voice を開始すると、`IAudioOcclusion::TrackVoiceAcoustics` に音源の位置、定義の `sound_class`（既定は `ambient`）、優先度を渡して追跡を始める。声の奪取・休眠で停止に失敗して声が鳴り続ける間は、遮蔽の追跡と平滑化中の値を保ち、声を実際に手放すときだけ追跡を外す。
+
+音声モジュールは毎 Tick、GR73 が解決したリスナー位置を `SetResolvedListenerPosition` で更新器へ渡す。`MainCamera` では主カメラの位置、`Entity` と `Hybrid` では選んだ `AudioListenerComponent` の Entity の位置を使う。既定の姿勢へ退避したときは `ClearResolvedListenerPosition` で解決位置を外す。呼び手が `IAudioOcclusion::SetListenerPosition` で明示した位置は、次に 1 声以上を評価する更新で優先して使い、その更新で消費する。評価する声が無い更新では明示位置を保留する。明示位置がなければ解決位置を使い、どちらもなければ経路を評価しない。
+
+音声モジュールは `Install` でエンジンの評価器をサービスへ渡す。サービスは `AudioService::Tick()` の最後に更新器を回す。経過時間はサービスが単調時計で測り、初回は 0 秒、以後は最大 0.1 秒とする。更新器は通知が反映された声の状態を読み、破棄済み、`Stopping` 以降、または `Quarantined` の声をバックエンドに触れずに追跡から外す。モジュールがその後に解決したリスナー位置と、同じフレームの `SoundSystem::Update` で始まった声は、次のフレームから評価に使う。
+
+1. `Assets/Data/Acoustics.json` の `voiceBudgetPerFrame` は 1 フレームの評価上限、`updateHz` は各声の再評価頻度を決める。評価器と更新器の既定はどちらも 4 声、10 Hz。評価済みの声は前回評価からの待ち時間が 1 周期に達すると候補になり、スコアは「待ち時間 + 優先度の加点」となる。未評価の声は登録時点で期限に達したものとし、スコアは「登録からの経過時間 + 1 周期 + 優先度の加点」とする。加点はどちらも最大 1 周期で、スコアの大きい順に予算まで評価する。待ち時間は次に評価するまで伸び続けるため、新しい声が入り続けても評価済みの声に順番が回る。
+2. `AcousticTransmissionEvaluator::Evaluate` がリスナーと音源の間の経路を評価し、分類ごとの免除を反映する。距離減衰は GR73 の定位で掛けるため、更新器は評価結果から距離減衰を引き、遮蔽分の利得だけを使う。遮断周波数は評価器が `hfLossToCutoff` の設定に従い、高域損失から対数補間で求める。
+3. 初回も既定の利得 0 dB・遮断周波数 20 kHz から徐々に目標値へ近づける。各更新では利得を dB、遮断周波数を対数周波数で、時定数 0.15 秒（暫定）の 1 次遅れで目標値へ近づける。`IAudioService::SetVoiceAcoustics` を通じて、バックエンドの `SetVoiceVolume` に呼び手の音量 × 遮蔽の線形利得を、`SetVoiceFilter` に遮断周波数を渡す。
+
+XAudio2 は遮断周波数 `f` を `2·sin(π·f/fs)` でフィルタ係数に変換する。`fs` は送り先の入力サンプルレートである。係数の上限 `XAUDIO2_MAX_FILTER_FREQUENCY` は素通しに相当するため、`fs` が 48 kHz の場合、約 8 kHz 以上の設定では素通しになる。
+
+遮蔽の利得とローパスの効き具合は、人がゲーム内で音源とリスナーの間に遮蔽物が入る前後の音を聞いて確かめる。起動確認用の台本はない。
 
 ### 休眠(virtual voice)
 

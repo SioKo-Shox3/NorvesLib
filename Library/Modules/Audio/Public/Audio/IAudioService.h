@@ -77,5 +77,14 @@ namespace NorvesLib::Modules::Audio
         virtual AudioResult CreateBus(AudioBusId bus, AudioBusId parent) = 0;
         /** @brief 初期化後に GameThread で、作成済みのバスの音量を有限で 0 以上の線形倍率に設定する。 */
         virtual AudioResult SetBusVolume(AudioBusId bus, float gain) = 0;
+
+        /**
+         * @brief 声に遮蔽の利得 (dB) とローパスの遮断周波数 (Hz) をすぐに適用する。平滑化は呼び手が行う。
+         * @details SetVoiceVolume が指定した線形音量と、遮蔽の線形利得の積をバックエンドの音量にする。
+         * 利得は [-120, 0] dB、遮断周波数は [20, 20000] Hz に丸める。非有限値には InvalidState を返す。
+         * Created・Submitted・Playing でのみバックエンドを呼ぶ。Stopping・Drained・Quarantined では
+         * バックエンドに触れず InvalidState を返す。無効なハンドルには StaleHandle を返す。
+         */
+        virtual AudioResult SetVoiceAcoustics(VoiceHandle handle, const VoiceAcousticParams& params) = 0;
     };
 } // namespace NorvesLib::Modules::Audio

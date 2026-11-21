@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Audio/AudioMixer.h"
+#include "Audio/IAudioOcclusion.h"
 #include "Audio/IAudioService.h"
 #include "Audio/ISoundSystem.h"
 #include "Container/PointerTypes.h"
@@ -40,6 +41,8 @@ namespace NorvesLib::Modules::Audio
         /** モジュールが所有するミキサーを返す。 */
         [[nodiscard]] virtual IAudioMixer& GetMixer() = 0;
         [[nodiscard]] virtual const AudioBackendStatus& GetBackendStatus() const = 0;
+        /** @brief 声ごとの遮蔽の更新器を返す。持たないモジュールは nullptr。 */
+        [[nodiscard]] virtual IAudioOcclusion* GetAudioOcclusion() { return nullptr; }
     };
 
     [[nodiscard]] Core::Container::TUniquePtr<IAudioModule> CreateAudioModule(const AudioModuleOptions& options = {});

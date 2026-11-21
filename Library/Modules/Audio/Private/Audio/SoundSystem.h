@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Audio/IAudioOcclusion.h"
 #include "Audio/ISoundSystem.h"
 #include "Audio/SoundBank.h"
 #include "Asset/AssetBlob.h"
@@ -33,6 +34,8 @@ namespace NorvesLib::Modules::Audio::Private
         void Update(float deltaSeconds);
         /** モジュールが Update の前に渡すリスナー状態。非有限の成分があれば前の状態を保つ。 */
         void SetListener(const AudioListenerState& listener);
+        /** 3D の声の遮蔽の追跡先を借用する。nullptr で外す。寿命はモジュールが持つ。 */
+        void SetAudioOcclusion(IAudioOcclusion* occlusion);
         AudioResult Shutdown();
         AudioResult RegisterDefinition(SoundDefinition definition);
         AudioResult UnregisterDefinition(SoundId id);
@@ -82,6 +85,7 @@ namespace NorvesLib::Modules::Audio::Private
             double AgeSeconds = 0.0;
             uint64_t PlaySequence = 0;
             uint8_t Priority = 128;
+            Core::Scene::ESoundClass SoundClass = Core::Scene::ESoundClass::Ambient; ///< 遮蔽の評価で使う分類。
             Math::Vector3 Position;
             bool bSpatial = false; ///< 3D 音源として再生するか。
             AudioEmitterSpatialSettings SpatialSettings; ///< この音源の距離減衰とドップラーの設定。
@@ -141,6 +145,8 @@ namespace NorvesLib::Modules::Audio::Private
          * ストリームのボイス（G16-GR74-STREAM-VOICE）では、この位置をデコーダの Seek に渡す。
          */
         AudioResult StartInstanceVoice(Instance& instance, uint32_t startFrame);
+        void TrackVoiceIfSpatial(const Instance& instance);
+        void UntrackVoice(const Instance& instance);
         void VirtualizeInstance(Instance& instance);
         void TryDevirtualizeInstance(Instance& instance);
         [[nodiscard]] uint32_t GetPhysicalVoiceCount() const;
@@ -166,6 +172,7 @@ namespace NorvesLib::Modules::Audio::Private
 
         IAudioService& m_Service;
         AudioMixerDomain* m_Mixer = nullptr;
+        IAudioOcclusion* m_Occlusion = nullptr;
         Random::Generator m_Generator;
         SoundSystemConfig m_Config;
         Core::Container::UnorderedMap<SoundId, SoundDefinition, SoundId::Hasher> m_Definitions;

@@ -56,6 +56,18 @@ namespace NorvesLib::Modules::Audio
         }
     };
 
+    inline constexpr float kVoiceAcousticMinGainDb = -120.0f;   ///< 遮蔽による利得の下限 (dB)。
+    inline constexpr float kVoiceAcousticMinCutoffHz = 20.0f;   ///< ローパスの遮断周波数の下限 (Hz)。
+    inline constexpr float kVoiceAcousticMaxCutoffHz = 20000.0f; ///< ローパスの遮断周波数の上限 (Hz)。
+    inline constexpr float kVoiceLowpassOneOverQ = 1.0f;        ///< 遮蔽用ローパスの品質係数 Q の逆数。
+
+    // 声ごとの遮蔽による利得 (dB、0 以下) とローパスの遮断周波数 (Hz)。
+    struct VoiceAcousticParams
+    {
+        float TargetGainDb = 0.0f;
+        float LowpassCutoffHz = kVoiceAcousticMaxCutoffHz;
+    };
+
     struct AudioPcmFormat
     {
         uint32_t SampleRate = 0;

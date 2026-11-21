@@ -18,6 +18,7 @@ namespace NorvesLib::Modules::Audio::Private
         AudioResult SubmitVoice(VoiceHandle handle, Core::Container::Span<const uint8_t> pcmBytes,
                                 const AudioBufferDesc& bufferDesc) override;
         AudioResult SetVoiceVolume(VoiceHandle handle, float volume) override;
+        AudioResult SetVoiceFilter(VoiceHandle handle, float lowpassCutoffHz, float oneOverQ) override;
         AudioResult SetVoiceFrequencyRatio(VoiceHandle handle, float ratio) override;
         AudioResult SetVoiceOutputGains(VoiceHandle handle, float leftGain, float rightGain) override;
         AudioResult PauseVoice(VoiceHandle handle) override;

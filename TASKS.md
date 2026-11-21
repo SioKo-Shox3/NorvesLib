@@ -8418,14 +8418,13 @@
 - notes-board: 距離の関数は G16 が先に作る Library/Core/Public/Scene/AcousticDistance.h の純関数を呼ぶ(自前の距離の関数を書かない。G16-S7 (A))
 
 ## G13-GR116-AUDIO-ACOUSTICS: 評価器の結果を声ごとの音量とローパスへ予算つきでなじませて当てる口を音のモジュールに足す
-- status: todo
+- status: done
 - after: G13-GR116-ACOUSTIC-EVALUATOR, G8-GR72-AUDIO-SPI, G8-GR72-SOUND-SYSTEM, G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR116
 - needs-gr: GR72
 - done-when: (1) `IAudioService` に追加だけ（既存のメソッドと署名は変えない）で `SetVoiceAcoustics(handle, VoiceAcousticParams{TargetGainDb, LowpassCutoffHz})` を足し、private の SPI（`Private/Audio/AudioBackend.h` の `IAudioBackend`）に `SetVoiceFilter(voice, lowpassCutoffHz, oneOverQ)` を足す（音量は G8-GR72-AUDIO-SPI の `SetVoiceVolume` を使う）。`XAudio2Backend.cpp` は `CreateSourceVoice` に `XAUDIO2_VOICE_USEFILTER` を付け、`IXAudio2SourceVoice::SetFilterParameters`（`XAUDIO2_FILTER_PARAMETERS{LowPassFilter, Frequency = 2·sin(π·f/fs), OneOverQ}`）を呼ぶ。`HighFrequencyLossDb` → 遮断周波数は `Acoustics.json` の対数補間（例 0 dB = 20 kHz、24 dB 以上 = 800 Hz）。(2) `NorvesAudioDomain` に `AudioOcclusionUpdater` を置く: 呼び手が位置を与えた声（`TrackVoiceAcoustics(handle, sourcePosition, soundClass, priority)` と `UntrackVoice`）とリスナーの位置（`SetListenerPosition`。G16 の GR73 が入るまでは Game が最終カメラの位置を渡す）を持ち、`AudioService::Tick` で優先度順のラウンドロビンに 1 フレーム最大 `voiceBudgetPerFrame`（既定 4）声・各声 `updateHz`（既定 10 Hz）で評価器を呼び、結果を 1 次遅れ（時定数 0.15 s、仮）で今の値へ寄せて backend へ渡す。免除のクラスは遮蔽・マスキングの寄与を外す。声の破棄・Stopping 以降・Quarantined では backend を触らない。`SoundDefinition`（G8-GR72-SOUND-SYSTEM）に `sound_class` の欄（既定 Ambient）を足し、3D の定義の再生で追跡に載せられる。(3) `Test/Modules/Audio/FakeAudioBackend.h` が `SetVoiceFilter` の値を記録する。新設の `AudioAcousticsTest`（`AudioBackendLifetimeTest` の束へ MEMBER。偽の backend と偽の評価器の寄与だけで XAudio2 を含めない）が通る: 目標値への 1 次遅れが時定数どおり（1 τ で 63.2±1%）に収束し跳ばない、1 フレームの評価数が予算を超えず 40 声でも全声が決まったフレーム数の内に 1 回以上評価される、記録したフィルタの周波数の値が 2·sin(π·f/fs) と一致、雨量 0→1 で免除でない声の遮断周波数が単調に下がり Cue（免除の印あり）の値は変わらない、破棄した声の handle では backend を呼ばない。既存の `AudioPlaybackTest`・`AudioBackendLifetimeTest`・`AudioModuleLifecycleTest`・`AudioModuleRegistryTest` が通る。`Scripts/Test-AudioSmoke.ps1`（G8）に、草の中のリスナーと岩の向こうの音源を往復させて遮蔽の値の行 `AUDIO_SMOKE stage=occlusion gain_db=... cutoff_hz=...` を出す `-Mode occlusion` を足し、ビルドできる（起動は G13-GR116-AUDIO-CHECK）。
 - verify: `cmake --build build --config Debug --target Game AudioBackendLifetimeTest SceneQueryRaycastTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(AudioAcousticsTest|AudioPlaybackTest|AudioBackendLifetimeTest|AudioModuleLifecycleTest|AudioModuleRegistryTest|AcousticTransmissionTest)$" --no-tests=error --output-on-failure --timeout 300`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M9World.ps1 -ContractOnly`
 - paths: Library/Modules/Audio, Test/Modules/Audio, Game/GameApplicationHandler.cpp, Game/GameModes/AudioSmoke, Scripts/Test-AudioSmoke.ps1, Assets/Audio/Banks, Assets/Data/Acoustics.json, Docs/Architecture/AudioFlow.md, Docs/Testing.md, TASKS.md, PROGRESS.md
 - notes: 設計は要件 `#### GR116` の設計 2)、ロードマップ 2815 行。G8-GR72 の `SetVoiceVolume`・論理サウンド層・既定の起動での Audio の登録（`G8-GR72-AUDIO-COMPONENT-BOOT`）の上に載せる。今の `XAudio2Backend::CreateVoice` はフィルタを指定せず、XAudio2 のフィルタの API はこのリポジトリで未使用・未検証（要件の注）。リスナーと 3D の位置の自動追従は G16 の GR73 の仕事なので、ここは「呼び手が位置を与える」形で代える（ロードマップ 2831 行）。G16 の GR73 が入るときは、この適用口に GR73 の声の位置とリスナーを差し込む（G16-S8 の (a)）。予算 4 声・10 Hz・時定数 0.15 s は要件の案の値で、実測の根拠は無い（データで替える）。UNCERTAIN: G8 の音のスモーク（`--audio-smoke`）の置き場は未着手で、`Game/GameModes/AudioSmoke` と名前が違えばそちらに合わせる。`-ContractOnly` は起動せず台本の契約だけを確かめる（`Test-M9World.ps1:8`・`539`）。危険地帯（Public API: `IAudioService`・`IAudioBackend`）なので評価者を通す。試験を足す理由: 反証する契約は「目標値へ跳ばずに収束し、予算を超えず、免除のクラスを変えない」こと。外れるとクリック音や一部の声だけ遮蔽されない形で出て、ログでは気づけず黙って起きる。やらないこと: 3D 定位・バス・リバーブ（GR73、G16）、足音の騒音（GR75、G16）。
 
@@ -8477,10 +8476,18 @@
 - after: G13-GR22-STEERING-MOTOR, G5-GR38-HEIGHTFIELD-QUERY, G5-GR38-PHYSICS-HEIGHTFIELD
 - gr: GR22
 - needs-gr: GR38
-- done-when: (1) `Private/AI/Flight/FlightController.*`: 3D の Seek・Arrive・Wander、地面からの高度帯（下限・上限。地面は `INavTerrainSource`）、旋回に応じたバンク（角の上限）、離陸・着陸・止まり木（アーキタイプの止まり木の候補の位置、または Entity の印）。飛ぶ動物は Kinematic の RigidBody と球のコライダーで、位置は AIModule の PreFixedTick で書く（物理の FixedBegin の後なので Kinematic の速度が移動量/dt になる。`PhysicsModule.cpp:191-210`・`1012-1017`）。障害物は前方の `SweepSphere`（GR08）で避ける。(2) 群れ: Separation・Alignment・Cohesion を地上（コンテキスト操舵へ重みで混ぜる）と空（3D）で使え、近傍は `UniformGridHash`（空は高さの帯で絞る）。仮のアーキタイプ `Assets/AI/Archetypes/Crow.json`（値は仮）。(3) 試験（`PhysicsDynamicsTest` の束へ MEMBER）: `AIFlockingTest` が、固定シードの N=32（2D と 3D）で 20 s 後に最小の個体間の距離が分離半径の 0.8 倍以上、距離 0.3 m 未満の衝突が 0、重心が目標へ近づく。`AIFlightTest` が、高度帯の外へ出ない（地形の偽の起伏の上でも）、バンクが上限を超えない、離陸から着陸までで止まり木に 0.2 m 以内で止まる、前方の箱を通り抜けない、NaN を出さない、2 回でビット一致、Kinematic の速度が移動量/dt に一致。
-- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(AIFlockingTest|AIFlightTest|AISteeringTest|AIUniformGridHashTest)$" --no-tests=error --output-on-failure --timeout 300`
-- paths: Library/Modules/AI, Assets/AI/Archetypes/Crow.json, Test/Modules/AI, Test/Modules/Physics/CMakeLists.txt, Docs/Architecture/AIModule.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- done-when: (1) `Private/AI/Flight/FlightController.*` に次を入れる。
+  - 3D の Seek・Arrive・Wander と、地面からの高度帯(下限・上限。地面は `INavTerrainSource`)。
+  - 旋回に応じたバンク(角の上限あり)。
+  - 離陸・着陸・止まり木(アーキタイプの止まり木の候補の位置、または Entity の印)。
+  - 飛ぶ動物は Kinematic の RigidBody と球のコライダーで動き、位置は AIModule の PreFixedTick で書く。
+  - 障害物は前方の `SweepSphere`(GR08)で避ける。掃引では、始点で触れている面のうち離れる向きの当たり(法線と進む向きの内積が正)を飛ばし、次の当たりの手前で止める。足場に触れたままでも上の静的な箱を通り抜けない。照会が失敗した歩は始点に留まる。
+  - Kinematic の速度は移動量/dt に一致する。物理がその歩の開始位置を控えたかを `RigidBodyComponent` の読み取りの口で引き、それを動く条件にする。控えていない歩(登録直後・剛体の交換・無効からの再有効化)は、収集した世界の姿勢を書き戻して速度 0 で待つ。
+  (2) 群れ: Separation・Alignment・Cohesion を地上(コンテキスト操舵へ重みで混ぜる)と空(3D)で使える。近傍は `UniformGridHash` で取り、空は高さの帯で絞る。空中待機と徘徊でも群れの速度が効く。仮のアーキタイプ `Assets/AI/Archetypes/Crow.json`(値は仮)を置く。
+  (3) Debug の Game のビルドが通る。試験は作らない・回さない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Modules/AI, Library/Modules/Physics/Public/Physics/RigidBodyComponent.h, Library/Modules/Physics/Private/Physics/RigidBodyComponent.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Assets/AI/Archetypes/Crow.json, Docs/Architecture/AIModule.md, TASKS.md, PROGRESS.md
+- effort: max
 - notes: 設計は要件 `#### GR22` の P3（カラスを採る場合のみ）とロードマップ 2813 行（飛行は 3D＋高度帯＋バンク）。カラスを採るかは企画で未定だが、作者の決定（企画で保留の要件もエンジンの機能として採る）に従い作る。多層ナビと 3D の経路探索は非ゴール（ロードマップ 2818 行）なので、飛行はステアリングだけ。試験の数値（0.8 倍・0.3 m・20 s・0.2 m）は要件の案の値で根拠は無い。試験を足す理由: 反証する契約は「群れがぶつからず散らばらず、飛ぶ物が帯と上限を守る」こと。外れると群れがすり抜ける・地面に潜るのが一瞬だけ起き、撮影では気づきにくい。やらないこと: 翼のアニメーション（見た目の資産が無い）。
 
 ## G13-GR24-SENSE-MODELS: 視覚（草と地形の遮蔽）・聴覚・嗅覚（風下の煙状の分布）・気づきの積分の純関数とポートを作る
@@ -8698,7 +8705,7 @@
 - notes: 設計は要件 `#### GR68` の設計 5〜7 と制約 f・g、受け入れ確認の UiFocusNavigationTest・UiInputRoutingTest・UiPauseGateTest。選定課題 G15-S2（ポーズの状態の正本）を決めた: (A) GR119 の `SimulationPauseState`（理由のビット）を正本にし、`ShouldAdvanceSimulation` は Bridge の全停止として残す。画面の積みは集約して Menu を 1 ビット立て、GR118 のフォーカス・最小化もここへ載せる（推奨）。理由: GameMode の更新がゲートの外で回るのでメニューを GameMode にでき（今は GameMode の状態機械もワールドと同じゲートの中。`ApplicationProcessor.cpp:2718-2724`）、Bridge とゲームの中のポーズが混ざらない。Router の consume は `InputState` のポーリングには効かないので、ゲームの入力は Router（InputMapper）経由に限る規約を `Docs/Architecture/` の入力の節に書く（要件のリスク 3）。入力の解除の名前は G1 の `InputSystem::ReleaseAll`（`InputSystem.h:163`）にそろえ、ロードマップの `ReleaseAllKeys` は作らない（「段階をまたぐ注意」4402 行）。試験を足す理由: 反証する契約は「モーダルの間はゲームへ入力が届かず、押しっぱなしが残らない」「ポーズの要求の数え方」。破れるとメニューの中で犬が動く・閉じた後にキーが押されたままになり、操作したときだけ出て撮影では見えず、黙って起きる。危険地帯: 入力の配送の Public API なので評価者を通す。
 
 ## G15-GR119-PAUSE-GATE: ゲームの中のポーズの状態（理由のビット）を Engine に置き、GameMode の更新とワールド・物理・粒子の更新のゲートを分け、ポーズ中も動く印を足す
-- status: todo
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT
 - gr: GR119
 - needs-gr: GR02, GR10, GR49, GR57

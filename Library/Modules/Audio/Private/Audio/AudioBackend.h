@@ -239,5 +239,7 @@ namespace NorvesLib::Modules::Audio::Private
         virtual AudioResult CreateBus(AudioBusId bus, AudioBusId parent) = 0;
         /** @brief 作成済みのバスの音量を有限で 0 以上の線形倍率に設定する。 */
         virtual AudioResult SetBusVolume(AudioBusId bus, float gain) = 0;
+        // ローパスの遮断周波数 (Hz) と 1/Q を設定する。ドメインは Created・Submitted・Playing の声にだけ呼ぶ。
+        virtual AudioResult SetVoiceFilter(VoiceHandle handle, float lowpassCutoffHz, float oneOverQ) = 0;
     };
 } // namespace NorvesLib::Modules::Audio::Private

@@ -5,6 +5,11 @@
 #include "Audio/IAudioService.h"
 #include "Container/PointerTypes.h"
 
+namespace NorvesLib::Core::Scene
+{
+    class AcousticTransmissionEvaluator;
+}
+
 namespace NorvesLib::Modules::Audio
 {
     // 1 voice に渡せる PCM のバイト数の上限。全バックエンドで共通とし、XAudio2 の単一バッファの上限以下に保つ。
@@ -16,6 +21,13 @@ namespace NorvesLib::Modules::Audio
 
 namespace NorvesLib::Modules::Audio::Private
 {
+    class AudioOcclusionUpdater;
+
+    // モジュールがサービスの遮蔽更新器を借りるための内部の口。
+    [[nodiscard]] AudioOcclusionUpdater* GetAudioServiceOcclusion(IAudioService& service);
+    // モジュールがサービスの遮蔽更新器に評価器を渡すための内部の口。
+    void SetAudioServiceAcousticsEvaluator(IAudioService& service, const Core::Scene::AcousticTransmissionEvaluator* evaluator);
+
     class AudioServiceTestAccess
     {
     public:

@@ -126,7 +126,7 @@ Kinematic の扉や動く物体は静的幾何として音を遮らない。扉�
 | `windNoiseFloor.curve` | `[[0,-120],[5,25],[20,45]]` | 平均風速（m/s、0 以上）から高域の騒音床（dB）への曲線。 |
 | `maskingCoefficient` | 0.5 | 騒音床が声の高域レベルを上回る分に掛ける倍率。0 以上。 |
 | `updateHz` | 10 | 声の経路を更新する頻度（Hz）。正値。 |
-| `voiceBudgetPerFrame` | 32 | 1 フレームで経路を更新する声の上限。1〜1024 の整数リテラル。 |
+| `voiceBudgetPerFrame` | 4 | 1 フレームで経路を更新する声の上限。1〜1024 の整数リテラル。 |
 | `classes.<分類>.referenceDistanceM` | 1 | 音源レベルを定義する基準距離（m）。正値。 |
 | `classes.<分類>.highFrequencyLevelOffsetDb` | 分類別（上表） | 音源レベルに加える高域の差（dB）。正負とも可。 |
 | `classes.<分類>.exemptFromOcclusion` | `false` | 遮蔽を利得・高域損失への適用から外すか。真偽値。 |

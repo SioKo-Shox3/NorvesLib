@@ -2,8 +2,10 @@
 
 #include "Audio/AudioDomain.h"
 #include "Container/VariableArray.h"
+#include "Math/MathTypes.h"
 #include "Thread/Atomic.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <Windows.h>
@@ -88,6 +90,7 @@ namespace NorvesLib::Modules::Audio::Private
                 XAUDIO2_VOICE_DETAILS voiceDetails{};
                 masteringVoice->GetVoiceDetails(&voiceDetails);
                 m_OutputChannelCount = voiceDetails.InputChannels;
+                m_OutputSampleRate = voiceDetails.InputSampleRate;
                 m_EventSink.Store(&eventSink);
                 m_ShutdownEpoch.Store(shutdownEpoch);
                 m_bAcceptingCallbacks.Store(true);
@@ -187,7 +190,7 @@ namespace NorvesLib::Modules::Audio::Private
                 XAUDIO2_SEND_DESCRIPTOR send{0, destination};
                 const XAUDIO2_VOICE_SENDS sends{1, &send};
                 IXAudio2SourceVoice* voice = nullptr;
-                if (FAILED(m_Engine->CreateSourceVoice(&voice, &waveFormat, 0, desc.MaxFrequencyRatio,
+                if (FAILED(m_Engine->CreateSourceVoice(&voice, &waveFormat, XAUDIO2_VOICE_USEFILTER, desc.MaxFrequencyRatio,
                                                        callback.get(), destination != nullptr ? &sends : nullptr)))
                 {
                     return AudioResult::BackendFailure;
@@ -258,6 +261,28 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 XAudio2VoiceRecord* record = Resolve(handle);
                 return record != nullptr && SUCCEEDED(record->Voice->SetVolume(volume))
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            AudioResult SetVoiceFilter(VoiceHandle handle, float lowpassCutoffHz, float oneOverQ) override
+            {
+                XAudio2VoiceRecord* record = Resolve(handle);
+                if (record == nullptr || !std::isfinite(lowpassCutoffHz) || !std::isfinite(oneOverQ))
+                {
+                    return AudioResult::BackendFailure;
+                }
+
+                // ソースのフィルタはサンプルレート変換後に動くため、送り先のマスタリングボイスの入力レートを使う。
+                const float fs = m_OutputSampleRate > 0 ? static_cast<float>(m_OutputSampleRate) : 48000.0f;
+                // 2 sin(π f/fs) は fs/6 で上限の 1 に達する。それ以上は 1/Q = 1 のとき素通し相当とし、
+                // fs/2 を超えて正弦が下がる領域に入らないよう、変換前に遮断周波数を丸める。
+                const float cutoff = std::clamp(lowpassCutoffHz, 0.0f, fs / 6.0f);
+                const float frequency = std::clamp(2.0f * std::sin(Math::Constants::PI * cutoff / fs),
+                                                   0.0f, XAUDIO2_MAX_FILTER_FREQUENCY);
+                const XAUDIO2_FILTER_PARAMETERS params{LowPassFilter, frequency,
+                                                       std::clamp(oneOverQ, 1.0e-3f, XAUDIO2_MAX_FILTER_ONEOVERQ)};
+                return SUCCEEDED(record->Voice->SetFilterParameters(&params, XAUDIO2_COMMIT_NOW))
                     ? AudioResult::Success
                     : AudioResult::BackendFailure;
             }
@@ -412,6 +437,7 @@ namespace NorvesLib::Modules::Audio::Private
                     m_Engine = nullptr;
                 }
                 m_OutputChannelCount = 0;
+                m_OutputSampleRate = 0;
                 m_ShutdownEpoch.Store(0);
             }
 
@@ -448,6 +474,7 @@ namespace NorvesLib::Modules::Audio::Private
             IXAudio2* m_Engine = nullptr;
             IXAudio2MasteringVoice* m_MasteringVoice = nullptr;
             uint32_t m_OutputChannelCount = 0;
+            uint32_t m_OutputSampleRate = 0;
             Thread::Atomic<IAudioBackendEventSink*> m_EventSink{nullptr};
             Thread::Atomic<uint64_t> m_ShutdownEpoch{0};
             Thread::Atomic<bool> m_bAcceptingCallbacks{false};
