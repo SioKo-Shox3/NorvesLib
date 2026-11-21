@@ -52,7 +52,7 @@ namespace NorvesLib::Modules::Audio::Private
                 const int numShorts = static_cast<int>(chunk * m_Info.ChannelCount);
                 const int frames = stb_vorbis_get_samples_short_interleaved(
                     m_Handle.get(), m_Info.ChannelCount, outInterleaved, numShorts);
-                if (frames <= 0)
+                if (stb_vorbis_get_error(m_Handle.get()) != VORBIS__no_error || frames <= 0)
                 {
                     m_bFailed = true;
                     break;
@@ -73,10 +73,14 @@ namespace NorvesLib::Modules::Audio::Private
                 return false;
             }
 
-            if (frame < m_Info.TotalFrames && !stb_vorbis_seek64(m_Handle.get(), static_cast<stb_vorbis_int64>(frame)))
+            if (frame < m_Info.TotalFrames)
             {
-                m_bFailed = true;
-                return false;
+                const int seekResult = stb_vorbis_seek64(m_Handle.get(), static_cast<stb_vorbis_int64>(frame));
+                if (stb_vorbis_get_error(m_Handle.get()) != VORBIS__no_error || !seekResult)
+                {
+                    m_bFailed = true;
+                    return false;
+                }
             }
 
             m_Position = frame;
@@ -251,7 +255,7 @@ namespace NorvesLib::Modules::Audio
 
         Private::VorbisHandle handle(
             stb_vorbis_open_memory(oggBytes.data(), static_cast<int>(oggBytes.size()), nullptr, nullptr), &stb_vorbis_close);
-        if (!handle)
+        if (!handle || stb_vorbis_get_error(handle.get()) != VORBIS__no_error)
         {
             return {};
         }
@@ -263,7 +267,13 @@ namespace NorvesLib::Modules::Audio
         }
 
         const auto totalFrames = stb_vorbis_stream_length_in_samples64(handle.get());
-        if (totalFrames <= 0 || static_cast<uint64_t>(totalFrames) != finalGranule || !stb_vorbis_seek_start(handle.get()))
+        if (stb_vorbis_get_error(handle.get()) != VORBIS__no_error || totalFrames <= 0 || static_cast<uint64_t>(totalFrames) != finalGranule)
+        {
+            return {};
+        }
+
+        const int seekResult = stb_vorbis_seek_start(handle.get());
+        if (stb_vorbis_get_error(handle.get()) != VORBIS__no_error || !seekResult)
         {
             return {};
         }

@@ -121,6 +121,23 @@ GHSL-2023-172 では、疎な codebook の `sorted_entries` が 0 のとき `sor
 stb は pull 復号時にページの CRC を検査しないため、ラッパの `NorvesAudioDecode` が stb に渡す前に全ページの境界と CRC を検査する。
 先頭の BOS から単一の論理ストリームが連番で続き、EOS が入力末尾で終わる最後のページにのみ現れることを確かめる。この並びが崩れた入力や、EOS の granule が未設定の入力は開かない。
 
+ラッパは次の呼び出しの直後に `stb_vorbis_get_error` で内部エラーを読み取る。読み取ると状態は 0 に戻る。
+
+- 生成時は `stb_vorbis_open_memory` がハンドルを返した直後、`stb_vorbis_stream_length_in_samples64` の直後、`stb_vorbis_seek_start` の直後に確認する。いずれかでエラーがあれば空のポインタを返す。
+- 復号時はチャンクごとに `stb_vorbis_get_samples_short_interleaved` の直後に確認する。エラーがあれば `HasFailed` を立て、そのチャンクを戻り値と再生位置に数えない。出力にはそのチャンクのサンプルが書かれている場合がある。
+- シーク時は `stb_vorbis_seek64` の直後に確認する。途中の復号で記録されたエラーも `HasFailed` を立てて `false` として返す。総フレーム数ちょうどへのシークはラッパの位置だけを更新する。
+
+メモリからの pull 復号では、同梱版が対応する正常な入力のページ境界、パケット終端、シークを次のように扱う。
+
+- `start_decoder` はヘッダと復号設定を検査し、未対応の floor 0 はここで拒否する。`vorbis_pump_first_frame` は生成時と先頭へのシーク時にも音声パケットを復号する。
+- `start_page` はページの識別子とヘッダを、`start_packet` と `next_segment` はパケットの継続フラグを検査する。`maybe_start_packet` はページ境界の EOF でエラーを記録せずに終了する。`get8` と `set_file_offset` も入力終端では EOF フラグを立てるだけである。
+- `get8_packet_raw` はパケット終端で `EOP` を返す。`codebook_decode_start` と `codebook_decode_deinterleave_repeat` は最後のセグメントを使い切った場合、符号をこれ以上読めなくてもエラーを追加しない。`stb_vorbis_get_samples_short_interleaved` は要求数に達すると次のフレームを読まず、ラッパも EOS の granule を超えて要求しない。
+- `vorbis_find_page` と `get_seek_page_info` は探索結果を戻り値で伝える。`stb_vorbis_stream_length_in_samples64` は最終ページの既知の granule から総フレーム数を得る。`seek_to_sample_coarse`、`stb_vorbis_seek_frame64`、`stb_vorbis_seek64` はページやフレームの位置を検査し、範囲内の目的位置を正常に確定できればエラーを記録しない。
+
+**単一エントリの codebook の制約。** Vorbis I 仕様 §3.2.1 の訂正では、長さ 1 ビットの符号が `0` と `1` のどちらでも同じエントリに復号する。
+同梱版の `codebook_decode_scalar_raw` は符号 `0` だけを受け付け、`1` では `VORBIS_invalid_stream` を記録する。
+この場合はフレームが返っても正しく復号できていないため、ラッパは失敗を返し、cook の全フレーム復号で検出できる。仕様が推奨する符号 `0` を書くエンコーダの出力はこの制約の影響を受けない。[Vorbis I 仕様の訂正（Errata 20150226: Single entry codebooks）](https://xiph.org/vorbis/doc/Vorbis_I_spec.html)
+
 ランタイムの復号対象は、cook 時に全体を復号して検証し、ロード時に payload のハッシュを確かめたものに限る。
 利用者が置いたファイルやネットワークからの信頼できない入力をデコーダに直接渡さない。
 これらの検証とハッシュ確認は、この第三者ターゲット自体ではなく利用側の責務とする。

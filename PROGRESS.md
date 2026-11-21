@@ -12670,3 +12670,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ: `cmake --build build --config Debug --target NorvesAudioDecode -- /m:1` と `cmake --build build --config Debug -- /m:1`（試験のターゲットを外した verify のビルドの行）がどちらも終了コード 0・エラーの行なしで `Game.exe` のリンクまで通った（CRC の `static_assert` 2 件を含む）。numstat は 2 通りで一致、3 ファイルとも BOM + CRLF のまま。
 - Notes: 上の既知の限界 (a)（末尾を失った入力が短い総フレームで開く）と (b)（壊れた入力へのシークが Debug の `assert` で止まる・Release で失敗を返さない）は、この直しで解消した。
 - Next: ランナーの評価者の反証（危険地帯）。cook からの全フレームの復号の検証は G16-GR74-VORBIS-COOK。呼び出し元がまだ無いので、ゲームの見た目・音に変化は無い。
+- U5 stb の内部のエラー状態を生成・復号・シークの後に読み、破損を失敗として返す: 着地(直し 1 回)
