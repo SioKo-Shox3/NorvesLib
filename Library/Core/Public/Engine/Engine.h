@@ -4,6 +4,7 @@
 #include "Debug/EngineChecks.h"
 #include "Engine/DeterministicCapture.h"
 #include "Engine/TimeSystem.h"
+#include "Engine/SimulationPauseState.h"
 #include "Engine/FixedStepFrameTiming.h"
 #include "GameMode/IStateMachine.h"
 #include "Application/IApplication.h"
@@ -566,6 +567,14 @@ namespace NorvesLib::Core::Engine
         {
             return m_TimeSystem;
         }
+        SimulationPauseState& GetSimulationPauseState()
+        {
+            return m_SimulationPauseState;
+        }
+        const SimulationPauseState& GetSimulationPauseState() const
+        {
+            return m_SimulationPauseState;
+        }
         Input::InputMapper& GetInputMapper() { return m_InputMapper; }
         const Input::InputMapper& GetInputMapper() const { return m_InputMapper; }
         Input::InputDebugOverlayController& GetInputDebugOverlay() { return m_InputDebugOverlay; }
@@ -652,6 +661,7 @@ namespace NorvesLib::Core::Engine
         Streaming::StreamingSystem m_StreamingSystem;
         Vegetation::Vegetation m_Vegetation;
         TimeSystem m_TimeSystem;
+        SimulationPauseState m_SimulationPauseState;
 
         // シーン空間検索（GEngine配下で実体保持）
         Scene::SceneQuery m_SceneQuery;
