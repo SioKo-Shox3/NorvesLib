@@ -13129,8 +13129,41 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261122-011236/verify-G14-GR62-LENS-SHUTTER-U8.txt`（Core を再コンパイルして `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`exit_code=0` で `Game.vcxproj -> ...Game.exe`。警告は LNK4099・C4996・C4244 だけ）。
 - 試験: 試験は作らず回していない（人の決まり）。
 - Next: ランナーの評価者の反証（危険地帯）。
+
 ## G15-GR119-PAUSE-GATE 統合ブランチの取り込み（2026-11-22）
 - Done: `feature/scene-launcher` を取り込み、衝突を解いた。`Engine.cpp` は表面の provider の登録に使う `Component/GroundContactComponent.h`・`Logging/LogMacros.h` とモジュールの通知に使う `Module/ModuleRegistry.h` を両方残した。`Docs/Architecture/TickStages.md` のフレームの順序は `bBridgeAdvance` と `bWorldAdvance` の分割を保ったまま、統合側が足した AI の操舵の順序（`PreFixedTick` で操舵速度を確定・`AIModule::LateTick` で Animator へ公開）を足し、ポーズの分類表の AI の行を「経路探索と操舵」にして操舵の場所を書いた（どちらも `bWorldAdvance` の中で止まる）。
 - 証拠: `.harness/runs/20261122-015216/verify-merge-build.txt`（取り込んだ先頭で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`EXIT=0` で `Core.vcxproj -> ...Core.lib`・`Game.vcxproj -> ...Game.exe`。警告は LNK4099 など前からのもの）。
 - 試験: 試験は作らず回していない（人の決まり）。撮影・起動の確かめは回さない決まり。
 - Next: ランナーの評価者の反証（危険地帯: World・Entity・Component の Public API と更新の順序、Object の寿命）。
+- U1 SimulationPauseState を Engine::Engine に置き、変化を IModule::OnPauseStateChanged へ配る: 着地(直し 0 回)
+- U2 Entity・Component の bTickWhenPaused と World::TickWhenPaused: 着地(直し 0 回)
+- U3 ApplicationProcessor のゲートを Bridge とワールドに分ける: 着地(直し 0 回)
+- U4 TickStages.md のポーズの節を実装に合わせて書き換え、全体をビルドで確かめる: 着地(直し 0 回)
+## G15-GR119-PAUSE-GATE（2026-11-21）
+- Done: (1) `Engine::Engine` のメンバ `SimulationPauseState`（`GetSimulationPauseState()`）: 理由（Menu・FocusLost・Minimized・Loading・Dialog）ごとに Push/Pop を数え、重なりも数える。Pop の過多は拒否して警告ログ。`IsWorldPaused()` は全部 0 のときだけ false。理由のビットの集合が変わったときだけ `OnChanged` を 1 回。(2) `ApplicationProcessor` のゲートを `bBridgeAdvance`（`ShouldAdvanceSimulation`、Bridge の全停止）と `bWorldAdvance`（かつ `!IsWorldPaused()`）に分けた。GameMode の状態機械は前者、World::Tick・Vegetation・粒子（GPU 粒子の時計を含む）・気象・固定ステップ・World::LateTick・PostLateTick・`TimeSystem::BeginFrame` の進行・`SetHapticsPaused` は後者。ゲーム内ポーズ中は `World::TickWhenPaused(Unscaled)` を呼ぶ。(3) `Entity`/`Component` の `SetTickWhenPaused`（既定 false。Entity の印は直下の Component だけ）、World は印の一覧を木に入る・出る・破棄で登録・解除し、`TickWhenPaused` は一覧だけを群の順に回して最後に `CleanupDestroyedObjects`。(4) `IModule::OnPauseStateChanged(uint32_t)`（既定は空）を `ModuleRegistry::DispatchPauseStateChanged` が状態の変化のときだけ呼ぶ。(5) `Docs/Architecture/TickStages.md` の「Bridge進行とポーズの3分類」を実装に合わせ、今ある更新の分類表と、後の段階（AIModule の FixedTick・音のダッキング）が同じ表へ載せる約束を書いた。
+- 証拠: `.harness/runs/20261121-184522/verify-G15-GR119-PAUSE-GATE-U4.txt`（全部の単位を入れた先頭で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・終了コード 0 で `Game.exe` を生成。numstat の 2 通りの比較も一致）。
+- 試験: done-when (6) の試験（`SimulationPauseStateTest`・`ApplicationPausePipelineTest`・`WorldTickWhenPausedTest`）と verify の ctest の行は、人の決まり（試験を作らない・回さない）により作らず回していない。既存の試験の登録は変えていない。
+- 人が見るときの見どころ: 今はポーズの理由を Push する呼び手が無い（フォーカス・最小化は G15-GR119-WINDOW-EVENTS、メニューのフローは G15-GR119-GAME-FLOW）ので、ランチャーと各シーンの動き・見た目は変わらない。ランチャーから Rendering3DTest などへ入って戻る流れと、Bridge の Paused/Stopped で全部止まることが従来どおりかを見る。
+- Notes: 採った判断: ストリーミング（`StreamingSystem::Update`）はゲーム内ポーズ中も回す（Loading の理由のポーズ中に読み込みが止まらないように。進むフレームは従来どおり `PostTick.Streaming`、Bridge の停止中は止まる）。`ModuleRegistry::DispatchPauseStateChanged` の宣言のため `Library/Core/Public/Module/ModuleRegistry.h`（paths の外）に 1 行足した。`bTickWhenPaused` は ECS の列・反映の PROPERTY にせず通常のメンバにした。ポーズ中の印の付いた本体には未スケールの dt を渡し、本体の中の `TryGetComponentTickDelta` も持ち主の時間倍率を掛けずに同じ秒を返す。done-when (5) の `UiSystem` はコードに無いので分類表に載せていない。`ApplicationProcessor::TickSimulation` の宣言（第 3 引数）は変えず、Bridge の進行として扱う。
+- U5 ポーズの状態の変化の通知を発生順に積んで配る: 着地(直し 0 回)
+- U6 ポーズ中の呼び先の候補を印と着脱のときだけ更新し、通常の更新と同じ順で呼ぶ: 着地(直し 0 回)
+- U7 ポーズ中の印の付いたものへ上限で丸める前の実経過秒を渡す: 着地(直し 0 回)
+- U8 TickStages.md を直しに合わせ、UiSystem の行を足し、全体をビルドで確かめる: 着地(直し 0 回)
+## G15-GR119-PAUSE-GATE 差し戻しの直し（2026-11-22）
+- Done: (1) `SimulationPauseState` は `OnChanged` の通知の中で `Push`・`Pop`・`Reset` が呼ばれて状態が変わっても、要求数とビットはその場で変え、通知は発生順に積んで、今の通知を全購読者へ配り終えてから次を配る（モジュール A の通知の中の `Pop(Menu)` で、後ろのモジュール B に `0` の後に古い `Menu` が届くことは無い）。(2) World はポーズ中に呼ぶ候補を「自分か持ち主の Entity の印が効いている Component」の集合で持ち、印の変更・Component の着脱・解除（`UnbindPausedTickComponent` は印の有無に関係なく外す）のときだけ更新する。印の付いた Entity の子 Entity を毎フレーム型判定する走査を無くした。(3) `World::TickWhenPaused` は通常の `World::Tick` と同じく、付け直しが要れば `SyncOrderedTicks` してから、各候補の順序付きの呼び先の記録（`m_OrderedTicks`）の群・本体・優先度・深さ優先の番号を使い、群ごとに優先度→番号の順で呼ぶ（ポーズに入っても同じ群の呼び順が変わらない）。(4) ゲーム内ポーズ中の印の付いたものへは `ClampVariableDeltaTime` の 100 ms の上限で丸める前の実経過秒（`rawDeltaNanoseconds` を秒にした値。0 以下なら 0）を渡す。GameMode・`TimeSystem`・固定ステップの秒は変えていない。(5) `Docs/Architecture/TickStages.md` に (1)〜(4) を書き、分類表に `UiSystem`（ゲート外・実装予定。`G15-GR68-UI-CORE` が足し、足すときに場所を書く）の行を足した。
+- 証拠: `.harness/runs/20261121-184522/verify-G15-GR119-PAUSE-GATE-U8.txt`（全部の直しを入れた先頭で `cmake --build build --config Debug --target Game -- /m:1` が `ExitCode=0`・エラー 0 で `Game.vcxproj -> ...Game.exe`。変えた `World.cpp`・`Entity.cpp`・`Component.cpp`・`ApplicationProcessor.cpp`・`Engine.cpp` が再コンパイルされている。各単位の `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致）。
+- 人が見るときの見どころ: ポーズの理由を Push する呼び手がまだ無いので、ランチャーと各シーンの動き・見た目は変わらない。ランチャーから各シーンへ入って戻る流れと、Bridge の Paused/Stopped で全部止まることが従来どおりかを見る。
+- Next: ランナーの評価者の反証（危険地帯）。ポーズを使う側（G15-GR119-WINDOW-EVENTS のフォーカス・最小化、G15-GR119-GAME-FLOW のメニュー）。
+- Notes: 採った判断: ポーズ中の秒は丸めないので、デバッガの停止の後などには長い秒が 1 回渡る（印の付いたものは実時間で進む契約に合わせた）。`World::GetTickWhenPausedEntryCount()` は名前を変えず、候補の Component の数を返す（ほかに使う所は無い）。Running になった後に登録されたモジュールが、その時点のポーズの理由を受け取らないのは前のまま。
+- U9 印の付いた対象が無いポーズ中は順序の作り直しと収集を飛ばし、文書に作り直しの条件を書いてビルドで確かめる: 着地(直し 0 回)
+## G15-GR119-PAUSE-GATE 人の判断による再開の仕上げ（2026-11-22）
+- Done: `World::TickWhenPaused` は、印の付いた対象の集合が空なら順序の作り直し（`SyncOrderedTicks`）も呼び先の収集もせず、破棄予約の回収（`CleanupDestroyedObjects`）だけを行って抜ける。順序の汚れの印は下ろさず、再開後の通常の更新で付け直す。対象が 1 件以上あるときの流れは変えていない。`Docs/Architecture/TickStages.md` のポーズの節に、作り直しは対象があり木の構造・Tick の設定が変わったフレームだけで、費用は通常のフレームと同じことを書いた。書き換えた done-when の (1)〜(5) は前の反復までの実装とこの直しで満たし、(6) は下のビルド。
+- 証拠: `.harness/runs/20261122-015216/verify-G15-GR119-PAUSE-GATE-U9.txt`（`cmake --build build --config Debug --target Game -- /m:1` が `exit=0`、`Core.vcxproj -> ...Core.lib` と `Game.vcxproj -> ...\Game\Debug\Game.exe` まで生成、`World.cpp` 由来の警告 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は World.cpp 7/0・TickStages.md 1/1 で一致）。
+- 採った判断: 対象があるときに作り直しを飛ばすと、ポーズ中に足された対象を `m_OrderedTicks` から引けずに取りこぼすので、対象があり順序が汚れたフレームでは通常の更新と共通の `SyncOrderedTicks` を走らせる（変化の無いフレームでは走らず、毎フレームの全走査にはならない）。ポーズ用の順序を差分で別に保つ作りは、World と Object の寿命に第 2 の順序の仕組みを足すことになり、得るものに見合わないので採らなかった。試験は決まりにより足さず、回していない。
+- 人が見るときの見どころ: ポーズの理由を Push する呼び手がまだ無いので、ランチャーと各シーンの動き・見た目は変わらない。
+- Next: ランナーの評価者の反証（危険地帯）。ポーズを使う側（G15-GR119-WINDOW-EVENTS のフォーカス・最小化、G15-GR119-GAME-FLOW のメニュー）。
+- Notes: 要起票: Running になった後に登録したモジュールへ、そのときのポーズの理由を最初に 1 回届ける
+## G15-GR119-PAUSE-GATE 完了条件の欄を判断役の書き換えにそろえる（2026-11-22）
+- Done: 作業ブランチの `TASKS.md` にある自分の項目の done-when・verify・paths を、判断役が書き換えた統合ブランチ（`feature/scene-launcher`）の文面にそろえた。盤面の再開のコミットは status だけを戻しており、書き換えた欄が作業ブランチに届いていなかった。そろえた (3) は「集合が空のときは `SyncOrderedTicks` も収集もせずに抜ける」「集合が空でなく、順序が汚れたフレームに限り共通の `SyncOrderedTicks` で付け直してよい」で、今の実装（空の集合での早抜け）がこれを満たす。コードは変えていない。
+- 証拠: `.harness/runs/20261122-015216/verify-G15-GR119-PAUSE-GATE-U9.txt`（`cmake --build build --config Debug --target Game -- /m:1` が `exit=0`、`Game.vcxproj -> ...\Game\Debug\Game.exe` まで生成）。その後にコードの変更は無い。
+- 採った判断: 差し戻しが挙げた「対象が 1 件以上のときも一覧だけを回す」を満たすには、判断役が採らなかった作り（ポーズ用の順序を差分で別に保つ）が要る。判断役の判断（今の実装を正とし (3) を緩める）に従って実装は変えず、書き換えた欄を作業ブランチへ反映した。
