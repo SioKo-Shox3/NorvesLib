@@ -4961,9 +4961,13 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->bHasMainCamera = false;
             // 前のカメラは直前のゲームのフレームのパケットのものだけを渡す（velocity と TAA の履歴の基準を
             // 「このパケットの1つ前のフレーム」にそろえる。前の変換も同じ規約）。
+            // カメラの切り替えやカットをまたぐときは、前のカメラの行列を速度計算に使わない。
+            const bool bSameCameraTrack =
+                !m_bCameraSet || (m_PreviousMainCamera.SourceCameraId == m_MainCamera.SourceCameraId &&
+                                  m_PreviousMainCamera.CutSerial == m_MainCamera.CutSerial);
             const bool bPreviousMainCameraContinuous =
                 m_bPreviousMainCameraValid &&
-                m_PreviousMainCameraFrameNumber + 1u == m_CurrentPacket->FrameNumber;
+                m_PreviousMainCameraFrameNumber + 1u == m_CurrentPacket->FrameNumber && bSameCameraTrack;
             m_CurrentPacket->bHasPreviousMainCamera = bPreviousMainCameraContinuous;
             if (bPreviousMainCameraContinuous)
             {
