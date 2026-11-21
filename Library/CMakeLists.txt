@@ -5,7 +5,7 @@
 # ImGui モジュール(Library/Modules/ImGui)のみが PRIVATE 依存する(Core は ImGui を参照/リンクしない)。
 # OFF のときは ImGui をビルドしない。実行時に表示するには Game を --imgui で起動する。
 option(NORVES_ENABLE_IMGUI "Enable ImGui debug overlay" ON)
-option(NORVES_ENABLE_CORE_TEXT "Enable Core text rendering" ON)
+option(NORVES_ENABLE_CORE_TEXT "Core の文字描画(FreeType のフォントアトラス・組版)を有効にする" ON)
 if(NORVES_ENABLE_IMGUI OR NORVES_ENABLE_CORE_TEXT)
     # ImGui と Core の文字描画はどちらも FreeType を使うため、必要なときに取得済みか確認する。
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/freetype/CMakeLists.txt")
