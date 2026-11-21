@@ -42,6 +42,47 @@ namespace NorvesLib::Modules::AI
             return queue.GetVertexCount() <= DebugDrawQueue::kMaxDebugLineVertices - required;
         }
 
+        bool ClipPathSegment(const Vector3& a, const Vector3& b, const Vector3& center, double radiusSquared,
+                             Vector3& start, Vector3& end)
+        {
+            const double ax = static_cast<double>(a.x) - center.x;
+            const double az = static_cast<double>(a.z) - center.z;
+            const double dx = static_cast<double>(b.x) - a.x;
+            const double dz = static_cast<double>(b.z) - a.z;
+            const double lengthSquared = dx * dx + dz * dz;
+            if (lengthSquared == 0.0)
+            {
+                start = a;
+                end = b;
+                return ax * ax + az * az <= radiusSquared;
+            }
+
+            // 円との交点を求める二次方程式の判別式を、XZ 平面の外積を使って計算する。
+            const double cross = ax * dz - az * dx;
+            const double discriminant = radiusSquared * lengthSquared - cross * cross;
+            if (discriminant < 0.0)
+            {
+                return false;
+            }
+            const double projection = -(ax * dx + az * dz);
+            const double root = std::sqrt(discriminant);
+            const double t0 = (std::max)(0.0, (projection - root) / lengthSquared);
+            const double t1 = (std::min)(1.0, (projection + root) / lengthSquared);
+            if (t0 > t1)
+            {
+                return false;
+            }
+            const auto pointAt = [&](double t)
+            {
+                return Vector3(static_cast<float>(std::lerp(double(a.x), double(b.x), t)),
+                               static_cast<float>(std::lerp(double(a.y), double(b.y), t)),
+                               static_cast<float>(std::lerp(double(a.z), double(b.z), t)));
+            };
+            start = pointAt(t0);
+            end = pointAt(t1);
+            return true;
+        }
+
         // タイルは Z、X 順。空の行や描画範囲外の列をまとめて飛ばす。
         uint32_t LowerBoundTile(const NavGrid& grid, uint32_t first, NavTileCoord coord)
         {
@@ -168,8 +209,14 @@ namespace NorvesLib::Modules::AI
         }
     }
 
-    void SubmitNavPathDebug(Core::Container::Span<const Vector3> points, const Vector4& color, DebugDrawQueue& queue)
+    void SubmitNavPathDebug(Core::Container::Span<const Vector3> points, const Vector3& center,
+                            const NavDebugDrawSettings& settings, const Vector4& color, DebugDrawQueue& queue)
     {
+        if (!IsFinitePoint(center) || !std::isfinite(settings.Radius) || settings.Radius < 0.0f)
+        {
+            return;
+        }
+        const double radiusSquared = static_cast<double>(settings.Radius) * settings.Radius;
         const Vector3* previous = nullptr;
         for (const Vector3& point : points)
         {
@@ -178,15 +225,24 @@ namespace NorvesLib::Modules::AI
                 previous = nullptr;
                 continue;
             }
-            if (!HasVertexRoom(queue, previous ? 4u : 2u))
+            const double dx = static_cast<double>(point.x) - center.x;
+            const double dz = static_cast<double>(point.z) - center.z;
+            const bool bDrawMarker = dx * dx + dz * dz <= radiusSquared;
+            Vector3 start, end;
+            const bool bDrawSegment = previous && ClipPathSegment(*previous, point, center, radiusSquared, start, end);
+            const uint32_t required = (bDrawSegment ? 2u : 0u) + (bDrawMarker ? 2u : 0u);
+            if (!HasVertexRoom(queue, required))
             {
                 return;
             }
-            if (previous)
+            if (bDrawSegment)
             {
-                queue.AddLine(*previous, point, color);
+                queue.AddLine(start, end, color);
             }
-            queue.AddLine(point, Vector3(point.x, point.y + kMarkerHeight, point.z), color);
+            if (bDrawMarker)
+            {
+                queue.AddLine(point, Vector3(point.x, point.y + kMarkerHeight, point.z), color);
+            }
             previous = &point;
         }
     }

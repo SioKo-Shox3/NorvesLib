@@ -30,8 +30,9 @@ namespace NorvesLib::Modules::AI
     void SubmitNavGridDebug(const NavGrid& grid, const Math::Vector3& center, const NavDebugDrawSettings& settings,
                             Core::Rendering::DebugDrawQueue& queue);
 
-    /// 経路の隣り合う点を線で結び、各点に縦の印を描く。
-    void SubmitNavPathDebug(Core::Container::Span<const Math::Vector3> points, const Math::Vector4& color,
+    /// 隣り合う経路点の線分を、center を中心とする XZ 平面の半径 settings.Radius の円内に切り詰め、円内の点に縦の印を描く。
+    void SubmitNavPathDebug(Core::Container::Span<const Math::Vector3> points, const Math::Vector3& center,
+                            const NavDebugDrawSettings& settings, const Math::Vector4& color,
                             Core::Rendering::DebugDrawQueue& queue);
 } // namespace NorvesLib::Modules::AI
 #endif

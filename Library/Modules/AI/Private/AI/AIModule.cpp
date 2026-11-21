@@ -123,7 +123,8 @@ namespace NorvesLib::Modules::AI
         const auto& camera = m_Engine->GetRenderWorld().GetRenderingCoordinator().GetMainCamera();
         const Math::Vector3 center(camera.PositionX, camera.PositionY, camera.PositionZ);
         auto& queue = Core::GEngine.GetDebugDraw();
-        SubmitNavGridDebug(m_Navigation.GetGrid(), center, {}, queue);
+        const NavDebugDrawSettings settings{};
+        SubmitNavGridDebug(m_Navigation.GetGrid(), center, settings, queue);
 
         const Math::Vector4 green(0.0f, 1.0f, 0.0f, 1.0f);
         const Math::Vector4 yellow(1.0f, 1.0f, 0.0f, 1.0f);
@@ -132,7 +133,8 @@ namespace NorvesLib::Modules::AI
             const auto status = m_Navigation.GetSlotStatus(i);
             if (status == ENavPathStatus::Succeeded || status == ENavPathStatus::Partial)
             {
-                SubmitNavPathDebug(m_Navigation.GetSlotPath(i), status == ENavPathStatus::Partial ? yellow : green, queue);
+                SubmitNavPathDebug(m_Navigation.GetSlotPath(i), center, settings,
+                                   status == ENavPathStatus::Partial ? yellow : green, queue);
             }
         }
 #endif
