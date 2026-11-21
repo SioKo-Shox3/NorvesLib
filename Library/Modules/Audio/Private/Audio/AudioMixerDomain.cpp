@@ -92,6 +92,19 @@ namespace NorvesLib::Modules::Audio::Private
             const auto& tags = activity.ActiveDuckTags;
             return std::find(tags.begin(), tags.end(), rule.TriggerTag) != tags.end();
         }
+
+        double StepDuckDb(double currentDb, double targetDb, double dtMs, const AudioDuckRule& rule)
+        {
+            const double tauMs = (targetDb < currentDb ? rule.AttackMs : rule.ReleaseMs) / 5.0;
+            if (tauMs == 0.0)
+            {
+                return targetDb;
+            }
+
+            // expm1 を使い、フレーム時間が時定数より短くても補間係数の桁を保つ。
+            currentDb += (targetDb - currentDb) * -std::expm1(-dtMs / tauMs);
+            return targetDb == 0.0 && std::abs(currentDb) < 0.001 ? 0.0 : currentDb;
+        }
     }
 
     AudioMixerDomain::AudioMixerDomain()
@@ -216,31 +229,25 @@ namespace NorvesLib::Modules::Audio::Private
         for (auto& state : m_DuckStates)
         {
             const auto& rule = state.Rule;
-            double targetDb = 0.0;
             if (IsTriggerActive(rule, activity))
             {
                 state.HoldRemainingMs = rule.HoldMs;
-                targetDb = rule.DuckDb;
+                state.CurrentDb = StepDuckDb(state.CurrentDb, rule.DuckDb, dtMs, rule);
             }
             else if (state.HoldRemainingMs > 0.0)
             {
-                state.HoldRemainingMs = (std::max)(0.0, state.HoldRemainingMs - dtMs);
-                targetDb = rule.DuckDb;
-            }
-
-            const double tauMs = (targetDb < state.CurrentDb ? rule.AttackMs : rule.ReleaseMs) / 5.0;
-            // expm1 を使い、フレーム時間が時定数より短くても補間係数の桁を保つ。
-            if (tauMs == 0.0)
-            {
-                state.CurrentDb = targetDb;
+                const double holdStep = (std::min)(state.HoldRemainingMs, dtMs);
+                state.CurrentDb = StepDuckDb(state.CurrentDb, rule.DuckDb, holdStep, rule);
+                state.HoldRemainingMs -= holdStep;
+                const double releaseStep = dtMs - holdStep;
+                if (releaseStep > 0.0)
+                {
+                    state.CurrentDb = StepDuckDb(state.CurrentDb, 0.0, releaseStep, rule);
+                }
             }
             else
             {
-                state.CurrentDb += (targetDb - state.CurrentDb) * -std::expm1(-dtMs / tauMs);
-            }
-            if (std::abs(state.CurrentDb) < 0.001)
-            {
-                state.CurrentDb = 0.0;
+                state.CurrentDb = StepDuckDb(state.CurrentDb, 0.0, dtMs, rule);
             }
 
             float& db = deepestDb[BusIndex(rule.Target)];
@@ -253,18 +260,28 @@ namespace NorvesLib::Modules::Audio::Private
         SendChangedVolumes();
     }
 
-    void AudioMixerDomain::ResetActivity()
+    void AudioMixerDomain::ClearDucking()
     {
         for (auto& state : m_DuckStates)
         {
+            state.CurrentDb = 0.0;
             state.HoldRemainingMs = 0.0;
         }
-        // リリース時間が 0 の規則だけは、次のフレームを待たずに音量を戻す。
-        Update(0.0f, {});
+        for (auto& bus : m_Buses)
+        {
+            bus.DuckGain = 1.0f;
+        }
+    }
+
+    void AudioMixerDomain::ResetActivity()
+    {
+        ClearDucking();
+        SendChangedVolumes();
     }
 
     void AudioMixerDomain::Shutdown()
     {
+        ClearDucking();
         BindService(nullptr);
     }
 

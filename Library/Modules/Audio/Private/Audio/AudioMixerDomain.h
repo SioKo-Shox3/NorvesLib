@@ -32,9 +32,9 @@ namespace NorvesLib::Modules::Audio::Private
         void EnsureDefaultConfigLoaded(const Core::Asset::AssetSystem& assets);
         /** 現在の活動からダッキングを進め、音量の差分を反映する。 */
         void Update(float deltaSeconds, const AudioMixerActivity& activity);
-        /** 全規則の保持時間を捨て、リリースを開始する。 */
+        /** 全規則のダッキングを即座に 0 dB へ戻し、保持時間を捨てる。SoundSystem の終了時に呼ぶ。 */
         void ResetActivity();
-        /** 反映先を切り離す。バスの音量と設定は保持する。 */
+        /** ダッキングを解除して反映先を切り離す。バスの音量と設定は保持する。 */
         void Shutdown();
 
         AudioResult LoadConfig(const Core::Asset::AssetSystem& assets, Core::Container::AnsiStringView logicalPath,
@@ -68,6 +68,7 @@ namespace NorvesLib::Modules::Audio::Private
         };
 
         bool ReplaceDuckRules(Core::Container::Span<const AudioDuckRule> rules);
+        void ClearDucking();
         AudioResult SendChangedVolumes();
 
         BusState m_Buses[kAudioBusCount];
