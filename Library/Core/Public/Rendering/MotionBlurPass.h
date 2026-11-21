@@ -1,7 +1,8 @@
-﻿// ラスタの動きぼけ。画面velocityにシャッター時間/フレーム長を掛け、SceneColorをその場でぼかす。
+﻿// ラスタの動きぼけ。明示したシャッター時間またはカメラのシャッター角に従い、画面velocityに沿ってSceneColorをぼかす。
 #pragma once
 
 #include "Rendering/IViewPass.h"
+#include "Rendering/PathTracingCamera.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/SceneProxy.h"
 #include "Container/Containers.h"
@@ -15,23 +16,27 @@
 namespace NorvesLib::Core::Rendering
 {
     /** @brief シャッターの間に動く長さの上限（画素）。tileの一辺もこの長さにする。 */
-    inline constexpr float MotionBlurMaxLengthPixels = 32.0f;
+    inline constexpr float MotionBlurMaxLengthPixels = 64.0f;
 
     /** @brief 速度の最大を求めるtileの一辺（画素）。隣の3×3 tileで上限の長さまで届く。 */
-    inline constexpr uint32_t MotionBlurTileSize = 32u;
+    inline constexpr uint32_t MotionBlurTileSize = 64u;
+
+    /** @brief 仮想フレーム率が実フレーム率より低く、シャッター時間が実フレーム長を超えるときのvelocityの最大倍率。 */
+    inline constexpr float MotionBlurMaxStretch = 2.0f;
 
     /**
      * @brief ラスタの動きぼけのシャッター
      *
      * 画面velocity（currentUV - previousUV）は前後の変換の間隔（フレーム長）の動きなので、
      * シャッター時間/フレーム長を掛けてシャッターの間の動きにする。シャッター区間はPTの連番の1フレームと
-     * 同じく、前後の間隔の終わり側（現在の変換で終わる区間）に置く。シャッター時間が0なら働かない。
+     * 同じく、前後の間隔の終わり側（現在の変換で終わる区間）に置く。シャッター時間が0ならカメラの
+     * シャッター角を使い、角度も0なら働かない。
      */
     struct MotionBlurSettings
     {
-        /** @brief シャッター時間（秒）。0は動きぼけなし。 */
+        /** @brief シャッター時間（秒）。有限の正値を指定するとカメラのシャッター角より優先する。 */
         float ShutterDuration = 0.0f;
-        /** @brief 前後の変換の間隔（秒）。 */
+        /** @brief シャッター時間を明示した場合の前後の変換の間隔（秒）。 */
         float FrameDuration = 1.0f / 24.0f;
     };
 
@@ -47,6 +52,40 @@ namespace NorvesLib::Core::Rendering
     }
 
     /**
+     * @brief 画面velocityに掛ける倍率。明示したシャッター時間を優先し、その場合の倍率は最大1。
+     *
+     * 指定がなければカメラのシャッター角（上限360度）を使う。カメラが無い場合や角度が有限の正値でない場合は0。
+     * 実フレーム率では角度の割合をそのまま使う。仮想フレーム率ではシャッター時間を実フレーム長で割り、
+     * MotionBlurMaxStretchで頭打ちにする。
+     */
+    inline float ComputeMotionBlurShutterFraction(const MotionBlurSettings& settings, const CameraProxy* camera,
+                                                  float frameDeltaTime)
+    {
+        if (std::isfinite(settings.ShutterDuration) && settings.ShutterDuration > 0.0f)
+        {
+            return ComputeMotionBlurShutterFraction(settings);
+        }
+        if (!camera)
+        {
+            return 0.0f;
+        }
+        const auto& shutter = camera->Cinematic.Shutter;
+        if (!std::isfinite(shutter.ShutterAngleDegrees) || shutter.ShutterAngleDegrees <= 0.0f)
+        {
+            return 0.0f;
+        }
+        if (!std::isfinite(shutter.VirtualFrameRate) || shutter.VirtualFrameRate <= 0.0f)
+        {
+            return std::min(shutter.ShutterAngleDegrees, 360.0f) / 360.0f;
+        }
+        if (!std::isfinite(frameDeltaTime) || frameDeltaTime <= 0.0f)
+        {
+            return 0.0f;
+        }
+        return std::clamp(ResolveShutterSeconds(*camera, frameDeltaTime) / frameDeltaTime, 0.0f, MotionBlurMaxStretch);
+    }
+
+    /**
      * @brief 画面velocityから、シャッターの間の動きでSceneColorをぼかすpass
      *
      * 各画素の動き（画素）は画面velocity × 画像の寸法 × シャッター時間/フレーム長。velocityの無い空の
@@ -58,7 +97,7 @@ namespace NorvesLib::Core::Rendering
      *    自分の動きの向きの標本（同じ動きの面）を使い、どちらの面も中心を覆わない（手前の物体に隠れていた
      *    面が現れる）時刻は、奥の側の標本で埋める。
      * 3. 結果をSceneColorへ書き戻す。
-     * シャッター時間が0、前のカメラが無い、検証表示中のいずれかなら何もしない。
+     * 明示したシャッター時間とカメラのシャッター角がともに0なら働かない。前のカメラが無い場合や検証表示中も同じ。
      */
     class MotionBlurPass : public IViewPass, public IRenderGraphPass
     {

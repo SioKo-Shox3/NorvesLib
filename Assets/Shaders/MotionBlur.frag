@@ -27,12 +27,13 @@ layout(std140, set = 0, binding = 4) uniform MotionBlurParams
     mat4 previousView;
     mat4 previousProjection;
     vec4 cameraPositionAndHistory;   // w: 前のカメラがあるか
-    vec4 imageSizeAndShutter;        // xy: 寸法、z: シャッター時間/フレーム長、w: 動きの長さの上限（画素）
+    vec4 imageSizeAndShutter;        // xy: 寸法、z: シャッター時間/フレーム長（カメラのシャッターでは1を超え、最大2）、w: 動きの長さの上限（画素）
     vec4 tileInfo;                   // x: tileの一辺、yz: tileの数
 } params;
 
-// シャッター区間を等分する時刻の数（動きの長さの上限の画素数と同じ）。
-const int SampleCount = 32;
+// シャッター区間を等分する標本数の範囲。上限は動きの最大画素数に合わせる。
+const int MaxSampleCount = 64;
+const int MinSampleCount = 8;
 // 標本の面が時刻τに中心の画素を覆うとみなす、面の位置と中心の差の上限（画素、各軸）。
 const float CoverRadius = 0.6;
 // 手前・奥を分けるカメラからの距離の相対差。
@@ -146,9 +147,15 @@ void main()
     vec2 centerMotion = ShutterMotion(texel);
     float centerDistance = ViewDistance(texel);
     vec3 sum = vec3(0.0);
-    for (int sampleIndex = 0; sampleIndex < SampleCount; ++sampleIndex)
+    // 隣の3×3 tileで最も長い動きに沿って、1画素あたり1標本以上を取る。
+    int sampleCount = clamp(int(ceil(longestLength)), MinSampleCount, MaxSampleCount);
+    for (int sampleIndex = 0; sampleIndex < MaxSampleCount; ++sampleIndex)
     {
-        float tau = (float(sampleIndex) + 0.5) / float(SampleCount);
+        if (sampleIndex >= sampleCount)
+        {
+            break;
+        }
+        float tau = (float(sampleIndex) + 0.5) / float(sampleCount);
         ivec2 foreground = ClampTexel(center + tau * longest);
         vec2 foregroundMotion = ShutterMotion(foreground);
         float foregroundDistance = ViewDistance(foreground);
@@ -175,5 +182,5 @@ void main()
                    ? texelFetch(sceneColorTexture, own, 0).rgb
                    : centerColor.rgb;
     }
-    outColor = vec4(sum / float(SampleCount), centerColor.a);
+    outColor = vec4(sum / float(sampleCount), centerColor.a);
 }
