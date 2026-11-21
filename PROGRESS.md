@@ -13115,3 +13115,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(反復 5): 同じ台本の行は G8-GR72-AUDIO-SPI・G8-GR72-SOUND-SYSTEM・G8-GR72-AUDIO-COMPONENT-BOOT・G14-GR67-EDITOR-UI・G15-*・G19-*・G10-SHISHA-SHOWCASE-P1・backlog の *-CHECK にも残っている。それぞれを回すときに同じ決まりで扱う。
 - U6 更新器の初回の跳び・新しい声の選び方・リスナーの明示と GR73 の優先を直す: 着地(直し 0 回)
 - U7 評価器の設定の 1 フレームの予算の既定を 4 にそろえる: 着地(直し 0 回)
+- U8 更新器の駆動をサービスの Tick に集約し、モジュールは評価器と GR73 のリスナーを渡す: 着地(直し 0 回)

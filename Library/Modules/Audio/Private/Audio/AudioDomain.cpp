@@ -1,11 +1,13 @@
 ﻿#include "Audio/AudioDomain.h"
 
 #include "Audio/AudioClipResource.h"
+#include "Audio/AudioOcclusionUpdater.h"
 #include "Container/VariableArray.h"
 #include "Math/MathTypes.h"
 #include "Thread/Atomic.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <utility>
 
@@ -470,6 +472,16 @@ namespace NorvesLib::Modules::Audio::Private
                 return AudioResult::Success;
             }
 
+            AudioOcclusionUpdater& GetOcclusionUpdater()
+            {
+                return m_Occlusion;
+            }
+
+            void SetAcousticsEvaluator(const Core::Scene::AcousticTransmissionEvaluator* evaluator)
+            {
+                m_AcousticsEvaluator = evaluator;
+            }
+
             void Tick() override
             {
                 for (ActiveVoiceRecord& voice : m_Voices)
@@ -524,6 +536,22 @@ namespace NorvesLib::Modules::Audio::Private
                         ++m_StaleEventCount;
                     }
                 }
+
+                if (m_bShutdown)
+                {
+                    return;
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+                float dt = 0.0f;
+                if (m_bOcclusionClockStarted)
+                {
+                    // 長い停止の後も遮蔽の利得と遮断周波数が目標へ跳ばないよう、経過時間に上限を設ける。
+                    dt = std::min(std::chrono::duration<float>(now - m_LastOcclusionTick).count(), 0.1f);
+                }
+                m_LastOcclusionTick = now;
+                m_bOcclusionClockStarted = true;
+                m_Occlusion.Tick(*this, m_AcousticsEvaluator, dt);
             }
 
             AudioResult Shutdown() override
@@ -533,6 +561,8 @@ namespace NorvesLib::Modules::Audio::Private
                     return AudioResult::AlreadyInState;
                 }
                 m_bShutdown = true;
+                m_Occlusion.Reset();
+                m_bOcclusionClockStarted = false;
                 if (!m_Backend)
                 {
                     return AudioResult::BackendFailure;
@@ -756,6 +786,10 @@ namespace NorvesLib::Modules::Audio::Private
             }
 
             Core::Container::TUniquePtr<IAudioBackend> m_Backend;
+            AudioOcclusionUpdater m_Occlusion;
+            const Core::Scene::AcousticTransmissionEvaluator* m_AcousticsEvaluator = nullptr;
+            std::chrono::steady_clock::time_point m_LastOcclusionTick{};
+            bool m_bOcclusionClockStarted = false;
             Core::Container::VariableArray<ActiveVoiceRecord> m_Voices;
             Core::Container::VariableArray<uint32_t> m_FreeIndices;
             Thread::Atomic<uint32_t> m_InFlightCallbacks{0};
@@ -780,6 +814,20 @@ namespace NorvesLib::Modules::Audio::Private
             return {};
         }
         return Core::Container::MakeUnique<AudioService>(std::move(backend));
+    }
+
+    AudioOcclusionUpdater* GetAudioServiceOcclusion(IAudioService& service)
+    {
+        auto* concrete = dynamic_cast<AudioService*>(&service);
+        return concrete ? &concrete->GetOcclusionUpdater() : nullptr;
+    }
+
+    void SetAudioServiceAcousticsEvaluator(IAudioService& service, const Core::Scene::AcousticTransmissionEvaluator* evaluator)
+    {
+        if (auto* concrete = dynamic_cast<AudioService*>(&service))
+        {
+            concrete->SetAcousticsEvaluator(evaluator);
+        }
     }
 
     bool AudioServiceTestAccess::PrepareVoiceGenerationWrap(IAudioService& service, VoiceHandle& handle)
