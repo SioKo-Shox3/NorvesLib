@@ -113,7 +113,7 @@ namespace NorvesLib::Core::Component
         m_bTickWhenPaused = bEnabled;
         if (m_PausedTickWorld)
         {
-            m_PausedTickWorld->SetPausedTickRegistration(*this, bEnabled);
+            m_PausedTickWorld->RefreshPausedTickTarget(*this);
         }
     }
 

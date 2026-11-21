@@ -1189,7 +1189,7 @@ namespace NorvesLib::Core
         m_TextBoardSeen.clear();
         m_bTextBoardOrderDirty = false;
 
-        m_PausedTickEntries.clear();
+        m_PausedTickTargets.clear();
         for (auto& calls : m_PausedTickCalls)
         {
             calls.clear();
@@ -1602,67 +1602,24 @@ namespace NorvesLib::Core
         }
     };
 
-    void World::SetPausedTickRegistration(IUnknown& object, bool bEnabled)
+    void World::RefreshPausedTickTarget(Component::Component& component)
     {
-        const auto it = std::find(m_PausedTickEntries.begin(), m_PausedTickEntries.end(), &object);
-        if (bEnabled && it == m_PausedTickEntries.end())
+        const Entity* owner = component.GetOwner();
+        if (component.m_PausedTickWorld == this && owner && (component.IsTickWhenPaused() || owner->IsTickWhenPaused()))
         {
-            m_PausedTickEntries.push_back(&object);
+            m_PausedTickTargets.insert(&component);
         }
-        else if (!bEnabled && it != m_PausedTickEntries.end())
+        else
         {
-            m_PausedTickEntries.erase(it);
+            m_PausedTickTargets.erase(&component);
         }
     }
 
-    void World::CollectPausedTickCalls()
+    void World::RefreshPausedTickTargets(Entity& entity)
     {
-        for (auto& calls : m_PausedTickCalls)
+        for (Component::Component* component : entity.GetComponents())
         {
-            calls.clear();
-        }
-        Container::UnorderedSet<Component::Component*> seen;
-        auto collect = [&](Entity& owner, Component::Component& target)
-        {
-            if (target.m_PausedTickWorld != this || !seen.insert(&target).second)
-            {
-                return;
-            }
-            const auto* registration = FindComponentTick(target.GetClass());
-            if (!registration)
-            {
-                return;
-            }
-            const auto groups = ParticipatingTickGroups(target, *registration);
-            for (uint8_t index = 0; index < Component::TickGroupCount; ++index)
-            {
-                const auto group = static_cast<Component::ETickGroup>(index);
-                const auto body = registration->BodyFor(group);
-                if (body && (groups & Component::TickGroupBit(group)) != 0)
-                {
-                    m_PausedTickCalls[index].push_back({&owner, &target, body});
-                }
-            }
-        };
-        for (IUnknown* entry : m_PausedTickEntries)
-        {
-            if (auto* entity = CastTo<Entity>(entry))
-            {
-                for (IUnknown* inner : entity->GetInners())
-                {
-                    if (auto* target = CastTo<Component::Component>(inner))
-                    {
-                        collect(*entity, *target);
-                    }
-                }
-            }
-            else if (auto* target = CastTo<Component::Component>(entry))
-            {
-                if (Entity* owner = target->GetOwner())
-                {
-                    collect(*owner, *target);
-                }
-            }
+            RefreshPausedTickTarget(*component);
         }
     }
 
@@ -1672,6 +1629,11 @@ namespace NorvesLib::Core
             !std::isfinite(unscaledDeltaTime) || unscaledDeltaTime < 0)
         {
             return;
+        }
+        EndTickCollection();
+        if (m_bOrderedTicksDirty)
+        {
+            SyncOrderedTicks();
         }
         {
             ScopedWorldFlag dispatch(m_bDispatchingTicks);
@@ -2162,6 +2124,35 @@ namespace NorvesLib::Core
         /// 最後に収集で見つけた回（m_OrderedTickWalk）
         uint64_t SeenWalk = 0;
     };
+
+    void World::CollectPausedTickCalls()
+    {
+        for (auto& calls : m_PausedTickCalls)
+        {
+            calls.clear();
+        }
+        for (Component::Component* component : m_PausedTickTargets)
+        {
+            const auto it = m_OrderedTicks.find(component);
+            if (it == m_OrderedTicks.end())
+            {
+                continue;
+            }
+            for (const auto& record : it->second)
+            {
+                auto& calls = m_PausedTickCalls[static_cast<size_t>(record->Group)];
+                calls.push_back({record->OwnerEntity, component, record->Body, record->Priority, record->Ordinal});
+            }
+        }
+        // 通常の更新と同じく、各群では優先度、次に深さ優先の番号が小さい順に呼ぶ。
+        for (auto& calls : m_PausedTickCalls)
+        {
+            std::sort(calls.begin(), calls.end(), [](const PausedTickCall& lhs, const PausedTickCall& rhs)
+            {
+                return lhs.Priority != rhs.Priority ? lhs.Priority < rhs.Priority : lhs.Ordinal < rhs.Ordinal;
+            });
+        }
+    }
 
     void World::SetPoseEvaluationParallelSettings(const PoseEvaluationParallelSettings& settings)
     {
@@ -2772,10 +2763,7 @@ namespace NorvesLib::Core
             return;
         }
         component.m_PausedTickWorld = nullptr;
-        if (component.IsTickWhenPaused())
-        {
-            SetPausedTickRegistration(component, false);
-        }
+        m_PausedTickTargets.erase(&component);
         // 持ち主の印だけで収集した呼び先も、切り離した時点で全群から無効にする。
         for (auto& calls : m_PausedTickCalls)
         {
@@ -5550,10 +5538,6 @@ namespace NorvesLib::Core
     void World::BindEntitySubtreeRows(Entity& entity)
     {
         entity.m_PausedTickWorld = this;
-        if (entity.IsTickWhenPaused())
-        {
-            SetPausedTickRegistration(entity, true);
-        }
         // 木に部分木が加わった。Tick の呼び先と深さ優先の番号、Text の板の順を次の収集で付け直す
         m_bOrderedTicksDirty = true;
         m_bTextBoardOrderDirty = true;
@@ -5618,10 +5602,7 @@ namespace NorvesLib::Core
             return;
         }
         component.m_PausedTickWorld = this;
-        if (component.IsTickWhenPaused())
-        {
-            SetPausedTickRegistration(component, true);
-        }
+        RefreshPausedTickTarget(component);
         if (ComponentArchetypeFor(component) == Ecs::kInvalidEcsArchetype || !m_EcsWorld)
         {
             return;
@@ -5886,10 +5867,6 @@ namespace NorvesLib::Core
     void World::ReleaseEntityRow(Entity& entity)
     {
         entity.m_PausedTickWorld = nullptr;
-        if (entity.IsTickWhenPaused())
-        {
-            SetPausedTickRegistration(entity, false);
-        }
         if (entity.m_EcsCreateSlot != kNoEntityCreateSlot)
         {
             // 作成の予約がまだ再生されていない: 札を取り消す（行は無いので消すものも無い）
