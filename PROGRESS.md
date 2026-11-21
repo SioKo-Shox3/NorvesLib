@@ -12958,3 +12958,6 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(反復 3): 採った判断: Opaque × マスクの板はテクスチャのアルファも合成に使う（不透明なテクスチャなら被覆率だけで合成する）。反転（bFlipY）した円弧の板は、テクスチャと一緒に円弧も上下に映る。人が見るときの見どころ: 塗り 0.25・開始角 0・時計回りの RadialFill の板が画面の右上の四分の一を塗ること、Opaque の RadialFill（塗り 0）や CircleMask の板を別の板に重ねたとき、マスクの外で下の板が見えること。
 - Next: G15-GR68-UI-CHECK（記録のたびのパイプラインの作成の費用、UI の縁の画素の確かめ）。
 - U6 板のプロキシのハッシュに、サンプラー・シェーダーの種類・板ごとの値を含める: 着地(直し 0 回)
+- Done(反復 4): G15-GR68-CANVAS-EXT — `HashProxy(BoardProxy)`（`SceneProxyHash.h`）にサンプラー・シェーダーの種類・板ごとの値を足し、人が差し替えた done-when (1)〜(5) をすべて満たした。確かめは `cmake --build build --config Debug --target Game -- /m:1`（終了コード 0、エラー 0 件、`Game.exe` まで）。試験は作らない決まりで、BoardShaderParamsTest と GPU の試験の束は作っていない。撮影・計測の確かめは回さない決まり。
+- Notes(反復 4): 人が見るときの見どころは反復 3 の Notes のとおり（RadialFill の塗り 0.25 が画面の右上の四分の一を塗る、Opaque × マスクの板の外で下の板が見える、Point と Linear の切り替え）。既定（Point・Standard）の板はシェーダー・サンプラー・インスタンスのデータが変更前と同じなので、Rendering3DTest の Text の板の見た目は変わらない。
+- Next: G15-GR68-UI-CHECK（記録のたびのパイプラインの作成の費用、UI の縁の画素の確かめ）。
