@@ -12815,3 +12815,37 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(反復 3、run 20261121-094434): 統合ブランチ feature/scene-launcher を取り込んだ後の verify の失敗は、`Core.vcxproj` の 4 か所の C1060(コンパイラのヒープ不足)だけで、ほかの枠のビルドが同時に走っていたためのメモリ不足だった(コンパイルエラー・リンクエラーは無し)。ソースは変えず、同じ verify を回し直して通した。
 - 証拠(反復 3): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-iter3-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK`・C1060 は 0 件)。
 - Next(反復 3): ランナーの評価者の反証。聴感の確かめは G16-GR73-SPATIAL-CHECK。
+
+- U1 StringTable(言語ごとの文字列表・切り替えの通知・文字集合の収集): 着地(直し 0 回)
+- U2 最初の日本語の文字列表と文字のスタイル表(データだけ): 着地(直し 0 回)
+- U3 Engine::Engine に StringTable を持たせ、GetStringTable で引けるようにする(起動時の読み込みは未配線): 着地(直し 0 回)
+- U4 ITextMetrics と TextLayout の本体(折り返し・禁則・揃え・行間・省略・基準線): 着地(直し 0 回)
+- U6 FontAtlas を使う ITextMetrics の実装: 着地(直し 0 回)
+- U5 TextLayout のインラインのタグ({icon:Action}・色)と結果のキャッシュ: 着地(直し 0 回)
+- U7 Core と Game に /utf-8 を常時付け、NORVES_ENABLE_CORE_TEXT の既定を ON にする(単独のコミット): 着地(直し 0 回)
+
+## 2026-11-21 G15-GR69-STRINGTABLE-LAYOUT（run 20261121-065219 の反復 1〜2、完了）
+- Done: `Text/StringTable`（`Assets/Text/<lang>.strings.json` を AssetFileReader と JsonDocument で読み、Identity のハッシュ → 文字列の表にする。欠落キーは開発ビルドでキーの文字列 + 1 回だけの警告、製品は fallback の言語 → キー。`Format` は `{0}`・`{name}` の置換だけ。`LoadLanguage` → `SetActiveLanguage` → `OnLanguageChanged`（実際に変わったときだけ 1 回）。重複キーは読み込みの誤りで前の表を保つ。`CollectCodepoints` は全言語の訳文 + 印字可能な ASCII をキーの接頭辞で絞る）。`Engine::Engine` のメンバにして `GEngine->GetStringTable()` で引く（シングルトンにしない）。
+- Done: `Assets/Text/ja.strings.json`（タイトル・ポーズ・終了の確認・設定・セーブ・クレジット・地図・ファストトラベルの画面の 76 キー。文面は仮。BOM なし UTF-8）と `Assets/UI/ui_text_styles.json`（body・caption・heading・title → Faces・基準 px・文字集合の接頭辞）。表の全コードポイントが body の face の cmap にあることを置くときに照合した（171 種で未収録 0）。
+- Done: `Text/TextMetrics.h` の `ITextMetrics` と `Text/TextLayout`（UTF-8 → 要素 → 行 → 位置の 3 段。日本語は任意の字の間・英語は空白で折り返し、行頭禁止・行末禁止の短い表で追い出し、空行になるときだけ禁則を破る。左・中央・右揃え、行間の倍率、最大行数と `…` の省略、基準線は全 face の ascender の最大）。`{icon:Action}` は CJK の字と同じ切れ方の分けられない要素で幅を確保し、`Codepoint` 0 のグリフと `TextLayoutResult::Icons`（Action の複製）に残す。`{color:#RRGGBB}`/`{color:#RRGGBBAA}`〜`{/color}`（深さ 8）。形の合わないタグは字として組む。`TextLayoutCache`（文字列のハッシュ × 世代 × 設定で、当たりは全バイトと設定を完全に照合。既定 256 件、最も長く使っていないものから捨てる）。TextComponent の座標の規約は変えていない。
+- Done: `Text/FontAtlasTextMetrics`（`FontAtlas::GetGlyph` の寸法を返し、desc の全 face を FreeType で開いた ascender・descender の最大を基準線に使う。行送りは atlas の行送りと ascender + descender の大きい方。`Bind` の成功ごとにプロセスで一意の世代を振る）。
+- Done: 別のコミット（996a3125）で、Core（PUBLIC）と Game に MSVC の `/utf-8` を常時付け、`NORVES_ENABLE_CORE_TEXT` の既定を ImGui から切り離して ON にした。ログの日本語の行をバイトで照合する台本は `Scripts/` に無い（非 ASCII の字が無い）。
+- 証拠: `.harness/runs/20261121-065219/verify-G15-GR69-STRINGTABLE-LAYOUT-build.txt`（ImGui・CORE_TEXT とも ON の構成で `cmake --build build --config Debug -- /m:1` が EXIT=0。Core・Game の vcxproj の全構成に `/utf-8`、FontAtlasTextMetrics.cpp の FreeType の経路のコンパイルを確認）。
+- 試験: done-when (5) の StringTableTest・TextLayoutTest・StringTableCharsetCoverageTest と verify の ctest の 2 行は、人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: StringTable・TextLayout を使う画面はまだ無く、各シーンの見た目は変わらない。`/utf-8` で日本語のログの行が、起動直後のコンソールで文字化けせずに出ること。
+- Next: ランナーの評価者の反証（Public API の Engine・Text）。起動時に `ja` を読む配線と、UI の Label への組版の配線は、文字列表を使う側の項目でする。
+- Notes: 既知の限界: 起動時の `GEngine->GetStringTable().LoadLanguage("ja", ...)` の呼び出しは置いていない（Game の .cpp は paths の外。`Surfaces.json` と同じく呼ぶ側で配線する）。`TextLayoutCache` の探索は保持件数に比例する。単独の `\r` は改行として扱わない。盤面の単位の作業ツリー（`.slots/NorvesLib-3-uN`）は FreeType の submodule が無いと ImGui・CORE_TEXT とも OFF で構成されるので、CORE_TEXT の経路を確かめる単位は `git submodule update --init Library/ThirdParty/freetype` と ON の再構成が要る。
+- U8 折り返しの位置の選び方を直す(幅内で禁則を守る単語境界 → 文字境界の順、空白の判定を bSpace に統一): 着地(直し 0 回)
+- U9 StringTable の差し戻しを直す(代替言語の読み込み・Format の二重括弧・省略記号の文字集合・使用中の言語の読み直しの通知): 着地(直し 0 回)
+- U10 アトラスの CPU の状態が失われたら、寸法と世代を未接続の値にそろえる: 着地(直し 0 回)
+- U11 CMake の文字描画の選択肢の説明を日本語にし、Debug の全体のビルドで仕上げを確かめる(最後): 着地(直し 0 回)
+
+## 2026-11-21 G15-GR69-STRINGTABLE-LAYOUT（run 20261121-065219 の反復 3、差し戻しの対応、完了）
+- Done: 折り返しの位置は、幅内で禁則を守る単語境界の最も後ろ → 無ければ幅内で禁則を守る文字境界の最も後ろ → どちらも無いときだけ幅の位置で禁則を破って切る、の順にした（全文字の送り 1・幅 3 の `（ABC` は `（AB` / `C`）。単語境界の空白の判定を `bSpace`（' '・タブ・U+3000）にそろえ、タブの後ろでも切れる（幅 5 の `go	far` は `go	` / `far`）。
+- Done: `StringTable::LoadLanguage` は表の `fallback` の言語が未読み込みならそれも読む（自分を先に登録するので循環と自己参照はそこで止まる。代替言語が読めなくても主の言語は成功のまま警告を 1 行出す）。使用中の言語を読み直したら `OnLanguageChanged` を送る。`Format` は `{{`・`}}` を畳まず原文のまま残す（置換は `{0}`・`{name}` だけ）。`CollectCodepoints` は接頭辞にかかわらず、組版が省略に挿入する U+2026 を加える。
+- Done: `FontAtlasTextMetrics` は結び付けたアトラスの CPU の状態が失われたら（`FontAtlas::Shutdown`・`Upload` の失敗）、未接続と同じ値（空の字形・寸法 0・世代 0）を返す。`TextLayoutCache` の世代 0 の結果は寸法 0 で組んだものなので食い違わない。`NORVES_ENABLE_CORE_TEXT` の説明を日本語にした。
+- 証拠: `.harness/runs/20261121-065219/verify-G15-GR69-STRINGTABLE-LAYOUT-iter3-build.txt`（ImGui・CORE_TEXT とも ON の構成で `cmake --build build --config Debug -- /m:1` が EXIT=0、Game.exe まで生成。StringTable.obj・FontAtlasTextMetrics.obj は直したソースより新しい。`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。
+- 試験: done-when (5) の試験と verify の ctest の 2 行は、人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: 文字列表と組版を使う画面はまだ無く、各シーンの見た目は変わらない。
+- Next: ランナーの評価者の反証（前回の指摘への対応差分）。起動時に `ja` を読む配線と、UI の Label への組版の配線は、文字列表を使う側の項目でする。
+- Notes: 既知の限界: 使用中の言語の代替言語だけを読み直したときは `OnLanguageChanged` を送らない（代替言語の訳を返すのは製品ビルドの欠落キーだけ）。
