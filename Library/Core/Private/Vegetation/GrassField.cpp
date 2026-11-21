@@ -1,5 +1,8 @@
 ﻿#include "Vegetation/GrassField.h"
 
+#include "Rendering/GrassGenerateReference.h"
+#include "Vegetation/DrynessMap.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -228,7 +231,8 @@ namespace NorvesLib::Core::Vegetation
         return pixels.data() + offset;
     }
 
-    Math::Vector3 GrassField::SampleLayer(const Chunk& chunk, float localX, float localZ, bool bLayerA) const
+    Math::Vector3 GrassField::SampleLayer(const Chunk& chunk, float localX, float localZ, bool bLayerA,
+                                         float* pOutAlpha) const
     {
         const uint32_t resolution = bLayerA ? m_Desc.LayerAResolution : m_Desc.LayerBResolution;
         const float pixelWidth = m_Desc.ChunkSizeMeters / static_cast<float>(resolution);
@@ -244,18 +248,32 @@ namespace NorvesLib::Core::Vegetation
         const uint8_t* p11 = ReadPixel(chunk, i + 1, j + 1, bLayerA);
 
         // 隣接の有無によらず、各成分を X、Z の順で同じ演算列により補間する。
-        float channels[3];
-        for (uint32_t channel = 0; channel < 3; ++channel)
+        float channels[4];
+        const uint32_t channelCount = pOutAlpha ? 4u : 3u;
+        for (uint32_t channel = 0; channel < channelCount; ++channel)
         {
             const float row0 = Lerp(static_cast<float>(p00[channel]), static_cast<float>(p10[channel]), fractionX);
             const float row1 = Lerp(static_cast<float>(p01[channel]), static_cast<float>(p11[channel]), fractionX);
             channels[channel] = Lerp(row0, row1, fractionZ);
+        }
+        if (pOutAlpha)
+        {
+            *pOutAlpha = channels[3] * Rendering::kGrassInv255;
         }
         return Math::Vector3(channels[0], channels[1], channels[2]);
     }
 
     GrassSample GrassField::Sample(float x, float z) const
     {
+        return SampleInternal(x, z, nullptr);
+    }
+
+    GrassSample GrassField::SampleInternal(float x, float z, float* pOutBaseDryness) const
+    {
+        if (pOutBaseDryness)
+        {
+            *pOutBaseDryness = 0.0f;
+        }
         GrassSample sample;
         GrassChunkCoord coord;
         if (!TryGetChunkCoord(x, z, coord))
@@ -287,7 +305,7 @@ namespace NorvesLib::Core::Vegetation
         {
             sample.HeightMeters = Lerp(pSpecies->HeightMinMeters, pSpecies->HeightMaxMeters, layerA.y / 255.0f);
         }
-        const Math::Vector3 layerB = SampleLayer(*pChunk, localX, localZ, false);
+        const Math::Vector3 layerB = SampleLayer(*pChunk, localX, localZ, false, pOutBaseDryness);
         sample.Tint = Math::Vector3(layerB.x / 128.0f, layerB.y / 128.0f, layerB.z / 128.0f);
         return sample;
     }
@@ -305,6 +323,12 @@ namespace NorvesLib::Core::Vegetation
 
     float GrassField::QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b) const
     {
+        return QueryOcclusion(a, b, 0.5f, nullptr);
+    }
+
+    float GrassField::QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
+                                    const DrynessMap* pDryness) const
+    {
         if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(a.z) ||
             !std::isfinite(b.x) || !std::isfinite(b.y) || !std::isfinite(b.z))
         {
@@ -316,9 +340,13 @@ namespace NorvesLib::Core::Vegetation
         {
             return 1.0f;
         }
-        // 約 524 km を超える区間は刻みを伸ばし、積分回数と整数変換の範囲を制限する。
+        if (!std::isfinite(stepMeters) || stepMeters <= 0.0f)
+        {
+            stepMeters = 0.5f;
+        }
+        // 指定の刻みで積分回数が上限を超えるときは、刻みを伸ばして区間全体を覆う。
         constexpr uint64_t MaxOcclusionSteps = 1u << 20;
-        const double stepCount = std::ceil(static_cast<double>(length) / 0.5);
+        const double stepCount = std::ceil(static_cast<double>(length) / static_cast<double>(stepMeters));
         const uint64_t limitedCount = stepCount >= static_cast<double>(MaxOcclusionSteps) ?
             MaxOcclusionSteps : static_cast<uint64_t>(stepCount);
         const uint64_t count = limitedCount > 0 ? limitedCount : 1;
@@ -328,13 +356,25 @@ namespace NorvesLib::Core::Vegetation
         {
             const float fraction = (static_cast<float>(index) + 0.5f) / static_cast<float>(count);
             const Math::Vector3 point = a + delta * fraction;
-            const GrassSample sample = Sample(point.x, point.z);
+            float baseDryness = 0.0f;
+            const GrassSample sample = SampleInternal(point.x, point.z, pDryness ? &baseDryness : nullptr);
             const GrassSpecies* pSpecies = m_SpeciesTable.Find(sample.SpeciesId);
-            const float height = sample.HeightMeters;
+            float height = sample.HeightMeters;
+            float density = sample.Density;
+            if (pDryness && pSpecies)
+            {
+                const float fieldDryness = pDryness->Sample(point.x, point.z);
+                const float dryness = Rendering::GrassEffectiveDryness(fieldDryness, baseDryness);
+                if (dryness > 0.0f)
+                {
+                    density *= Rendering::GrassLerp(1.0f, pSpecies->Dryness.DensityScale, dryness);
+                    height *= Rendering::GrassLerp(1.0f, pSpecies->Dryness.HeightScale, dryness);
+                }
+            }
             const float above = point.y - GetGroundHeight(point.x, point.z);
             if (height > 0.0f && pSpecies != nullptr)
             {
-                const float sigma = sample.Density * pSpecies->Opacity * Saturate((height - above) / height);
+                const float sigma = density * pSpecies->Opacity * Saturate((height - above) / height);
                 tau += sigma * stepLength;
             }
         }

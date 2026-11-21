@@ -13129,3 +13129,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261122-011236/verify-G14-GR62-LENS-SHUTTER-U8.txt`（Core を再コンパイルして `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`exit_code=0` で `Game.vcxproj -> ...Game.exe`。警告は LNK4099・C4996・C4244 だけ）。
 - 試験: 試験は作らず回していない（人の決まり）。
 - Next: ランナーの評価者の反証（危険地帯）。
+- U1 GrassField に刻みと枯れ度を指定する QueryOcclusion の多重定義を足す: 着地(直し 0 回)
