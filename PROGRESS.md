@@ -12802,3 +12802,17 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
 - Notes: 判断: 1 つの Entity に操舵 Component が複数あるときは先頭だけを使う（先頭が破棄予定・Tick 無効の間も 2 個目へ切り替えない）。
 - U19 操舵 Component を外したときも体から購読を外し、コールバックを接続ごとの番号で照合し、Shutdown でモーターを外す（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 3 の評価と再開の判断）: `AnimalMotor` は結ぶときに所有 Entity の `EntityHandle` を持ち、`RemoveComponent` で所有者が先に外れて `Detach` に null が渡ったときは、AIModule の Engine の World で `ResolveEntityHandle` して、その Entity の `CharacterBodyComponent` から購読の識別子で外す（World・Entity・体の生ポインタは保存しない）。コールバックの照合をモーターごとの世代から接続ごとに一意の番号（静的な通し番号）に替え、配信中にコピーされた古い呼び出しが同じ `ComponentId` の後任へ届かないようにした。`AIModule::Shutdown` → `SteeringSystem::Reset` で登録中の各モーターも外す。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0・error 0 件（`NorvesModule_AI.lib`・`Game.exe` を生成。変えた 4 つの .cpp の .obj は編集より新しい）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。撮影・計測の確かめは回さない決まり。
+- 経路 1（操舵 Component の即時の `RemoveComponent`）: `RemoveInner` が Outer を消してから `Finalize` → `DetachMotorAndUnregister` → `Detach(null, Engine の World)` が保存したハンドルで所有者を引いて体から外すので購読は残らない。接続番号を 0 にするので、コピー済みの呼び出しも `StepMotor` に届かず、1 歩の `MoveDelta` は 1 回まで。
+- 経路 2（段の最中の予約の取り外し）: `MarkForDestroy` の後は `CanSteer` が偽でコールバックが `StepMotor` を呼ばず、回収の `RemoveComponentImmediately` で経路 1 と同じく外す。ECS の行の作成が予約中でハンドルが取れない間は結ばないので、外せない購読はできない。
+- 経路 3（体の `RemoveComponent`）: 体の `EndPlay`・`Finalize` が `BeforeSimulation.Clear()` で購読ごと消す。予約中の歩では、コールバックが体の破棄予定を見て `StepMotor` の前で止まるので二重には動かない。
+- 経路 4（Entity の破棄）: `Entity::Finalize` は行を切ってから Component を一覧から外して 1 つずつ破棄する。体が先なら購読ごと消え、操舵側が先なら接続番号を 0 にした後で体が `Clear` する。間に固定歩は来ない。
+- 経路 5（World の破棄）: `World::Finalize` → `DestroyEntitySubtree` は Entity の行の参照を消してから Component を終了するので、破棄中の `ResolveEntityHandle` は null を返し（行が死んでいる・参照が消えている・WorldId が違うときはすべて null）、体には触れない。体が自分の終了で購読を消す。破棄中は外さない形で安全。
+- 経路 6（`AIModule::Shutdown`）: `Reset` が登録中の各モーターを外してから登録簿を消すので、以後の固定歩に古い操舵速度の `MoveDelta` は入らない。エンジンの終了では `ShutdownAll` → `Shutdown` → `Uninstall` の順で、最後に `m_Engine` が null になる。
+- 経路 7（同じ Entity の 2 個目の操舵 Component への引き継ぎ）: A を外すと経路 1 のとおり購読が消え、次の `BeginStep` で先頭の B が新しい接続番号で 1 件だけ購読する。B が A と同じ `ComponentId` でも番号が違うので、コピー済みの A の呼び出しは B の `StepMotor` を呼ばず、1 歩の `StepMotor` は 1 回。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 判断: 解除は所有 Entity のすべての `CharacterBodyComponent` から購読の識別子で外す（体の `ComponentId` は公開の PROPERTY で書き換えられるため。識別子で照合するので外れるのは自分の購読だけ）。
+- Notes: 判断: ECS の行の作成が予約中で所有 Entity のハンドルが取れない間は、運動の購読を保留し、ハンドルが取れる次の固定歩で結ぶ。
+- Notes: 人が見ること（設計の選択として残した）: `CanSteer` が偽の相手は速度を零として読むので `Pursue` の予測が外れる。帯の幅が 0 の `KeepDistance` は接近と後退を繰り返す余地がある。先頭の操舵 Component が操舵できなくても 2 個目へは切り替えない。
+- Notes: 要起票: QuadrupedLocomotionComponent を RemoveComponent で外すと GetOwner() が null になり、体の BeforeSimulation に購読が残る（`Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:172-181` の `Detach` が所有者 null のとき `Remove` を飛ばす。`RemoveInner` が `Finalize` より先に Outer を消すため）。
