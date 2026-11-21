@@ -16,36 +16,6 @@ namespace NorvesLib::Core::Component
 {
     namespace
     {
-        bool AddIgnoredCollider(Scene::PhysicsQueryFilter& filter, Scene::ColliderHandle collider,
-                                const Scene::SceneQuery* query = nullptr, size_t explicitCount = 0)
-        {
-            auto& slots = filter.IgnoreColliders;
-            auto end = std::end(slots);
-            if (!collider.IsValid() || std::find(std::begin(slots), end, collider) != end)
-            {
-                return false;
-            }
-            auto empty = std::find(std::begin(slots), end, Scene::ColliderHandle{});
-            if (empty == end && query)
-            {
-                for (size_t i = explicitCount; i < std::size(slots); ++i)
-                {
-                    bool alive = true;
-                    if (query->IsAlive(slots[i], alive) == Scene::EPhysicsSceneQueryResult::Success && !alive)
-                    {
-                        slots[i] = {};
-                    }
-                }
-                empty = std::find(std::begin(slots) + explicitCount, end, Scene::ColliderHandle{});
-            }
-            if (empty == end)
-            {
-                return false;
-            }
-            *empty = collider;
-            return true;
-        }
-
         float NonnegativeDistance(float value)
         {
             return std::isfinite(value) && value > 0.0f ? value : 0.0f;
@@ -122,21 +92,16 @@ namespace NorvesLib::Core::Component
         {
             return false;
         }
-        Scene::PhysicsQueryFilter updated;
-        size_t explicitCount = 0;
+        auto& slots = m_Filter.IgnoreColliders;
+        std::fill(std::begin(slots), std::end(slots), Scene::ColliderHandle{});
+        auto next = std::begin(slots);
         for (const auto collider : colliders)
         {
-            if (AddIgnoredCollider(updated, collider))
+            if (collider.IsValid() && std::find(std::begin(slots), next, collider) == next)
             {
-                ++explicitCount;
+                *next++ = collider;
             }
         }
-        for (size_t i = m_ExplicitColliderCount; i < std::size(m_Filter.IgnoreColliders); ++i)
-        {
-            AddIgnoredCollider(updated, m_Filter.IgnoreColliders[i]);
-        }
-        std::copy_n(updated.IgnoreColliders, std::size(updated.IgnoreColliders), m_Filter.IgnoreColliders);
-        m_ExplicitColliderCount = explicitCount;
         return true;
     }
 
@@ -175,10 +140,6 @@ namespace NorvesLib::Core::Component
     void GroundContactComponent::EndPlay()
     {
         m_State = GroundContactState{};
-        for (size_t i = m_ExplicitColliderCount; i < std::size(m_Filter.IgnoreColliders); ++i)
-        {
-            m_Filter.IgnoreColliders[i] = {};
-        }
         Component::EndPlay();
     }
 
@@ -221,42 +182,30 @@ namespace NorvesLib::Core::Component
         desc.MaxDistance = static_cast<float>((std::min)(static_cast<double>(height) + length,
                                                         static_cast<double>((std::numeric_limits<float>::max)())));
         desc.MaxHits = 1;
+        desc.Filter = m_Filter;
+        desc.Filter.IgnoreEntity = owner->GetEntityHandle();
         Container::VariableArray<Scene::PhysicsQueryHit> hits;
-        const auto ownerHandle = owner->GetEntityHandle();
-        // 学習した自己コライダーはフィルタに残るので、以後のステップでは各足のレイは通常 1 本で済む。
+        // 自分の Entity のコライダーは候補から除かれるため、体と各足のレイは 1 本ずつで済む。
         auto sampleAt = [&](const Math::Vector3& position, GroundContactSample& sample)
         {
             desc.Ray.Origin = position + Math::Vector3(0.0f, height, 0.0f);
-            for (size_t retries = 0; retries <= std::size(m_Filter.IgnoreColliders); ++retries)
+            if (query.ExecuteQuery(desc, hits) != EPhysicsSceneQueryResult::Success || hits.empty())
             {
-                desc.Filter = m_Filter;
-                if (query.ExecuteQuery(desc, hits) != EPhysicsSceneQueryResult::Success || hits.empty())
-                {
-                    return;
-                }
-                const auto& hit = hits[0];
-                if (hit.bHasEntity && hit.Entity == ownerHandle)
-                {
-                    if (!AddIgnoredCollider(m_Filter, hit.Collider, &query, m_ExplicitColliderCount))
-                    {
-                        return;
-                    }
-                    continue;
-                }
-                sample.bHit = true;
-                sample.Point = hit.Point;
-                sample.Normal = hit.Normal;
-                Scene::SurfaceQuery surfaceQuery;
-                surfaceQuery.Position = hit.Point;
-                surfaceQuery.Normal = hit.Normal;
-                surfaceQuery.Collider = hit.Collider;
-                Scene::SurfaceSample surface;
-                const auto result = query.QuerySurface(surfaceQuery, surface);
-                if (result == EPhysicsSceneQueryResult::Success || result == EPhysicsSceneQueryResult::NoHit)
-                {
-                    sample.Surface = surface;
-                }
                 return;
+            }
+            const auto& hit = hits[0];
+            sample.bHit = true;
+            sample.Point = hit.Point;
+            sample.Normal = hit.Normal;
+            Scene::SurfaceQuery surfaceQuery;
+            surfaceQuery.Position = hit.Point;
+            surfaceQuery.Normal = hit.Normal;
+            surfaceQuery.Collider = hit.Collider;
+            Scene::SurfaceSample surface;
+            const auto result = query.QuerySurface(surfaceQuery, surface);
+            if (result == EPhysicsSceneQueryResult::Success || result == EPhysicsSceneQueryResult::NoHit)
+            {
+                sample.Surface = surface;
             }
         };
 

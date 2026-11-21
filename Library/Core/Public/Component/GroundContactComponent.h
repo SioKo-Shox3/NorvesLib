@@ -50,7 +50,7 @@ namespace NorvesLib::Core::Component
         /// 水しぶき・足跡などの消費者が、自分の脚の関節名から接地の状態の足の番号を引く。該当する足がなければ -1。
         int32_t FindFootIndex(Identity joint) const;
 
-        /// 自己ヒットは標本ごとに覚えて撃ち直す。除外枠が満ちたら、生きていない学習済みの枠を空ける。
+        /// 自分の Entity のコライダーは物理側で除く。ここでは追加で除くコライダーを最大 4 個指定する。
         bool SetIgnoredColliders(Container::Span<const Scene::ColliderHandle> colliders);
         bool SetIgnoredBodies(Container::Span<const Scene::BodyHandle> bodies);
 
@@ -73,7 +73,5 @@ namespace NorvesLib::Core::Component
 
         GroundContactState m_State;
         Scene::PhysicsQueryFilter m_Filter;
-        // 明示されたコライダーを先頭に詰め、残った枠に自己ヒットを記憶する。
-        size_t m_ExplicitColliderCount = 0;
     };
 }

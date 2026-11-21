@@ -73,6 +73,8 @@ namespace NorvesLib::Core::Scene
         EPhysicsQueryTriggerPolicy TriggerPolicy = EPhysicsQueryTriggerPolicy::Include;
         ColliderHandle IgnoreColliders[4]{};
         BodyHandle IgnoreBodies[4]{};
+        // この Entity が持つコライダーを候補から除く。既定の無効なハンドルなら何も除かない。
+        EntityHandle IgnoreEntity{};
 
         constexpr bool IsValid() const
         {

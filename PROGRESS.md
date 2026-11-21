@@ -12779,3 +12779,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 範囲: done-when (1)(3) の直しのため、`paths:` に無い `Library/Core/Private/Component/TerrainComponent.cpp`（表を読めた直後に provider へ結ぶ 1 か所）と `Library/Core/Private/Component/FootSplashComponent.cpp`（地面の点と法線の取り方）を変えた。物理のフィルタに Entity の除外は足していない（物理モジュールの実装に波及するため、自己ヒットは学習で除く）。
 - U9 地形の層→表面名の対応を伸びる配列で持ち、最古の上書きをやめる: 着地(直し 0 回)
 - U11 水しぶきは今の公開番号の接地の結果を当たり・未接地とも採る: 着地(直し 0 回)
+- U10 物理の照会のフィルタに持ち主の Entity を除く欄を足し、接地は足ごとに 1 本のレイにする: 着地(直し 1 回)
