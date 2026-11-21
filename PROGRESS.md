@@ -13002,3 +13002,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes(反復 1): 単位の計画は U1〜U6(SPI とバックエンド → ミキサーの中核 → Mixer.json と定義・バンクの欄 → SoundSystem とモジュールの結線 → 文書と最終ビルド)。採った判断: Mixer.json は Game を変えずに当てるため、SoundSystem の最初の LoadBank が同じアセットから `Audio/Mixer.json` を 1 回だけ読む。バスの親の構成はコードに固定(JSON は音量・ポーズの影響・ダッキングだけを上書き)。ポーズ用のゲインは Se・Ambient・Music だけに掛け、Ui と Master には掛けない。ダッキングの既定の規則は 0 個(聴感の値)。試験(`AudioMixerTest`・`AssetCookSoundBankSmoke` のケース・`FakeAudioBackend` の記録)は試験を作らない決まりにより作らない。verify の 3 行目 `Scripts/Test-M9World.ps1 -ContractOnly` は、2026-11-14 の c9226a9b で消えたスクリプトを呼ぶので実装に関係なく失敗する(G16-GR73-VIRTUAL-VOICE と同じ。判断役が行を外す前例あり)。
 - U2 IAudioMixer とドメインのミキサー(バスの正本・実効のゲイン・設定の音量・ポーズ・ダッキング・当て直し): 着地(直し 0 回)
 - U3 Mixer.json の読み込み(既定はコード、JSON で上書き、欠落・不正は既定と診断): 着地(直し 0 回)
+- U4 音の定義の bus・duck_tag とクリップのカテゴリ: 着地(直し 0 回)
