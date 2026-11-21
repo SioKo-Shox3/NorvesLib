@@ -187,4 +187,48 @@ namespace NorvesLib::Modules::AI::Steering
     /// 希望速度の重み付き和を操舵面と速さの上限に収める。非有限の入力と負の重みの寄与は零とする。
     Math::Vector3 CombineWeighted(Core::Container::Span<const WeightedVelocity> items, const SteeringLimits& limits,
                                   SteeringPlane plane);
+
+    constexpr uint32_t kContextDirectionCount = 16;
+
+    struct ContextMaps
+    {
+        float Interest[kContextDirectionCount] = {};
+        float Danger[kContextDirectionCount] = {};
+    };
+
+    struct ContextResolveParams
+    {
+        float DangerTolerance = 0.05f;
+        float MinInterest = 1e-4f;
+        bool bKeepExactWhenClear = true;
+    };
+
+    struct ContextResolveResult
+    {
+        Math::Vector3 Velocity;
+        uint32_t Direction = 0;
+        float Danger = 0.0f;
+        bool bFallbackToOpen = false;
+    };
+
+    /// 添字を 16 で折り返し、+Z を起点に +X 側へ回る XZ 平面の単位方向を返す。
+    Math::Vector3 ContextDirection(uint32_t index);
+    /// 希望速度の水平成分から、最大速に対する速度比と各方向の正の内積の積を興味に重ねる。
+    void AddInterest(ContextMaps& maps, const Math::Vector3& desiredVelocity, float maxSpeed);
+    /// 与えられた先頭 16 方向まで、空き距離が先読み距離に足りない割合を危険に重ねる。
+    /// NaN は閉塞、正の無限大は開放とし、先読み距離が非有限または正でなければ地図を保つ。
+    void AddDangerFromClearance(ContextMaps& maps, Core::Container::Span<const float> clearance, float lookDistance);
+    /// 半径内の近傍へ向かう方向に、距離と内積に応じた危険を重ねる。水平距離が 1e-4 m 未満の近傍は除く。
+    void AddDangerFromNeighbors(ContextMaps& maps, const Math::Vector3& selfPosition,
+                                Core::Container::Span<const Math::Vector3> neighborPositions, float radius);
+
+    /// 非有限の興味を 0、非有限の危険を 1 として地図を [0, 1] に収め、希望水平速を maxSpeed で制限する。
+    /// 最小危険値から DangerTolerance 以内を候補とする。全方向の危険が 1 なら方向 0・危険 1 で停止し、
+    /// 希望水平速が 1e-4 m/s 以下でも停止する。候補の中で興味が最大の方向を選び、同点では小さい添字を優先する。
+    /// その興味が MinInterest 以下なら、危険が最小の方向（同点では最小添字）を選び、bFallbackToOpen を立てる。
+    /// bKeepExactWhenClear が真で、最小危険値が DangerTolerance 以下、希望方位を挟む両方向が候補であり、
+    /// bFallbackToOpen が偽なら、希望の向きと制限後の速さを保つ。それ以外は選んだ向きで速さに (1 − 危険) を掛ける。
+    /// 返す速度は有限で、Y 成分は常に 0 とする。
+    ContextResolveResult ResolveContext(const ContextMaps& maps, const Math::Vector3& desiredVelocity, float maxSpeed,
+                                        const ContextResolveParams& params);
 }

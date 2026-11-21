@@ -639,4 +639,146 @@ namespace NorvesLib::Modules::AI::Steering
         }
         return ClampVelocitySum(x, y, z, SanitizeLimits(limits).MaxSpeed);
     }
+
+    Math::Vector3 ContextDirection(uint32_t index)
+    {
+        // π/8 刻みの正弦を対称に並べ、余弦は 1/4 周先から読む。軸方向の成分は厳密な零になる。
+        constexpr float s = 0.3826834324f;
+        constexpr float c = 0.9238795325f;
+        constexpr float diagonal = 0.7071067812f;
+        static constexpr float sine[kContextDirectionCount] = {
+            0.0f, s, diagonal, c, 1.0f, c, diagonal, s,
+            0.0f, -s, -diagonal, -c, -1.0f, -c, -diagonal, -s
+        };
+        const uint32_t i = index % kContextDirectionCount;
+        return {sine[i], 0.0f, sine[(i + kContextDirectionCount / 4) % kContextDirectionCount]};
+    }
+
+    namespace
+    {
+        void AddDirectionalInfluence(float (&map)[kContextDirectionCount], double unitX, double unitZ,
+                                     double strength, float nonFiniteValue)
+        {
+            for (uint32_t i = 0; i < kContextDirectionCount; ++i)
+            {
+                const Math::Vector3 dir = ContextDirection(i);
+                const double alignment = std::clamp(dir.x * unitX + dir.z * unitZ, 0.0, 1.0);
+                map[i] = std::max(FiniteOr(map[i], nonFiniteValue), static_cast<float>(strength * alignment));
+            }
+        }
+    }
+
+    void AddInterest(ContextMaps& maps, const Math::Vector3& desiredVelocity, float maxSpeed)
+    {
+        const double speed = Length(desiredVelocity.x, 0.0, desiredVelocity.z);
+        if (!std::isfinite(speed) || speed == 0.0 || ValidLimit(maxSpeed, 0.0f) == 0.0f)
+        {
+            return;
+        }
+        AddDirectionalInfluence(maps.Interest, desiredVelocity.x / speed, desiredVelocity.z / speed,
+                                std::min(speed / maxSpeed, 1.0), 0.0f);
+    }
+
+    void AddDangerFromClearance(ContextMaps& maps, Core::Container::Span<const float> clearance, float lookDistance)
+    {
+        if (ValidLimit(lookDistance, 0.0f) == 0.0f)
+        {
+            return;
+        }
+        for (uint32_t i = 0; i < kContextDirectionCount && i < clearance.size(); ++i)
+        {
+            const float distance = clearance[i];
+            const float openDistance = std::isnan(distance) ? 0.0f : std::clamp(distance, 0.0f, lookDistance);
+            const float danger = 1.0f - openDistance / lookDistance;
+            maps.Danger[i] = std::max(FiniteOr(maps.Danger[i], 1.0f), danger);
+        }
+    }
+
+    void AddDangerFromNeighbors(ContextMaps& maps, const Math::Vector3& selfPosition,
+                                Core::Container::Span<const Math::Vector3> neighborPositions, float radius)
+    {
+        if (ValidLimit(radius, 0.0f) == 0.0f)
+        {
+            return;
+        }
+        for (const Math::Vector3& neighbor : neighborPositions)
+        {
+            const double dx = Difference(neighbor.x, selfPosition.x);
+            const double dz = Difference(neighbor.z, selfPosition.z);
+            const double distance = Length(dx, 0.0, dz);
+            if (!std::isfinite(distance) || distance < 1e-4f || distance >= radius)
+            {
+                continue;
+            }
+            AddDirectionalInfluence(maps.Danger, dx / distance, dz / distance, 1.0 - distance / radius, 1.0f);
+        }
+    }
+
+    ContextResolveResult ResolveContext(const ContextMaps& maps, const Math::Vector3& desiredVelocity, float maxSpeed,
+                                        const ContextResolveParams& params)
+    {
+        ContextMaps clean;
+        uint32_t mostOpen = 0;
+        for (uint32_t i = 0; i < kContextDirectionCount; ++i)
+        {
+            clean.Interest[i] = std::clamp(FiniteOr(maps.Interest[i], 0.0f), 0.0f, 1.0f);
+            clean.Danger[i] = std::clamp(FiniteOr(maps.Danger[i], 1.0f), 0.0f, 1.0f);
+            if (clean.Danger[i] < clean.Danger[mostOpen])
+            {
+                mostOpen = i;
+            }
+        }
+
+        ContextResolveResult result{};
+        const float minDanger = clean.Danger[mostOpen];
+        if (minDanger == 1.0f)
+        {
+            result.Danger = 1.0f;
+            return result;
+        }
+        const double length = Length(desiredVelocity.x, 0.0, desiredVelocity.z);
+        const double speed = std::min<double>(length, ValidLimit(maxSpeed, 0.0f));
+        if (!std::isfinite(length) || speed <= 1e-4f)
+        {
+            return result;
+        }
+
+        const ContextResolveParams defaults;
+        const float tolerance = ValidLimit(params.DangerTolerance, defaults.DangerTolerance);
+        const float dangerLimit = minDanger + tolerance;
+        uint32_t best = mostOpen;
+        float bestInterest = -1.0f;
+        for (uint32_t i = 0; i < kContextDirectionCount; ++i)
+        {
+            if (clean.Danger[i] <= dangerLimit && clean.Interest[i] > bestInterest)
+            {
+                best = i;
+                bestInterest = clean.Interest[i];
+            }
+        }
+        if (bestInterest <= ValidLimit(params.MinInterest, defaults.MinInterest))
+        {
+            best = mostOpen;
+            result.bFallbackToOpen = true;
+        }
+
+        result.Direction = best;
+        result.Danger = clean.Danger[best];
+        if (params.bKeepExactWhenClear && !result.bFallbackToOpen && minDanger <= tolerance)
+        {
+            const double yaw = std::atan2(static_cast<double>(desiredVelocity.x), static_cast<double>(desiredVelocity.z));
+            const double sector = yaw * (kContextDirectionCount / (2.0 * std::numbers::pi));
+            const uint32_t left = static_cast<uint32_t>(std::floor(sector) + kContextDirectionCount) % kContextDirectionCount;
+            const uint32_t right = (left + 1) % kContextDirectionCount;
+            if (clean.Danger[left] <= dangerLimit && clean.Danger[right] <= dangerLimit)
+            {
+                result.Velocity = WithSpeed(desiredVelocity.x, 0.0, desiredVelocity.z, length, speed);
+                return result;
+            }
+        }
+        const Math::Vector3 dir = ContextDirection(best);
+        const double openSpeed = speed * (1.0 - result.Danger);
+        result.Velocity = RoundVelocity(dir.x * openSpeed, 0.0, dir.z * openSpeed, openSpeed);
+        return result;
+    }
 }
