@@ -13015,3 +13015,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U7 ダッキングの Shutdown での解除と、attack の丸め・hold の切れ目の扱いを直す: 着地(直し 0 回)
 - U8 SPI に既存の CreateVoice の署名を残す: 着地(直し 0 回)
 - U9 voice のバスの最後の既定を Se にし、全バスの作成と音量の反映が通ったときだけモジュールの初期化を成功にする: 着地(直し 0 回)
+- U10 音の流れの文書と受入れ記録を直しに合わせ、タスクのビルドを通す: 着地(直し 0 回)
