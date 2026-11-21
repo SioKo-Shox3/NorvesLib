@@ -290,6 +290,7 @@ namespace Game
         bool m_bAnimationDebugRequested = false;
         bool m_bPoseModifiersOffRequested = false;
         bool m_bDogMovementSmoke = false;
+        bool m_bAINavSmoke = false;
         bool m_bCombatSmoke = false;
         bool m_bEncounterSmoke = false;
         bool m_bEnemySmoke = false;

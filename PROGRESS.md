@@ -13066,3 +13066,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
 - Notes: 判断: 体の行が予約中の歩はモーターを結ばない（所有 Entity のハンドルの保留と同じ扱い。行ができる次の固定歩から結ぶ）。
 - U1 動的なオーバーレイ(セルごとの塞ぎ・コストのカウンタとタイルの版)と足跡の塗り: 着地(直し 0 回)
+- U4 `--ai-nav-smoke` の場面(平地・箱の障害物・動く箱・動物の代役): 着地(直し 0 回)
