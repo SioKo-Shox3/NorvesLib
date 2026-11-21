@@ -344,6 +344,15 @@ namespace NorvesLib::Core::Rendering
         bool bHasMainCamera = false;
         bool bHasPreviousMainCamera = false;
         CameraProxy PreviousMainCamera;
+
+        /**
+         * @brief GameThread がこのパケットのパストレーサーの前の値（前のカメラ・instance の前の変換）をカメラのカットで捨てたか
+         *
+         * RenderThread が差分の同期で後から足す MegaGeometry の instance にも同じ判定を当てるための受け渡し
+         * （ApplyPathTracingSequenceCarry が書き、RenderThread の呼び出しが読む）。カメラのカットの印そのものは CameraProxy::CutSerial。
+         */
+        bool bPathTracingPreviousCut = false;
+
         SceneProxy Scene;
         RayTracingSceneSnapshot RayTracingScene;
 
@@ -492,6 +501,7 @@ namespace NorvesLib::Core::Rendering
             bHasMainCamera = false;
             bHasPreviousMainCamera = false;
             PreviousMainCamera = CameraProxy{};
+            bPathTracingPreviousCut = false;
             Scene.Clear();
             RayTracingScene.Clear();
             MegaDelta.Clear();
@@ -581,6 +591,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief 前の値を固定している連番のフレーム（0はなし） */
         uint64_t Frame = 0;
         bool bHasPreviousCamera = false;
+        /** @brief 今の連番のフレームで、カメラのカットにより前の値を捨てたか */
+        bool bPreviousCut = false;
         CameraProxy PreviousCamera;
         Container::VariableArray<InstanceState> PreviousInstances;
 
@@ -599,6 +611,7 @@ namespace NorvesLib::Core::Rendering
         {
             Frame = 0;
             bHasPreviousCamera = false;
+            bPreviousCut = false;
             PreviousCamera = CameraProxy{};
             PreviousInstances.clear();
             LastFrame = 0;
@@ -778,7 +791,7 @@ namespace NorvesLib::Core::Rendering
     }
 
     /**
-     * @brief 連番の1フレームの前の値をパケットへ書く（GameThreadでパケットを書くときとRenderThreadで描くときに呼ぶ）
+     * @brief パストレーサーのカット時に前の値を捨て、連番では1フレームの間、前の値を固定する
      *
      * メインカメラのSequenceFrameが0なら連番の持ち越しを消す。SequenceFrameが変わった最初のパケットで
      * 前の値を決めて覚える。直前に連番のパケットを書いていれば、その現在の状態（直前のフレームの最後の
@@ -787,16 +800,19 @@ namespace NorvesLib::Core::Rendering
      * instance番号（同じ鍵は出現順）で対応付け、覚えた値にないinstanceは前の変換なし（動かない）にする。
      * 同じフレームの中で描画の並びが変わっても累積を捨てないよう、snapshotのinstanceを鍵の順へ並べ、
      * customIndexを並びの番号に振り直す。
-     * 直前に見たメインカメラとSourceCameraIdかCutSerialが違えばカットとし、同じSequenceFrameの途中でも
-     * 前の値を決め直して、前のカメラとすべてのinstanceの前の変換を捨てる。
+     * 直前に見たメインカメラとSourceCameraIdかCutSerialが違えば、連番かどうかにかかわらず、
+     * 前のカメラとすべてのinstanceの前の変換を捨てる。連番の途中でカットした場合は、そのフレームの残りの
+     * パケットにもカットの判定を引き継ぐ。RenderThreadはパケットのbPathTracingPreviousCutでGameThreadの
+     * 判定を受け取り、写しから後で加えたMegaGeometryのinstanceにも適用する。
      */
     inline void ApplyPathTracingSequenceCarry(FramePacket& packet, PathTracingSequenceCarry& carry)
     {
         using namespace PathTracingSequenceCarryDetail;
         const CameraProxy& camera = packet.Scene.MainCamera;
         // カットのパケットを取りこぼしても、直前に見たカメラの識別子と通し番号で不連続を判定できる。
-        const bool bCameraCut = packet.bHasMainCamera && carry.bHasSeenCamera &&
-            (carry.SeenSourceCameraId != camera.SourceCameraId || carry.SeenCutSerial != camera.CutSerial);
+        const bool bCameraCut = packet.bPathTracingPreviousCut ||
+            (packet.bHasMainCamera && carry.bHasSeenCamera &&
+             (carry.SeenSourceCameraId != camera.SourceCameraId || carry.SeenCutSerial != camera.CutSerial));
         if (packet.bHasMainCamera)
         {
             carry.bHasSeenCamera = true;
@@ -805,6 +821,18 @@ namespace NorvesLib::Core::Rendering
         }
         if (!packet.bHasMainCamera || camera.SequenceFrame == 0)
         {
+            if (bCameraCut)
+            {
+                for (RayTracingSceneInstanceSnapshot& instance : packet.RayTracingScene.Instances)
+                {
+                    std::memcpy(instance.PreviousTransform, instance.Instance.transform,
+                                sizeof(instance.PreviousTransform));
+                    instance.bHasPreviousTransform = false;
+                }
+                packet.bHasPreviousMainCamera = false;
+                packet.PreviousMainCamera = CameraProxy{};
+            }
+            packet.bPathTracingPreviousCut = bCameraCut;
             carry.Reset();
             return;
         }
@@ -824,6 +852,7 @@ namespace NorvesLib::Core::Rendering
             const bool bFromLast = carry.LastFrame != 0 &&
                                    carry.LastCamera.CameraId == camera.CameraId;
             carry.Frame = camera.SequenceFrame;
+            carry.bPreviousCut = bCameraCut;
             if (bCameraCut)
             {
                 carry.bHasPreviousCamera = false;
@@ -875,6 +904,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         packet.bHasPreviousMainCamera = carry.bHasPreviousCamera;
+        packet.bPathTracingPreviousCut = carry.bPreviousCut;
         packet.PreviousMainCamera = carry.PreviousCamera;
         for (size_t index = 0; index < current.size(); ++index)
         {
