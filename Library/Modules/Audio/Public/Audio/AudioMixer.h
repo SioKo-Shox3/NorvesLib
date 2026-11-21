@@ -92,11 +92,19 @@ namespace NorvesLib::Modules::Audio
          */
         virtual AudioResult LoadConfig(const Core::Asset::AssetSystem& assets, Core::Container::AnsiStringView logicalPath,
                                        AudioMixerLoadReport& outReport) = 0;
-        /** 設定の音量を [0, 1] に丸めて保存する。範囲外のバス・非有限値には InvalidState を返す。 */
+        /**
+         * 設定の音量を [0, 1] に丸めて保存する。バスが範囲外か音量が非有限値なら何も変えず InvalidState を返す。
+         * 変化したバスの音量を送信し、失敗時は保存した値を保持して最初のエラーを返す。
+         * 送信がすべて成功した場合や、サービス未結合などで送信しなかった場合は Success を返す。
+         */
         virtual AudioResult SetUserBusVolume(AudioBusId bus, float slider01) = 0;
         /** 設定のスライダー値を返す。範囲外のバスでは 0 を返す。 */
         [[nodiscard]] virtual float GetUserBusVolume(AudioBusId bus) const = 0;
-        /** ポーズ時の線形ゲインを [0, 1] に丸める。非有限値には InvalidState を返す。 */
+        /**
+         * ポーズ時の線形ゲインを [0, 1] に丸めて保存する。非有限値なら何も変えず InvalidState を返す。
+         * 変化したバスの音量を送信し、失敗時は保存した値を保持して最初のエラーを返す。
+         * 送信がすべて成功した場合や、サービス未結合などで送信しなかった場合は Success を返す。
+         */
         virtual AudioResult SetPauseGain(float gain) = 0;
         /** ポーズ対象の各バスに掛ける現在の倍率を返す。 */
         [[nodiscard]] virtual float GetPauseGain() const = 0;

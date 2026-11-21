@@ -198,11 +198,11 @@ namespace NorvesLib::Modules::Audio::Private
         virtual AudioResult CreateVoice(VoiceHandle handle,
                                         const AudioBackendVoiceDesc& desc,
                                         AudioBackendEventMailbox& mailbox) = 0;
-        /** @brief 既存の呼び出し向けの署名。送り先を Se にして記述構造体版へ渡す。 */
-        AudioResult CreateVoice(VoiceHandle handle,
-                                const AudioPcmFormat& format,
-                                float maxFrequencyRatio,
-                                AudioBackendEventMailbox& mailbox)
+        /** @brief 既存の呼び出しと派生クラス向けの仮想関数。既定では送り先を Se にして記述構造体版へ渡す。 */
+        virtual AudioResult CreateVoice(VoiceHandle handle,
+                                        const AudioPcmFormat& format,
+                                        float maxFrequencyRatio,
+                                        AudioBackendEventMailbox& mailbox)
         {
             AudioBackendVoiceDesc desc;
             desc.Format = format;
