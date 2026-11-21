@@ -164,7 +164,21 @@ namespace NorvesLib::Core
                 return fail("strings のキーが重複しています");
             }
         }
-        m_Languages.insert_or_assign(AnsiString(language), std::move(table));
+        const auto [entry, inserted] = m_Languages.insert_or_assign(AnsiString(language), std::move(table));
+        const auto& languageName = entry->first;
+        const auto& fallbackName = entry->second.Fallback;
+        if (!fallbackName.empty() && fallbackName != languageName && !m_Languages.contains(fallbackName))
+        {
+            if (!LoadLanguage(fallbackName, reader))
+            {
+                NORVES_LOG_WARNING("StringTable", "言語「%s」の代替言語「%s」を読み込めませんでした",
+                                   languageName.c_str(), fallbackName.c_str());
+            }
+        }
+        if (!inserted && languageName == m_ActiveLanguage)
+        {
+            OnLanguageChanged.Broadcast(m_ActiveLanguage);
+        }
         return true;
     }
 
@@ -232,12 +246,6 @@ namespace NorvesLib::Core
         for (size_t pos = 0; pos < pattern.size();)
         {
             const char ch = pattern[pos++];
-            if ((ch == '{' || ch == '}') && pos < pattern.size() && pattern[pos] == ch)
-            {
-                result.push_back(ch);
-                ++pos;
-                continue;
-            }
             if (ch != '{')
             {
                 result.push_back(ch);
@@ -279,6 +287,9 @@ namespace NorvesLib::Core
         {
             codepoints.insert(ch);
         }
+        // 組版が省略時に自動で挿入するため、対象キーにかかわらず収集する。
+        constexpr uint32_t Ellipsis = 0x2026;
+        codepoints.insert(Ellipsis);
         for (const auto& [language, table] : m_Languages)
         {
             for (const auto& [hash, translation] : table.Strings)
