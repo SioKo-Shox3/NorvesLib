@@ -1,0 +1,41 @@
+﻿#pragma once
+
+#include "AI/IAIModule.h"
+#include "AI/Navigation/NavigationService.h"
+#include "Debug/DebugConfig.h"
+#include "Thread/Thread.h"
+
+namespace NorvesLib::Modules::AI
+{
+    class AIModule final : public IAIModule
+    {
+    public:
+        Core::Identity GetModuleId() const override;
+        const char* GetName() const override;
+
+        bool Install(Core::Engine::Engine& engine) override;
+        void RegisterReflectedTypes() override;
+        bool Initialize() override;
+        // 後半の FixedTick で位置を書くと Kinematic の速度が 0 になるため、前半だけで探索を進める。
+        void PreFixedTick(float fixedDeltaTime) override;
+        void LateTick(float deltaTime) override;
+        void Shutdown() override;
+        void Uninstall(Core::Engine::Engine& engine) override;
+
+        INavigationService& GetNavigation() override { return m_Navigation; }
+        const INavigationService& GetNavigation() const override { return m_Navigation; }
+        void SetNavDebugDrawEnabled(bool bEnabled) override;
+        bool IsNavDebugDrawEnabled() const override;
+
+    private:
+        bool IsOwnerThread() const;
+
+        const Thread::Thread::ThreadId m_OwnerThreadId = Thread::Thread::GetCurrentThreadId();
+        Core::Engine::Engine* m_Engine = nullptr;
+        NavigationService m_Navigation;
+        bool m_bInitialized = false;
+#if NORVES_ENABLE_DEBUG_OUTPUT
+        bool m_bNavDebugDrawEnabled = false;
+#endif
+    };
+} // namespace NorvesLib::Modules::AI

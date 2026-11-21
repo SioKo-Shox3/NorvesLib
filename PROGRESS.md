@@ -12727,25 +12727,30 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 確かめ（差し戻しの直しの後）: 全部が載った状態で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0、error の行 0（`ColliderComponent.cpp`・`PhysicsModule.cpp` を再コンパイルして `Game.exe` を生成）。2 通りの numstat は一致。試験のターゲットのビルドと ctest は回していない（試験を作らない・回さない決まり）。
 - 人が見るときの見どころ（追加）: シーン編集でコライダーの `SurfaceName` を書き換えると、次の物理の公開から問い合わせの表面が変わること。静的コライダーの JSON に `"surface":3` のような数値があっても読み込みが通ること。
 
-- U1 stb_vorbis v1.24 を取り込み、独立の静的ターゲットと出所・脆弱性の文書を置く: 着地(直し 0 回)
-- U2 NorvesAudioDecode と IAudioDecoder / CreateVorbisDecoder を作り、NorvesAudioDomain をリンクさせる: 着地(直し 0 回)
-### G16-GR74-VORBIS-DECODER stb_vorbis を取り込み、Vorbis の復号を IAudioDecoder の背後の独立の静的ライブラリにする（2026-11-21、run 20261121-055839）
-- Done: `Library/ThirdParty/stb_vorbis/` に上流 nothings/stb の commit 9f755b604db3492df2cbeb39bf84b81e3e3932e3（stb_vorbis v1.24）の `stb_vorbis.c`・`LICENSE`・`UPSTREAM.json`（版・取得元・commit・sha256・SPDX・当てた修正）・`CMakeLists.txt`（独立の静的ターゲット `NorvesThirdParty_StbVorbis`。`STB_VORBIS_NO_STDIO`・`STB_VORBIS_NO_PUSHDATA_API`・`STB_VORBIS_NO_COMMENTS` を PUBLIC で定義し、MSVC では `/w` で第三者の警告を抑える）を置いた。GHSL-2023-165〜171 は v1.24 で修正済み、未修正の GHSL-2023-172（CVE-2023-45682）には上流 PR #1560 と同じ 1 行（`DECODE` の `var >= 0`）を当てた。`Docs/ThirdParty/StbVorbis.md` に出所・ライセンス・脆弱性の照合表と、ランタイムが復号するのは cook で全部を復号して検証し、ロードで payload のハッシュを確かめたものだけという緩和を書いた。
-- Done: 静的ライブラリ `NorvesAudioDecode`（Core と `NorvesThirdParty_StbVorbis` にだけリンク。`Library/Modules/Audio/CMakeLists.txt`）。`Public/Audio/AudioDecoder.h` の `IAudioDecoder`（`GetInfo` = レート・チャンネル・総フレーム、`DecodeFrames(int16_t*, maxFrames)` = 書いたフレーム数、`SeekToFrame`、`Rewind`、`HasFailed`）と `CreateVorbisDecoder(Span<const uint8_t>)`（メモリの上の Ogg をコピーせず、デコーダが生きている間だけ借りる）。実装 `Private/Audio/Decode/VorbisDecoder.cpp` は stb の pull の API（`open_memory`・`get_samples_short_interleaved`・`seek64`・`stream_length_in_samples64`）を包み、総フレームを超えて返さず、総フレームに届く前に復号が止まれば失敗の印を立てる（印は戻さない）。XAudio2・Windows.h を含めない。`NorvesAudioDomain` が `NorvesAudioDecode` に PUBLIC でリンクする。
-- 確かめ: `cmake --build build --config Debug -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0・エラーの行なしで `Game.exe` のリンクまで通った。`NorvesAudioDecode` 単体のビルドも終了コード 0（`VorbisDecoder.cpp` のコンパイルを含む）。新規 2 ファイルは BOM + CRLF、CMakeLists の numstat は 2 通りで一致（15 追加・1 削除）。証拠は `.harness/runs/20261121-055839/G16-GR74-VORBIS-DECODER-U2-verify.txt`。
-- Next: ランナーの評価者の反証（第三者のパーサがメモリを読む = 危険地帯）。AssetCook から `NorvesAudioDecode` で全フレームを復号して検証する cook は G16-GR74-VORBIS-COOK。まだ呼び出し元が無いので、ゲームの見た目・音に変化は無い。
-- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (3) 固定の .ogg の fixture と作り方の README、(4) `AudioDecoderTest`・`StbVorbisVendorContractTest`、試験の閾値の文書 `Docs/AudioValidation/GR74Acceptance.md`、`Docs/Testing.md` の 3 点は作っていない（`Test/` は既に無い）。ctest も回していない。
-- Notes: 既知の限界: (a) stb は総フレームを最後のページの granule から求めるので、終端のページを含む末尾を失った入力でも、直前の有効なページまでの短い総フレームで正常に開いて終端まで復号できることがある（切り詰めを失敗として見分けられない場合がある）。cook の検証は payload のハッシュの照合と組み合わせる前提。(b) 壊れた入力でシークの内部の条件が崩れると、Debug では `HasFailed` を返す前に stb の `assert` で止まりうる（`stb_vorbis.c` の seek の箇所）。ランタイムが開くのは検証済みの payload だけ。
-- U3 stb_vorbis の CRC 表を定数にし、シークの assert を実行時の検査にする: 着地(直し 1 回)
-- U4 CreateVorbisDecoder が開く前に Ogg のページの並びを全部検査し、切り詰め・破損・後ろのごみを拒む: 着地(直し 0 回)
-- Done(差し戻しの直し): `stb_vorbis.c` の CRC 表を事前計算の `static const` の表にし、デコーダを開くたびの `crc32_init()` の書き込みを無くした（別のインスタンスを別のスレッドで同時に使える）。`stb_vorbis_seek_frame64`・`stb_vorbis_seek64` の `assert` と無視していた復号の成否を実行時の検査にし、崩れたら `VORBIS_seek_failed` で 0 を返す（ラッパの `SeekToFrame` が false を返す）。`UPSTREAM.json` のサイズ・sha256 と当てた修正の記録、`StbVorbis.md` を更新した。
-- Done(差し戻しの直し): `CreateVorbisDecoder` が stb に渡す前に入力全体の Ogg のページを 1 回なぞって検査する（`OggS`・版 0・既知のフラグだけ・区切りの表と本体が入力に収まる・CRC・先頭だけが BOS・単一の serial・連番・EOS は最後のページだけで入力の末尾ちょうどで終わり granule が未設定でない）。通らない入力は開かず空を返し、開いた後も stb の総フレームが EOS の granule と一致しなければ空を返す。`AudioDecoder.h` の注記（並行利用・検査の内容）と `StbVorbis.md` の運用上の前提を直した。
-- 確かめ: `cmake --build build --config Debug --target NorvesAudioDecode -- /m:1` と `cmake --build build --config Debug -- /m:1`（試験のターゲットを外した verify のビルドの行）がどちらも終了コード 0・エラーの行なしで `Game.exe` のリンクまで通った（CRC の `static_assert` 2 件を含む）。numstat は 2 通りで一致、3 ファイルとも BOM + CRLF のまま。
-- Notes: 上の既知の限界 (a)（末尾を失った入力が短い総フレームで開く）と (b)（壊れた入力へのシークが Debug の `assert` で止まる・Release で失敗を返さない）は、この直しで解消した。
-- Next: ランナーの評価者の反証（危険地帯）。cook からの全フレームの復号の検証は G16-GR74-VORBIS-COOK。呼び出し元がまだ無いので、ゲームの見た目・音に変化は無い。
-- U5 stb の内部のエラー状態を生成・復号・シークの後に読み、破損を失敗として返す: 着地(直し 1 回)
-- Done(差し戻しの直し): `VorbisDecoder.cpp` で stb の内部のエラー状態を `stb_vorbis_get_error()` で読む。生成では `stb_vorbis_open_memory`・`stb_vorbis_stream_length_in_samples64`・`stb_vorbis_seek_start` の各直後に読み、非 0 なら空を返す。`DecodeFrames` は `stb_vorbis_get_samples_short_interleaved` の各チャンクの直後に読み、非 0 なら `HasFailed` を立ててそのチャンクを戻り値と位置に数えない。`SeekToFrame` は `stb_vorbis_seek64` の直後に読み、非 0 なら `HasFailed` を立てて false を返す。CRC は正しいのに中身が壊れたパケット（`decode_residue` の `VORBIS_invalid_stream` など）を成功として返さない。`AudioDecoder.h` の doc コメントと `StbVorbis.md` の運用上の前提（読む 3 か所・正常な入力では立たない根拠）を直した。ベンダーのソースと `ValidateOggPages` は変えていない。
-- 確かめ: `cmake --build build --config Debug --target NorvesAudioDecode -- /m:1` と `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify の 2 行）がどちらも終了コード 0・エラーの行なしで、`VorbisDecoder.cpp` を再コンパイルして `NorvesAudioDecode.lib`・`NorvesAudioDomain.lib`・`Game.exe` まで通った（警告は libwebsockets の MSB8065 の 1 件だけ）。numstat は 2 通りで一致、3 ファイルとも BOM + CRLF のまま。
-- Notes: 既知の制約: Vorbis I 仕様 §3.2.1 の訂正（単一エントリの codebook は 1 ビットの符号が 0 でも 1 でもそのエントリに復号する）に対し、同梱の stb は 0 だけを受け付け、1 では `VORBIS_invalid_stream` を記録して floor・residue に誤った値を残す。その入力は stb が正しく復号できないので、ラッパは失敗として返す（cook の全フレームの復号で見つかる）。仕様の推奨どおり 0 を書くエンコーダの出力は影響を受けない。stb に修正は当てていない。
-- Notes: 試験と fixture は作らない決まり（絶対規則 11）なので、SNR とシーク後のビット一致は確かめていない。実際の .ogg での正しさは G16-GR74-VORBIS-COOK の全フレームの復号で初めて通る。残りは done-when の外: stb の復号の経路に残る Debug の `assert`（CRC が正しく作り込まれた不正な入力で止まりうる）と、ビルドに出る D9025 の警告 1 行。
-- Next: ランナーの評価者の反証（危険地帯）。呼び出し元がまだ無いので、ゲームの見た目・音に変化は無い。
+- U11 Core に弧長でパラメータ化した折れ線 PolylinePath.h を足す(U1 の切り直し): 着地(直し 0 回)
+- U12 AI モジュールの静的ライブラリと共有の型・タイル・格子を置く(U2 の切り直し): 着地(直し 1 回)
+- U3 純関数のナビ格子の焼き NavGridBaker: 着地(直し 0 回)
+- U4 格子の問い合わせ(通行・最寄り・視線・コスト)と視線での平滑化: 着地(直し 0 回)
+- U5 整数コストの A* NavPathfinder(予算で分けて進める): 着地(直し 0 回)
+- U6 エージェントのプロファイルの集合と NavProfiles.json: 着地(直し 0 回)
+- U7 カメラの周りだけを描くナビのデバッグ描画: 着地(直し 0 回)
+- U8 ナビのサービス INavigationService と予算実行: 着地(直し 0 回)
+- U10 AI モジュールの設計文書: 着地(直し 0 回)
+- U9 AI モジュール本体と Game への登録(最後。タスクの verify): 着地(直し 0 回)
+
+## G13-GR21-AI-MODULE-NAV（2026-11-21）
+- Done: `Library/Modules/AI`（static lib `NorvesModule_AI`）に `IAIModule`・`RegisterAIModule`・`FindAIModule`・`RegisterReflectedTypes`（登録する型が無いので空）と `AIModule` を置いた。`AIModule` は `Install` で Engine を借り、`NavigationService` を所有して `GetNavigation()` で `INavigationService` を貸し、`PreFixedTick` で古い要求から展開の予算（既定 1500）を配り、`LateTick` でカメラの周りだけを `DebugDrawQueue` に描く（既定は無効）。Game にリンクし `OnPreInitialize` で Gameplay の直後に登録した。
+- Done: Core に `Math/PolylinePath.h`（弧長・最寄り点（ヒントと跳びの上限つき）・先読み点・残りの長さ）。ナビは `NavGridDesc`・SoA の `NavTile`・`NavGrid`（タイルの読み込み・解放・世代・タイルをまたぐ Region の併合）・`NavGridBaker::Bake`・`NavGridQueries`（通行・最寄り・視線・コスト）と視線の平滑化・`NavPathfinder`（8 近傍・角切りなし・128/181・オクタイル×ε・自前の二分ヒープ・分割と一括がビット同一・Region 違いは 0 展開で Failed・Partial）・`NavAgentProfileSet` と `Assets/AI/NavProfiles.json`（Small・Medium・Large の仮の値）・`NavDebugDraw`。契約は `Docs/Architecture/AIModule.md`。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致）。
+- done-when (4) の試験（`PolylinePathTest`・`NavGridPathfindingTest`・`AIModuleLinkTest`・構成の時のリンクの検査）と `Docs/Testing.md` の更新は、試験を作らない・回さない決まりにより作っていない。
+- 人が見るときの見どころ: 今は経路を要求する呼び手もタイルを焼いて読み込む呼び手も無いので、どのシーンでも見た目は変わらない。起動のログに AI モジュールの登録の失敗や `AI/NavProfiles.json` を読めない旨の警告が出ないことを見る。撮影・計測の確かめは回さない決まり。
+- Next: 操舵（G13-GR22-STEERING-MOTOR。行動の決定と位置の書き戻しは PreFixedTick 側に置き、登録の順に依らないことを固める）、動く障害物（G13-GR21-NAV-OBSTACLES）、地形からのベイク（G13-GR21-NVNAV-COOK）。
+- Notes: 判断: AI のソースは `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)` で集める。1 セルだけの経路はセル中心の 1 点を返す。`Reset` の後も古い `PathHandle` は無効のまま。始点が通れなければ 2 m 以内の通れるセルへ寄せ、無ければ Failed。展開の予算 1500 は未計測の仮の値。
+- U13 照会のしきい値の上限・ゼロ変位の視線・経路の古さに視線が調べたタイルを含める: 着地(直し 0 回)
+- U14 焼きの採取範囲を量子化の上限まで広げ、セルの矩形で押印し、タイルに格子設定を持たせる: 着地(直し 0 回)
+- U15 経路のデバッグ描画にもカメラの中心と半径を当てる: 着地(直し 0 回)
+- U16 設計文書を直した契約に合わせ、Game のビルドで仕上げる(最後。タスクの verify): 着地(直し 0 回)
+- Done(差し戻しの直し): 通行のしきい値は `ClearanceQ` で表せる上限(255)を超える半径を 256 とし、A*・通行・最寄り点・視線・コストの全部で通さない。XZ の変位がゼロの視線も、始点が格子線の上なら両側のセルを調べる。`IsPathStale` は経路のセル列に加え、返す折れ線の各線分の視線が調べたセル(角の両脇を含む)のタイルの世代も見る。
+- Done(差し戻しの直し): 焼きの余白は量子化の上限から決まる最小 33 セル以上(上限 256)。静的な足跡はセルの正方形と回転した箱の重なり(分離軸・接触を含む)で押印し、セル中心の間の細い壁も塞ぐ。`NavTile::Grid` が焼いた格子設定を持ち、格子が空なら最初のタイルの設定を採り、以降の不一致は `Mismatch` で拒む。経路のデバッグ描画も格子と同じカメラの中心・半径の円へ切り詰める。設計文書を合わせて直した。
+- 確かめ(差し戻しの直し): `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0(`NorvesModule_AI.lib`・`Game.exe` を生成、`error C`・`error LNK`・`fatal error` は 0、AI のファイルの警告 0。警告は既存の shaderc の LNK4099 だけ)。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol` は一致。
+- Notes: 判断: クリアランスの量子化の意味(中心間距離 − 半セル)は変えていない。厚みの無い足跡が格子線の上にあるときは両側のセルを塞ぐ(隙間を作らない側に倒す)。
