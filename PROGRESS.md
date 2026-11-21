@@ -12707,3 +12707,31 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（危険地帯: Public API の `CameraProxy`。FramePacket で値のまま写る）。描画での読み取りは G14-GR61-GRADE-PASS、毎フレームの重ね合わせの結線は G14-GR61-LAYERS。今は描画がこの値を読まないので、見た目は変わらない。
 - Notes: done-when (5) の `PostProcessProfileMixerTest`・`PostProcessProfileJsonTest` は絶対規則 11 に従って作っていない。既存の試験は回していない。読む→書く→読むの往復とホットリロードの実際の動きはゲームで確かめていない（描画が読むのは後の項目）。
 - Notes: 判断: LUT が片方だけのプロファイルどうしの補間は両方の枠を同じパスにして Blend=0。EaseIn=t²・EaseOut=t(2−t)。`SetSource` は不正なパスでも保持値を消して false。値の範囲はすべて仮。
+
+- U11 Core に弧長でパラメータ化した折れ線 PolylinePath.h を足す(U1 の切り直し): 着地(直し 0 回)
+- U12 AI モジュールの静的ライブラリと共有の型・タイル・格子を置く(U2 の切り直し): 着地(直し 1 回)
+- U3 純関数のナビ格子の焼き NavGridBaker: 着地(直し 0 回)
+- U4 格子の問い合わせ(通行・最寄り・視線・コスト)と視線での平滑化: 着地(直し 0 回)
+- U5 整数コストの A* NavPathfinder(予算で分けて進める): 着地(直し 0 回)
+- U6 エージェントのプロファイルの集合と NavProfiles.json: 着地(直し 0 回)
+- U7 カメラの周りだけを描くナビのデバッグ描画: 着地(直し 0 回)
+- U8 ナビのサービス INavigationService と予算実行: 着地(直し 0 回)
+- U10 AI モジュールの設計文書: 着地(直し 0 回)
+- U9 AI モジュール本体と Game への登録(最後。タスクの verify): 着地(直し 0 回)
+
+## G13-GR21-AI-MODULE-NAV（2026-11-21）
+- Done: `Library/Modules/AI`（static lib `NorvesModule_AI`）に `IAIModule`・`RegisterAIModule`・`FindAIModule`・`RegisterReflectedTypes`（登録する型が無いので空）と `AIModule` を置いた。`AIModule` は `Install` で Engine を借り、`NavigationService` を所有して `GetNavigation()` で `INavigationService` を貸し、`PreFixedTick` で古い要求から展開の予算（既定 1500）を配り、`LateTick` でカメラの周りだけを `DebugDrawQueue` に描く（既定は無効）。Game にリンクし `OnPreInitialize` で Gameplay の直後に登録した。
+- Done: Core に `Math/PolylinePath.h`（弧長・最寄り点（ヒントと跳びの上限つき）・先読み点・残りの長さ）。ナビは `NavGridDesc`・SoA の `NavTile`・`NavGrid`（タイルの読み込み・解放・世代・タイルをまたぐ Region の併合）・`NavGridBaker::Bake`・`NavGridQueries`（通行・最寄り・視線・コスト）と視線の平滑化・`NavPathfinder`（8 近傍・角切りなし・128/181・オクタイル×ε・自前の二分ヒープ・分割と一括がビット同一・Region 違いは 0 展開で Failed・Partial）・`NavAgentProfileSet` と `Assets/AI/NavProfiles.json`（Small・Medium・Large の仮の値）・`NavDebugDraw`。契約は `Docs/Architecture/AIModule.md`。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致）。
+- done-when (4) の試験（`PolylinePathTest`・`NavGridPathfindingTest`・`AIModuleLinkTest`・構成の時のリンクの検査）と `Docs/Testing.md` の更新は、試験を作らない・回さない決まりにより作っていない。
+- 人が見るときの見どころ: 今は経路を要求する呼び手もタイルを焼いて読み込む呼び手も無いので、どのシーンでも見た目は変わらない。起動のログに AI モジュールの登録の失敗や `AI/NavProfiles.json` を読めない旨の警告が出ないことを見る。撮影・計測の確かめは回さない決まり。
+- Next: 操舵（G13-GR22-STEERING-MOTOR。行動の決定と位置の書き戻しは PreFixedTick 側に置き、登録の順に依らないことを固める）、動く障害物（G13-GR21-NAV-OBSTACLES）、地形からのベイク（G13-GR21-NVNAV-COOK）。
+- Notes: 判断: AI のソースは `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)` で集める。1 セルだけの経路はセル中心の 1 点を返す。`Reset` の後も古い `PathHandle` は無効のまま。始点が通れなければ 2 m 以内の通れるセルへ寄せ、無ければ Failed。展開の予算 1500 は未計測の仮の値。
+- U13 照会のしきい値の上限・ゼロ変位の視線・経路の古さに視線が調べたタイルを含める: 着地(直し 0 回)
+- U14 焼きの採取範囲を量子化の上限まで広げ、セルの矩形で押印し、タイルに格子設定を持たせる: 着地(直し 0 回)
+- U15 経路のデバッグ描画にもカメラの中心と半径を当てる: 着地(直し 0 回)
+- U16 設計文書を直した契約に合わせ、Game のビルドで仕上げる(最後。タスクの verify): 着地(直し 0 回)
+- Done(差し戻しの直し): 通行のしきい値は `ClearanceQ` で表せる上限(255)を超える半径を 256 とし、A*・通行・最寄り点・視線・コストの全部で通さない。XZ の変位がゼロの視線も、始点が格子線の上なら両側のセルを調べる。`IsPathStale` は経路のセル列に加え、返す折れ線の各線分の視線が調べたセル(角の両脇を含む)のタイルの世代も見る。
+- Done(差し戻しの直し): 焼きの余白は量子化の上限から決まる最小 33 セル以上(上限 256)。静的な足跡はセルの正方形と回転した箱の重なり(分離軸・接触を含む)で押印し、セル中心の間の細い壁も塞ぐ。`NavTile::Grid` が焼いた格子設定を持ち、格子が空なら最初のタイルの設定を採り、以降の不一致は `Mismatch` で拒む。経路のデバッグ描画も格子と同じカメラの中心・半径の円へ切り詰める。設計文書を合わせて直した。
+- 確かめ(差し戻しの直し): `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0(`NorvesModule_AI.lib`・`Game.exe` を生成、`error C`・`error LNK`・`fatal error` は 0、AI のファイルの警告 0。警告は既存の shaderc の LNK4099 だけ)。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol` は一致。
+- Notes: 判断: クリアランスの量子化の意味(中心間距離 − 半セル)は変えていない。厚みの無い足跡が格子線の上にあるときは両側のセルを塞ぐ(隙間を作らない側に倒す)。
