@@ -13113,3 +13113,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 5): `cmake --build build --config Debug --target Game -- /m:1` が exit=0・`Game.vcxproj -> build/Game/Debug/Game.exe` まで、エラー・警告 0 件(`.harness/runs/20261121-231859/verify-G13-GR116-AUDIO-ACOUSTICS-iter5-build.txt`)。ctest の行と試験の部分は絶対規則 11 で回していない。
 - Next(反復 5): ランナーの評価者の判定(危険地帯: Public API の `IAudioService`、SPI の `IAudioBackend`)。起動の確かめは G13-GR116-AUDIO-CHECK。
 - Notes(反復 5): 同じ台本の行は G8-GR72-AUDIO-SPI・G8-GR72-SOUND-SYSTEM・G8-GR72-AUDIO-COMPONENT-BOOT・G14-GR67-EDITOR-UI・G15-*・G19-*・G10-SHISHA-SHOWCASE-P1・backlog の *-CHECK にも残っている。それぞれを回すときに同じ決まりで扱う。
+- U6 更新器の初回の跳び・新しい声の選び方・リスナーの明示と GR73 の優先を直す: 着地(直し 0 回)

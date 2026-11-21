@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 
 namespace NorvesLib::Modules::Audio::Private
 {
@@ -42,6 +41,7 @@ namespace NorvesLib::Modules::Audio::Private
             auto& voice = m_Voices.emplace_back();
             voice.Handle = handle;
             voice.RegistrationOrder = m_NextRegistrationOrder++;
+            voice.RegisteredSeconds = m_ElapsedSeconds;
         }
         auto& voice = m_Voices[index];
         voice.Source = sourcePosition;
@@ -80,14 +80,28 @@ namespace NorvesLib::Modules::Audio::Private
     {
         if (IsFinitePosition(position))
         {
-            m_Listener = position;
-            m_bListenerSet = true;
+            m_ExplicitListener = position;
+            m_bExplicitListenerPending = true;
         }
     }
 
     void AudioOcclusionUpdater::ClearListenerPosition()
     {
-        m_bListenerSet = false;
+        m_bExplicitListenerPending = false;
+    }
+
+    void AudioOcclusionUpdater::SetResolvedListenerPosition(const Math::Vector3& position)
+    {
+        if (IsFinitePosition(position))
+        {
+            m_ResolvedListener = position;
+            m_bResolvedListenerSet = true;
+        }
+    }
+
+    void AudioOcclusionUpdater::ClearResolvedListenerPosition()
+    {
+        m_bResolvedListenerSet = false;
     }
 
     bool AudioOcclusionUpdater::TryGetVoiceAcoustics(VoiceHandle handle, VoiceAcousticParams& outCurrent) const
@@ -121,6 +135,7 @@ namespace NorvesLib::Modules::Audio::Private
         m_Voices.clear();
         m_Candidates.clear();
         ClearListenerPosition();
+        ClearResolvedListenerPosition();
         m_ElapsedSeconds = 0.0;
         m_NextRegistrationOrder = 0;
         m_Diagnostics.EvaluatedLastFrame = 0;
@@ -139,15 +154,17 @@ namespace NorvesLib::Modules::Audio::Private
                    (state != AudioVoiceState::Created && state != AudioVoiceState::Submitted && state != AudioVoiceState::Playing);
         });
 
-        if (evaluator && m_bListenerSet)
+        if (evaluator && (m_bExplicitListenerPending || m_bResolvedListenerSet))
         {
-            EvaluateDueVoices(*evaluator);
+            EvaluateDueVoices(*evaluator, m_bExplicitListenerPending ? m_ExplicitListener : m_ResolvedListener);
+            ClearListenerPosition();
         }
         // 1 − exp(−dt / τ) を、小さな dt でも桁落ちしない形で求める。
         SmoothAndApply(service, -std::expm1(-dt / m_Settings.SmoothingTimeConstantSeconds));
     }
 
-    void AudioOcclusionUpdater::EvaluateDueVoices(const Core::Scene::AcousticTransmissionEvaluator& evaluator)
+    void AudioOcclusionUpdater::EvaluateDueVoices(const Core::Scene::AcousticTransmissionEvaluator& evaluator,
+                                                  const Math::Vector3& listener)
     {
         const auto& settings = evaluator.GetSettings();
         const size_t budget = settings.VoiceBudgetPerFrame > 0 ? settings.VoiceBudgetPerFrame : m_Settings.VoiceBudgetPerFrame;
@@ -156,13 +173,14 @@ namespace NorvesLib::Modules::Audio::Private
         for (size_t i = 0; i < m_Voices.size(); ++i)
         {
             const auto& voice = m_Voices[i];
-            const double age = m_ElapsedSeconds - voice.LastEvaluatedSeconds;
+            const double age = voice.bEvaluated ? m_ElapsedSeconds - voice.LastEvaluatedSeconds
+                                                : (m_ElapsedSeconds - voice.RegisteredSeconds) + period;
             if (!voice.bEvaluated || age >= period)
             {
-                // 待ち時間は伸び続け、優先度の加点は最大 1 周期なので、低い優先度にも順番が回る。
-                const double score = voice.bEvaluated ? age + (voice.Priority / 255.0) * period
-                                                      : std::numeric_limits<double>::infinity();
-                m_Candidates.push_back({i, score});
+                // 待ち時間は伸び続け、優先度の加点は最大 1 周期なので、低い優先度の声にも、
+                // 新しい声が入り続けるときの評価済みの声にも順番が回る。
+                const double bonus = (voice.Priority / 255.0) * period;
+                m_Candidates.push_back({i, age + bonus});
             }
         }
         std::sort(m_Candidates.begin(), m_Candidates.end(), [this](const Candidate& a, const Candidate& b)
@@ -176,15 +194,16 @@ namespace NorvesLib::Modules::Audio::Private
         const size_t count = std::min(budget, m_Candidates.size());
         for (size_t i = 0; i < count; ++i)
         {
-            EvaluateVoice(m_Voices[m_Candidates[i].VoiceIndex], evaluator);
+            EvaluateVoice(m_Voices[m_Candidates[i].VoiceIndex], evaluator, listener);
         }
     }
 
-    void AudioOcclusionUpdater::EvaluateVoice(TrackedVoice& voice, const Core::Scene::AcousticTransmissionEvaluator& evaluator)
+    void AudioOcclusionUpdater::EvaluateVoice(TrackedVoice& voice, const Core::Scene::AcousticTransmissionEvaluator& evaluator,
+                                              const Math::Vector3& listener)
     {
         Core::Scene::AcousticPathQuery query;
         query.Source = voice.Source;
-        query.Listener = m_Listener;
+        query.Listener = listener;
         query.SoundClass = voice.SoundClass;
         Core::Scene::AcousticPathResult result;
         if (evaluator.Evaluate(query, result) == Core::Scene::EPhysicsSceneQueryResult::Success)
@@ -195,11 +214,6 @@ namespace NorvesLib::Modules::Audio::Private
             voice.Target.TargetGainDb = std::clamp(result.GainDb - distanceGainDb, kVoiceAcousticMinGainDb, 0.0f);
             voice.Target.LowpassCutoffHz = std::clamp(evaluator.HighFrequencyLossToCutoffHz(result.HighFrequencyLossDb),
                                                      kVoiceAcousticMinCutoffHz, kVoiceAcousticMaxCutoffHz);
-            if (!voice.bEvaluated)
-            {
-                // 鳴り始めに開けた音から曇っていくのを避け、初回は経路の値を直接使う。
-                voice.Current = voice.Target;
-            }
         }
         else
         {
