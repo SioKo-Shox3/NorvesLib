@@ -2912,8 +2912,11 @@ namespace NorvesLib::Core::Engine
         }
         else if (bBridgeAdvance)
         {
-            // ポーズ中の更新対象を進め、読み込みも継続する。通常時の読み込みは PostTick で行う。
-            GEngine->GetWorld().TickWhenPaused(times.Unscaled);
+            // ポーズ中は印の付いたものを上限で丸める前の実経過秒で進め、読み込みも継続する。通常時の読み込みは PostTick で行う。
+            const float elapsedSeconds = rawDeltaNanoseconds > 0
+                ? static_cast<float>(static_cast<double>(rawDeltaNanoseconds) * 1e-9)
+                : 0.0f;
+            GEngine->GetWorld().TickWhenPaused(elapsedSeconds);
             GEngine->GetStreamingSystem().Update();
         }
         const FixedStepAdvanceResult result =
