@@ -4,7 +4,7 @@
 #include <cstdint>
 
 /// 刺激の強さ I と感度から、気づき a を clamp(a + (Gain × I × 感度 − Decay × (1 − I)) × dt, 0, 1) で更新する。
-/// 上昇閾値に達したら、シードと反応回数で決まる遅れを経て昇格する。
+/// 昇格は段階ごとに保留し、それぞれの上昇閾値に達した時点から、シードと反応回数で決まる遅れを数える。
 /// 閾値からヒステリシス幅を引いた値を下回ると、即座に降格または昇格の保留を取り消す。
 /// 位置を伴う刺激が途絶えてから記憶時間が経つと、最終既知位置を忘れる。閾値と係数は根拠のない仮値。
 namespace NorvesLib::Modules::AI::Perception
@@ -32,8 +32,8 @@ namespace NorvesLib::Modules::AI::Perception
     {
         float Awareness = 0.0f;
         EAwarenessLevel Level = EAwarenessLevel::Unaware;
-        EAwarenessLevel PendingLevel = EAwarenessLevel::Unaware;
-        float PendingSeconds = 0.0f; // PendingLevel が Level より高い間の残り秒数
+        float SuspiciousPendingSeconds = 0.0f; // Suspicious の閾値に達してからの残り秒数。0 は保留なし。
+        float AlertPendingSeconds = 0.0f;      // Alert の閾値に達してからの残り秒数。0 は保留なし。
         bool bHasLastKnownPosition = false;
         Math::Vector3 LastKnownPosition;
         float SecondsSinceStimulus = 0.0f;

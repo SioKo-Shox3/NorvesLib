@@ -20,57 +20,55 @@ namespace NorvesLib::Modules::AI::Perception
             return static_cast<float>(hash >> 8) * 0x1p-24f;
         }
 
-        EAwarenessLevel TargetLevel(const AwarenessState& state, const AwarenessTuning& tuning)
-        {
-            const float alert = state.Level == EAwarenessLevel::Alert
-                ? tuning.AlertThreshold - tuning.Hysteresis : tuning.AlertThreshold;
-            if (state.Awareness >= alert)
-            {
-                return EAwarenessLevel::Alert;
-            }
-            const float suspicious = state.Level >= EAwarenessLevel::Suspicious
-                ? tuning.SuspiciousThreshold - tuning.Hysteresis : tuning.SuspiciousThreshold;
-            return state.Awareness >= suspicious ? EAwarenessLevel::Suspicious : EAwarenessLevel::Unaware;
-        }
-
         void UpdateLevel(AwarenessState& state, const AwarenessTuning& tuning, float deltaSeconds, uint32_t seed)
         {
-            const EAwarenessLevel target = TargetLevel(state, tuning);
-            if (target < state.Level)
+            if (state.Level == EAwarenessLevel::Alert && state.Awareness < tuning.AlertThreshold - tuning.Hysteresis)
             {
-                state.Level = target;
-                state.PendingLevel = target;
-                state.PendingSeconds = 0.0f;
-                return;
+                state.Level = EAwarenessLevel::Suspicious;
+            }
+            if (state.Level == EAwarenessLevel::Suspicious && state.Awareness < tuning.SuspiciousThreshold - tuning.Hysteresis)
+            {
+                state.Level = EAwarenessLevel::Unaware;
             }
 
-            if (state.PendingLevel > state.Level)
+            const auto isReady = [&](float threshold, float& remainingSeconds)
             {
-                const float threshold = state.PendingLevel == EAwarenessLevel::Alert
-                    ? tuning.AlertThreshold : tuning.SuspiciousThreshold;
-                if (state.Awareness >= threshold - tuning.Hysteresis)
+                if (remainingSeconds > 0.0f)
                 {
-                    state.PendingSeconds -= deltaSeconds;
-                    if (state.PendingSeconds > 0.0f)
+                    if (state.Awareness < threshold - tuning.Hysteresis)
                     {
-                        return;
+                        remainingSeconds = 0.0f;
+                        return false;
                     }
-                    state.Level = state.PendingLevel;
+                    remainingSeconds -= deltaSeconds;
+                    return remainingSeconds <= 0.0f;
                 }
-                state.PendingLevel = state.Level;
-                state.PendingSeconds = 0.0f;
+                if (state.Awareness >= threshold)
+                {
+                    const float sample = ReactionSample(seed, state.ReactionCount++);
+                    const double delay = tuning.ReactionDelaySeconds + static_cast<double>(tuning.ReactionJitterSeconds) * sample;
+                    remainingSeconds = static_cast<float>(std::clamp<double>(delay, 0.0, std::numeric_limits<float>::max()));
+                    return remainingSeconds == 0.0f;
+                }
+                return false;
+            };
+
+            if (state.Level < EAwarenessLevel::Suspicious && isReady(tuning.SuspiciousThreshold, state.SuspiciousPendingSeconds))
+            {
+                state.Level = EAwarenessLevel::Suspicious;
+            }
+            if (state.Level < EAwarenessLevel::Alert && isReady(tuning.AlertThreshold, state.AlertPendingSeconds))
+            {
+                state.Level = EAwarenessLevel::Alert;
             }
 
-            if (target > state.Level)
+            if (state.Level >= EAwarenessLevel::Suspicious)
             {
-                const float sample = ReactionSample(seed, state.ReactionCount++);
-                const double delay = tuning.ReactionDelaySeconds + static_cast<double>(tuning.ReactionJitterSeconds) * sample;
-                state.PendingLevel = target;
-                state.PendingSeconds = static_cast<float>(std::clamp<double>(delay, 0.0, std::numeric_limits<float>::max()));
-                if (state.PendingSeconds == 0.0f)
-                {
-                    state.Level = target;
-                }
+                state.SuspiciousPendingSeconds = 0.0f;
+            }
+            if (state.Level == EAwarenessLevel::Alert)
+            {
+                state.AlertPendingSeconds = 0.0f;
             }
         }
     }
