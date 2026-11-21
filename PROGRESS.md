@@ -12770,7 +12770,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 足音の再生（GR75）・踏み倒し（GR44）は、足すときに `GroundContactState` を読む。
 - Notes: 判断: 足 IK（G9-GR14）は足の接地のレイの結果を外へ出していないので、足ごとに自前の下向きのレイを 1 本撃つ。GR59 の水たまりは CPU で水深を引ける形が無い（`SamplePuddlePotential` は凹み度）ので `PuddleDepthM` は 0。provider は照会ごとに `TerrainSystem::FindTerrain` で地形を引くので、地形の登録・解除に合わせず Engine の構築時に 1 回結ぶ。
 - Notes: 判断: 犬の足の水しぶき（`FootSplashComponent`）は、所有者に `GroundContactComponent` があり、脚の `FallbackJoint` と同じ関節の足が当たっていれば、その足の `Point` と `Normal` を地面に使う（無ければ従来の `QueryGround` と地形の高さ）。放出量の式（環境の生の濡れ・地形の `SamplePuddlePotential`・足の速度）と着地の通知の保留は変えていない。踏み倒し（GR44）は CPU 側に表面の判定が無いので置き換えるものが無い。
-- Notes: 既知の限界: 層→表面名は、`TerrainComponent` が `LayerTablePath` の表を読めた高さ場では表の `surface` の名前（`TerrainSurfaceProvider::SetLayerSurfaceNames` で主の高さ場と層数の合う外周の帯に結ぶ。弱参照で 16 件まで）、表の無い高さ場では仮の材質の記述（`MakeProvisionalTerrainMaterialDesc`）の名前。草のしきい値 0.35 は根拠の無い仮の値（データで替える）。優先度は地形 200 > 草 100 なので、草が種別を決めるのは地形の無い所だけで、地形の上の濃い草は `VegetationDensity01` で返る。
+- Notes: 既知の限界: 層→表面名は、`TerrainComponent` が `LayerTablePath` の表を読めた高さ場では表の `surface` の名前（`TerrainSurfaceProvider::SetLayerSurfaceNames` で主の高さ場と層数の合う外周の帯に結ぶ。弱参照で持ち、件数の上限なし）、表の無い高さ場では仮の材質の記述（`MakeProvisionalTerrainMaterialDesc`）の名前。草のしきい値 0.35 は根拠の無い仮の値（データで替える）。優先度は地形 200 > 草 100 なので、草が種別を決めるのは地形の無い所だけで、地形の上の濃い草は `VegetationDensity01` で返る。
 - U6 接地の自己ヒットを足ごとに撃ち直し、取得できないときは番号も戻し、型を Engine で登録して tick を消費者より先にする: 着地(直し 0 回)
 - U7 地形の材質表の層→表面名を地形の provider に結ぶ: 着地(直し 0 回)
 - U8 犬の水しぶきが接地の状態の点と法線を読み、文書を直してタスクのビルドを通す: 着地(直し 0 回)
@@ -12781,3 +12781,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U11 水しぶきは今の公開番号の接地の結果を当たり・未接地とも採る: 着地(直し 0 回)
 - U10 物理の照会のフィルタに持ち主の Entity を除く欄を足し、接地は足ごとに 1 本のレイにする: 着地(直し 1 回)
 - U12 表面の契約の文書を今の形に直し、タスクのビルドを通す: 着地(直し 0 回)
+- Done（判断役の指示による直し）: 地形の層→表面名の結びを件数の上限なしで持ち（外すのは期限切れの弱参照だけ）、17 件以上の地形を結んでも登録中の地形は表の表面名を保つ。`PhysicsQueryFilter` の末尾に `IgnoreEntity`（既定は無効）を足し、`PhysicsBroadphase.cpp` の `ValidateProxyForQuery` がその Entity の代理形状を候補から落とす。`GroundContactComponent` は持ち主を `IgnoreEntity` に入れて体と各足のレイを 1 本ずつ撃ち、自己ヒットの撃ち直しと自分のコライダーの学習を消した（`SetIgnoredColliders` は持ち主以外に除く最大 4 個）。犬の足の水しぶきは、対応する足の `StepSerial` が今の物理の公開番号と同じなら当たり・未接地とも採り、未接地の足ではその着地で放出しない（番号が古い・取れない・足が無いときだけ従来の照会）。`SurfaceContract.md` を今の形に直した。
+- 確かめ（判断役の指示による直し）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が全ファイルで一致。試験は作らない・回さない決まりにより ctest は回していない。撮影・計測の確かめは回さない決まり。
+- 人が見るときの見どころ: `GroundContactComponent` を付けた呼び手はまだ無く、どのシーンでも既定の見た目は変わらない。付けた犬では、接地の `RayLength` が短く足が床に届かない場面で水しぶきが出なくなる（共有の接地状態が未接地のため）。
+- Next: 地形の provider の層の選び方が層の境の近くで `TerrainHeightField::SampleSurface`（最寄りの頂点）と食い違う件と、`PuddleDepthM` が常に 0 の件は、今回の完了条件の外として残る。
+- Notes: 判断: Public API の `PhysicsQueryFilter::IgnoreEntity` は構造体の末尾に足し、既定の無効なハンドルでは何も除かないので、既存の呼び手の挙動は変わらない。`bHasEntity` が偽の代理形状（Entity の無い静的なコライダー）には効かない。
