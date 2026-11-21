@@ -12923,3 +12923,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 SimulationPauseState を Engine::Engine に置き、変化を IModule::OnPauseStateChanged へ配る: 着地(直し 0 回)
 - U2 Entity・Component の bTickWhenPaused と World::TickWhenPaused: 着地(直し 0 回)
 - U3 ApplicationProcessor のゲートを Bridge とワールドに分ける: 着地(直し 0 回)
+- U4 TickStages.md のポーズの節を実装に合わせて書き換え、全体をビルドで確かめる: 着地(直し 0 回)

@@ -81,26 +81,65 @@
 
 ## Bridge進行とポーズの3分類
 
-現時点では `GameApplicationHandler::ShouldAdvanceSimulation` による共通 gate が 1 つある。Bridge 無効なら進行し、有効時は Edit / Playing で進行、Paused / Stopped で停止する。`SimulationPauseState`、`bTickWhenPaused`、`World::TickWhenPaused` は未実装であり、将来欄を現在の機能として使わない。
+シミュレーションの進行には 2 つのゲートがある。
 
-| 分類 | 現行動作 | GR119 で拡張するときの契約 |
+- `bBridgeAdvance` は `IApplicationHandler::ShouldAdvanceSimulation()` の戻り値で、ハンドラがなければ `true`。ゲームでは Bridge が無効なら進行し、有効なら `Edit` / `Playing` で進行、`Paused` / `Stopped` でシミュレーション全体を停止する。
+- `bWorldAdvance` は `bBridgeAdvance && !GEngine->GetSimulationPauseState().IsWorldPaused()`。Bridge が進行していても、ゲーム内のポーズ理由が残っている間は通常のワールド更新を止める。
+
+`PreUpdate` の後、`TickSimulationAndHaptics` は Bridge の判定を 1 回行い、World の条件を振動出力に適用する。`TickSimulation` はその Bridge の判定を受け取り、入口で World の条件をもう一度評価する。以後の各段はこの値を使う。`OnUpdate` でのポーズ変更は当フレームに、判定後のゲームモードなどでの変更は次のフレームの進行に反映される。
+
+`Engine::Engine` が持つ `SimulationPauseState` は `GetSimulationPauseState()` で取得する。`Push` と `Pop` は `Menu`、`FocusLost`、`Minimized`、`Loading`、`Dialog` ごとに要求を数える。同じ理由を 2 回要求すると、2 回解除するまでその理由は有効。件数が 0 の理由を `Pop` すると警告を記録し、`false` を返す。`IsWorldPaused()` が `false` になるのは全理由が 0 件のときだけ。有効な理由のビット集合が変わるたびに `OnChanged` を 1 回通知し、変更後の集合を渡す。`ModuleRegistry::DispatchPauseStateChanged` はレジストリが `Running` のとき、登録順に `IModule::OnPauseStateChanged(reasons)` を呼ぶ。
+
+| 分類 | 進行条件 | 対象 |
 |---|---|---|
-| Bridgeの進行に従う | GameMode は共通 gate で更新 | GameMode の進行判断は Bridge に残し、ゲーム内 pause 状態と混同しない |
-| 非ポーズ時のsimulation | World 全群、Particle、固定ステップ、Module Late、Handler Late も同じ gate で更新 | Bridge 進行 AND ゲーム内非 pause の条件で実行 |
-| ポーズ中も更新する印付き対象 | 未実装、該当する印付き Component なし | `bTickWhenPaused` 等の明示指定を持つ対象だけ実時間 delta で更新し、割り当て表へ登録 |
+| Bridge の進行に従う | `bBridgeAdvance` | ゲームモードの状態機械とストリーミングはゲーム内ポーズ中も進む。 |
+| 非ポーズ時の simulation | `bWorldAdvance` | 通常のワールド更新、固定ステップ、物理後の更新を実行する。 |
+| ポーズ中も更新する印付き対象 | `bBridgeAdvance && !bWorldAdvance` | 通常のワールド更新に代わり、`World::TickWhenPaused` が対象を更新する。Bridge 停止中は呼ばれない。 |
 
-時間の channel はシミュレーションが進むフレームの中で delta の取り方を決めるものであり、進行 gate を越える指定ではない。World / Animation は owner の時間倍率も適用し、Unscaled には適用しない。時間倍率による hit stop で World / Animation / Physics が 0 でも進行 gate が開いていれば Unscaled の呼び先は実行される。一方、シミュレーションの進行が停止中は Unscaled の型も呼ばれない。
+`Entity::SetTickWhenPaused` と `Component::SetTickWhenPaused` の既定値はどちらも `false`。`Entity` の印は直下の `Component` にだけ効き、子の `Entity` には伝わらない。`Component` の印は自身だけに効く。`World::TickWhenPaused` はワールドが保持する印付き一覧から登録済みの呼び先を集め、群の順に `Unscaled` の経過秒を渡す。両方の印が重なっても同じ対象は各群 1 回まで。呼び出し直前に所有者と対象の有効状態を確認し、最後に `CleanupDestroyedObjects` で破棄予約を回収する。
 
-Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテナンス、描画同期後の通常 Module `TickAll`、`OnPreRender` は simulation gate の外にある。停止中は fixed scheduler の累積値を保持する。振動は既存の simulation / focus 通知で voice を取り消し、自動再開しない。
+通常のワールド更新では、時間チャンネルが呼び先の受け取る経過時間を決める。`World` と `Animation` には所有者の時間倍率も掛かる。ヒットストップでこれらの時間が 0 になっても、`bWorldAdvance` が開いていれば `Unscaled` の呼び先は進む。ゲーム内ポーズ中に更新を受けるには、チャンネルにかかわらず自身か所有者に印が必要となる。
+
+### 現在の更新と進行条件
+
+「ゲート外」の処理はゲーム内ポーズ中も Bridge 停止中も毎フレーム呼ばれる。
+
+| 更新 | ゲート | 持ち主・場所 |
+|---|---|---|
+| ワールドの通常の `Tick` 全群（`Input`〜`PoseFinalize`） | `bWorldAdvance` | `ApplicationProcessor::TickSimulation` → `World::Tick` |
+| アニメーションの進行と姿勢の確定（GR10） | `bWorldAdvance`（印の既定値） | `World` に登録した `AnimatorComponent` の `Animation` 群と `PoseFinalize` 群 |
+| 植生 | `bWorldAdvance` | `TickSimulation` が `World::Tick` の直後に `Vegetation::Tick` へ `World` の経過秒を渡す。 |
+| CPU 粒子と GPU 粒子の時計（GR57） | `bWorldAdvance` | `PostTick.Particles` → `ParticleSystem::Tick`。その中で `VfxEffectSystem::Tick` が GPU 粒子の経過時間を加算するため、`Unscaled` の GPU 粒子も停止する。 |
+| 気象の時間更新（GR49） | `bWorldAdvance` | `PostTick.Environment` → `EnvironmentSystem::Tick`。経過時間は `World` から取る。 |
+| 固定ステップ | `bWorldAdvance` | `AdvanceFixedSimulation` がワールドの `FixedBegin` / `FixedTick` / `FixedEnd` とモジュールの `PreFixedTick` / `FixedTick` を駆動する。停止中は累積値を保持し、その間の経過時間を加算しない。 |
+| AI の経路探索 | `bWorldAdvance` | 固定ステップ前半の `AIModule::PreFixedTick` が `m_Navigation.RunBudget()` を呼ぶ。 |
+| 物理後のワールド更新 | `bWorldAdvance` | `TickSimulation` → `World::LateTick`（`PostPhysics`、`Camera`、`PreRender`） |
+| モジュールとハンドラの後段更新 | `bWorldAdvance` | `PostLateTick.ModuleLateTick` → `IModule::LateTick`、続いて `PostLateTick.HandlerLateUpdate` → `IApplicationHandler::OnLateUpdate` |
+| チャンネルの経過時間（GR02） | `bWorldAdvance`（`Unscaled` を除く） | `TickSimulation` は毎フレーム `TimeSystem::BeginFrame` に進行条件を渡す。停止中は `Unscaled` 以外の経過時間が 0 になり、内部の実時間は進む。 |
+| 振動の再生 | `bWorldAdvance` | `TickSimulationAndHaptics` が `SetHapticsPaused(!bWorldAdvance)` で停止を反映する。停止時に再生中の振動を取り消し、解除時も自動再開しない。 |
+| ゲームモードの状態機械 | `bBridgeAdvance` | `PreSimulation.GameModeStateMachine` → `UpdateGameModeStateMachine` に `Unscaled` の経過秒を渡す。 |
+| 印付きの対象のポーズ時更新 | `bBridgeAdvance && !bWorldAdvance` | `TickSimulation` → `World::TickWhenPaused(times.Unscaled)` |
+| ストリーミング | `bBridgeAdvance` | 通常は `PostTick.Streaming`、ゲーム内ポーズ中は `TickSimulation` が直接 `StreamingSystem::Update` を呼ぶ。`Loading` によるポーズ中も読み込みが進む。 |
+| 入力の評価 | ゲート外 | `ApplicationProcessor::Tick` → `UpdateInputFrame`（`PreUpdate` の前） |
+| ハンドラの更新と Bridge 受信 | ゲート外 | `PreUpdate.HandlerUpdate` → `OnUpdate`。Bridge の受信はゲーム側の `DrainInbound` が処理する。 |
+| スクリプトのフレーム前処理・後処理 | ゲート外 | `PreUpdate.ScriptBegin` → `BeginFrameMaintenance`、`PostUpdate.ScriptEnd` → `EndFrameMaintenance` |
+| 気象の解決値の書き出しと近距離の雨 | ゲート外 | `TickSimulation` が `EnvironmentSystem::PublishTo`、`UpdateRainNear` の順に呼ぶ。 |
+| 振動出力の更新 | ゲート外 | `TickSimulationAndHaptics` → `UpdateHapticsFrame` → `UpdateHaptics` に実経過秒を渡す。 |
+| 描画の同期 | ゲート外 | `ApplicationProcessor::Tick` → `World::SyncToSceneView` |
+| 空間検索の境界更新 | ゲート外 | `ApplicationProcessor::Tick` → `SceneQuery::Update`（描画同期後） |
+| モジュールの通常更新 | ゲート外 | `PostUpdate.ModuleTick` → `ModuleRegistry::TickAll` |
+| ハンドラの描画前処理 | ゲート外 | `ApplicationProcessor::Tick` → `IApplicationHandler::OnPreRender`（`PostUpdate` の後） |
+
+今後追加する `AIModule` の `FixedTick`（GR21〜GR24）は固定ステップとともに停止する。音のダッキング（GR73）は `OnPauseStateChanged` で受ける。それぞれの実装と同じ変更でこの表に行を足す。
 
 ## フレームの順序
 
 `ApplicationProcessor` のフレーム段は次の順に走る。各段内に記したシステムは登録順で実行される。World の段は Application の段の間に呼ばれる。
 
 1. gate 外で入力を評価し、`PreUpdate` の `PreUpdate.HandlerUpdate`（骨格資産の反映と Handler の `OnUpdate`）→ `PreUpdate.ScriptBegin` を実行する。
-2. 進行 gate 内で `PreSimulation` の `PreSimulation.GameModeStateMachine` → World の `Tick`（Input〜PoseFinalize）→ `PostTick` の `PostTick.Particles` → `PostTick.Streaming` を実行する。
-3. 進行 gate 内で固定ステップを 0 回以上実行する。各回は World の `FixedBegin`（Transform 確定・補間準備と `Physics.FixedPre`）→ `FixedModulePre.PreFixedTick` → World の `FixedTick`（`Physics.CharacterFixed`、`Physics.FixedStep` 等）→ `FixedModulePost.FixedTick` → World の `FixedEnd`（Transform 確定・補間履歴の記録・cleanup）の順。固定ステップが 0 回でも次の後段は 1 回実行する。
-4. 進行 gate 内で World の `LateTick`（PostPhysics → Camera → PreRender）→ `PostLateTick.ModuleLateTick` → `PostLateTick.HandlerLateUpdate` を実行する。Module の呼び出しは Running の registry で登録順。
+2. `bBridgeAdvance` が開いていれば `PreSimulation.GameModeStateMachine` を実行する。続いて `bWorldAdvance` が開いていれば `World::Tick`（`Input`〜`PoseFinalize`）→ `Vegetation::Tick` → `PostTick.Particles` → `PostTick.Environment` → `PostTick.Streaming` の順に実行する。ゲーム内ポーズ中はこの通常更新に代えて `World::TickWhenPaused` → `StreamingSystem::Update` の順に呼ぶ。
+3. `bWorldAdvance` が開いていれば固定ステップを 0 回以上実行する。各回はワールドの `FixedBegin`（変換の確定・補間準備と `Physics.FixedPre`）→ `FixedModulePre.PreFixedTick` → ワールドの `FixedTick`（`Physics.CharacterFixed`、`Physics.FixedStep` 等）→ `FixedModulePost.FixedTick` → ワールドの `FixedEnd`（変換の確定・補間履歴の記録・破棄予約の回収）の順。
+4. `bWorldAdvance` が開いていれば、固定ステップが 0 回でも `World::LateTick`（`PostPhysics` → `Camera` → `PreRender`）を 1 回実行する。ゲート外で `UpdateWorldFieldInteractors` → `PublishTo` → `UpdateRainNear` を呼び、同じ `bWorldAdvance` が開いていれば `PostLateTick.ModuleLateTick` → `PostLateTick.HandlerLateUpdate` を実行する。レジストリが `Running` のとき、モジュールは登録順に呼ばれる。
 5. gate 外で振動更新、World の描画同期、SceneQuery の通常 world-AABB 更新を行い、`PostUpdate.ScriptEnd` → `PostUpdate.ModuleTick`（通常の `TickAll`）→ Handler の `OnPreRender` → 描画へ進む。Handler はフレーム内で共有所有し、callback による差し替えでもそのフレームの対象を生存させる。
 
 `PostTick.Streaming` は焦点を受けたセルの状態遷移、Prepare の仕事の投入と完了の回収、予算つきのコミットとアンロードを GameThread で進める。
@@ -117,7 +156,7 @@ Handler の `OnUpdate` と Bridge の `DrainInbound`、入力評価・メンテ�
 
 - 最終のカメラの確定点は `PostLateTick` の Module `LateTick` の後に呼ばれる Handler の `OnLateUpdate`。現在の Game カメラの最終 proxy は `GameApplicationHandler::OnLateUpdate` の slot から確定する。ロードマップの「`IModule::LateTick` を最終のカメラの確定点」とする記述は採らない。
 - G14 CameraDirector の配置は未決の G14-S3 に残す。どこに所有しても候補・intent の評価と最終 commit を分け、当フレームの最終結果は Game の `OnLateUpdate` の確定境界で一度だけ反映する。Module の `LateTick` で準備しても、描画同期後の通常 Module Tick から別の camera を上書きする方式にはしない。
-- G16 listener は最終 commit 後の同じフレームの camera snapshot を読む。現在の順序なら、その後の通常 Module Tick か将来追加する明示的な確定通知が候補となる。Module の `LateTick` を最終カメラの読み取り点にしない。停止中の listener / Audio の方針は GR119 で定める。
+- G16 listener は最終 commit 後の同じフレームの camera snapshot を読む。現在の順序なら、その後の通常 Module Tick か将来追加する明示的な確定通知が候補となる。Module の `LateTick` を最終カメラの読み取り点にしない。停止中も通常のモジュール更新でリスナーを解決する。
 - GR73 では、音のリスナーは Handler の `OnLateUpdate` 後に動く通常の Module の `TickAll` で、同じフレームの最終カメラを読む。
 - Game 専用の camera slot は `Delegate` と weak binding を使う。`OnUpdate` で前フレームの残件を破棄し、同一フレームで複数回予約した場合は最後を採用する。`OnLateUpdate` の呼び出しは pending を先に空にし、callback 内の新予約は同じ呼び出しでは実行しない。
 - 現在の camera snapshot は ID から live な Entity / Component を解決し、`UpdateRenderTransforms` → SpringArm の再更新 → `UpdateWorldTransforms` → proxy 生成の順で確定する。これにより Module Late 後の child pivot と SpringArm が更新した child camera を反映する。
