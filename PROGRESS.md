@@ -12816,3 +12816,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 3): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-iter3-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK`・C1060 は 0 件)。
 - Next(反復 3): ランナーの評価者の反証。聴感の確かめは G16-GR73-SPATIAL-CHECK。
 - U1 InputRouter に UI の優先度 PriorityUI = 500 を足す: 着地(直し 0 回)
+- U2 BootConfig に bEnableCanvasView と引数で整える関数を足し、--capture-ui で撮影に Canvas を残し、Game が UI の起動のときだけ Canvas を作る: 着地(直し 0 回)

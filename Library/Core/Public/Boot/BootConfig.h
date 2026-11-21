@@ -64,6 +64,13 @@ namespace NorvesLib::Core::Boot
         bool bVSync = true;
 
         /**
+         * @brief 画面空間の Canvas（製品の UI の描き先）を起動時に作るか。
+         * 起動引数 --enable-canvas-view と同じ経路で作る。
+         * --capture-png の撮影では、--capture-ui が無ければ作らない（撮影は最終出力だけを写す）。
+         */
+        bool bEnableCanvasView = false;
+
+        /**
          * @brief レンダースレッドを有効にするか
          *
          * true の場合は既定のマルチスレッドレンダリング、false の場合は
@@ -145,6 +152,15 @@ namespace NorvesLib::Core::Boot
          * ゲーム側の CreateApplicationBootConfig では設定不要です。
          */
         Container::VariableArray<Container::String> Arguments;
+
+        using ArgumentsConfigurator = void (*)(BootConfig &config);
+
+        /**
+         * @brief 起動引数（Arguments）を読んで起動設定を整える関数（任意）。
+         * エントリポイントが Arguments を設定した後、ApplicationProcessor の初期化の前に 1 回だけ呼ばれる。
+         * CreateApplicationBootConfig の中では Arguments がまだ空なので、引数で決める設定はここで行う。
+         */
+        ArgumentsConfigurator ConfigureFromArguments = nullptr;
 
         // ========== ハンドラ作成 ==========
 

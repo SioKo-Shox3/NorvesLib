@@ -166,6 +166,12 @@ namespace NorvesLib::Core::Boot
         }
 #endif
 
+        // エントリポイントが渡した起動引数を、アプリ固有の起動設定に反映する。
+        if (effectiveConfig.ConfigureFromArguments)
+        {
+            effectiveConfig.ConfigureFromArguments(effectiveConfig);
+        }
+
         // ApplicationProcessor を使用
         auto& processor = Engine::ApplicationProcessor::GetInstance();
 
