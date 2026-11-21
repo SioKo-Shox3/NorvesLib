@@ -12996,3 +12996,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: `GroundContactComponent` を付けた呼び手はまだ無く、どのシーンでも既定の見た目は変わらない。付けた犬では、接地の `RayLength` が短く足が床に届かない場面で水しぶきが出なくなる（共有の接地状態が未接地のため）。
 - Next: 地形の provider の層の選び方が層の境の近くで `TerrainHeightField::SampleSurface`（最寄りの頂点）と食い違う件と、`PuddleDepthM` が常に 0 の件は、今回の完了条件の外として残る。
 - Notes: 判断: Public API の `PhysicsQueryFilter::IgnoreEntity` は構造体の末尾に足し、既定の無効なハンドルでは何も除かないので、既存の呼び手の挙動は変わらない。`bHasEntity` が偽の代理形状（Entity の無い静的なコライダー）には効かない。
+
+## G13-GR116-ACOUSTIC-EVALUATOR 統合ブランチの取り込みの後の確かめ（2026-11-21、run 20261121-194912 の反復 3、完了）
+
+- Done: `feature/scene-launcher`（G13-GR115-GROUND-CONTACT の統合を含む）を取り込み、衝突を両側を合わせて解いた。`Engine` は地形・草の表面の provider の結び付けの後に音の評価器の情報源を設定し、`GetTerrainSurfaceProvider()` と `GetAcoustics()` を両方持つ（`m_Acoustics` は provider より後に宣言して先に破棄する）。物理の照会の除外は「動く物」「高さ場」「`IgnoreEntity`」の 3 つを並べた。`SurfaceContract.md` は `audio.transmissionLossDb` の段落と `vegetationDensityThreshold` の段落を両方残した。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件。`AcousticTransmission.cpp`・`Engine.cpp`・`PhysicsBroadphase.cpp` を再コンパイル）。解いた 4 ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致。試験は作らない・回さない決まりにより ctest は回していない。撮影・計測の確かめは回さない決まり。
+- Notes: 音の評価器の静的幾何の寄与は RaycastAll の当たりの `Surface` を直に読むので、今回入った `SceneQuery::QuerySurface` の地形・草の provider の影響は受けない。
