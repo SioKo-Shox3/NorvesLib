@@ -12795,3 +12795,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 要起票: World::AttachRootEntity/AttachChildEntity で Component の Initialize が ObjectId の採番より前に走り、Initialize で ObjectId を捕まえる Component がプレハブ経由で壊れる。順を入れ替えるかを調べる(Core・危険地帯)
 - U16 操舵の登録簿を Component の参照で照合し、所有者の先頭の操舵 Component だけを解決する: 着地(直し 0 回)
 - U17 運動の結び付きの再利用に操舵 Component の ID を含め、外すときは購読の識別子で外す: 着地(直し 0 回)
+- U18 設計文書の登録簿の照合・先頭の操舵 Component・運動の結び直しの記述を実装に合わせる（最後。タスクの verify）: 着地(直し 0 回)
