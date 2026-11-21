@@ -14,7 +14,7 @@
 - `SurfaceQuery` は位置、法線、任意のコライダー、半径と照会フラグを持つ。半径 0 は点を表す。
 - `SurfaceSample` は主・副の表面と副の重み、濡れ、水たまりの深さ、草の密度、明示タグを使った場合のコライダーを持つ。
 
-登録簿の `SurfaceId` と、地形の `GroundSample::SurfaceId`（`uint8_t` の層番号）、物理の結果の `uint8_t SurfaceId` は別物であり、暗黙に変換しない。地形の層から表面へは `TerrainMaterialDesc` の `Layers` と各層の `SurfaceName` の表を介する。表面を解決するのは、地形の層に対応する名前を引く地形の provider と、コライダーに明示した表面を渡す物理の 2 か所に限る。
+登録簿の `SurfaceId` と、地形の `GroundSample::SurfaceId`（`uint8_t` の層番号）、物理の結果の `uint8_t SurfaceId` は別物であり、暗黙に変換しない。地形の層から表面へは `TerrainMaterialDesc` の `Layers` と各層の `SurfaceName` の表を介する。地形の層番号を登録簿の表面に変換するのは地形の provider だけである。
 
 保存するのは `String` の名前であり、`SurfaceId` の数値は保存しない。添字は読み込みで決まる。再読み込みでは同じ名前の添字を保ち、消えた名前は添字を再利用せず引退させる。引退した添字の `GetDesc` は `Default` の記述を返し、`GetName` は元の名前を返す。同じ名前が復帰すれば元の添字を使う。
 
@@ -22,7 +22,14 @@
 
 `SurfaceRegistry` は `Engine::Engine` のメンバで、`GetSurfaceRegistry()` から参照する。シングルトンは作らない。構築直後は `Default` のみを持ち、Game の起動時にアセットの根から `Data/Surfaces.json` を読む。ファイルを読めない場合は警告して `Default` のみで続行する。
 
-`Assets/Data/Surfaces.json` は次の構造を持つ。添付の語彙は `Default`、`Grass_Tall`、`Dirt_Mud`、`Rock`、`Concrete`、`Metal`、`Water_Shallow`、`Wood` の 8 種で、`Concrete` の親は `Rock`、それ以外の非 `Default` の親は `Default`。
+`Assets/Data/Surfaces.json` は次の構造を持つ。添付の語彙は `Default` を含む 14 種。地形の層に使う `Soil`、`Gravel`、`Moss`、`Mud`、`Sand`、`Water` も同じ登録簿で引ける。
+
+| 親 | 直接の子 |
+|---|---|
+| `Default` | `Grass_Tall`、`Dirt_Mud`、`Rock`、`Metal`、`Water_Shallow`、`Wood`、`Moss`、`Sand` |
+| `Dirt_Mud` | `Soil`、`Mud` |
+| `Rock` | `Concrete`、`Gravel` |
+| `Water_Shallow` | `Water` |
 
 ```json
 {
@@ -31,7 +38,7 @@
     {
       "name": "Default",
       "flags": [],
-      "audio": {"footstepSet": "default", "noiseLevelDb": -10, "transmissionLossDb": 0},
+      "audio": {"footstepSet": "default", "noiseLevelDb": -10},
       "visual": {"footprint": "", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0},
       "physical": {"friction": 0.6, "restitution": 0, "footSinkCm": 0}
     }
@@ -39,7 +46,11 @@
 }
 ```
 
-ルートは `version` と `surfaces`、各要素は `name`、`parent`、`flags`、`audio`、`visual`、`physical` を受け付ける。名前は 1〜64 バイトの英数字と `_`。`Default` は配列内の位置によらず添字 0 で、その親は省略、空文字列、または `Default` に限る。他の親の省略・空文字列は `Default` を意味する。フラグは上記の名前の配列。`audio` の数値は有限の `float` に収まる値、`visual` の `grassTrample`・`wetFurTransfer` と `physical` の `restitution` は 0〜1、`friction`・`footSinkCm` は 0 以上の有限の `float` に収まる値とする。テキストは最大 1 MiB、表面は引退した添字を含め最大 1024 個。
+`audio.transmissionLossDb` を明示した表面では、その値（0 dB を含む）を壁 1 枚の透過損失として使う。省略した表面では親を順にたどり、どの親にも指定がなければ音の評価器の `wallClassFallbackLossDb` を使う（[音の透過評価](AcousticTransmission.md)）。
+
+ルートは `version` と `surfaces`、各要素は `name`、`parent`、`flags`、`vegetationDensityThreshold`、`audio`、`visual`、`physical` を受け付ける。名前は 1〜64 バイトの英数字と `_`。`Default` は配列内の位置によらず添字 0 で、その親は省略、空文字列、または `Default` に限る。他の親の省略・空文字列は `Default` を意味する。フラグは上記の名前の配列。`audio` の数値は有限の `float` に収まる値、`visual` の `grassTrample`・`wetFurTransfer` と `physical` の `restitution` は 0〜1、`friction`・`footSinkCm` は 0 以上の有限の `float` に収まる値とする。テキストは最大 1 MiB、表面は引退した添字を含め最大 1024 個。
+
+各表面の `vegetationDensityThreshold` は草の密度のしきい値で、省略時は 0.35。0〜1 の有限の数値を指定し、範囲を外れると `OutOfRange` で読み込みを拒否する。
 
 `SurfaceRegistryLoadResult::Error` は、成功の `None` のほかに、次の `ESurfaceRegistryError` を返す。
 
@@ -71,6 +82,15 @@ provider が返す 2 層の重みは、負または非有限の値を 0 とし�
 
 `BindSurfaceProvider` と `UnbindSurfaceProvider` は所有スレッドで行う。`SceneQuery` は provider を借用し、登録側が所有して解除まで生かす。同一 provider の重複登録は `AlreadyBound`、空の登録簿からの解除は `Unavailable`、別の provider の解除は `ProviderMismatch`。照会中に provider の登録を変更しない。
 
+## 地形と草の provider
+
+`Engine::Engine` は `Scene/TerrainSurfaceProvider.h` の 2 つの provider をメンバとして持ち、コンストラクタで `SceneQuery` に結ぶ。デストラクタで両方の登録を解除する。
+
+- `TerrainSurfaceProvider`（優先度 200）は照会のたびに `TerrainSystem::FindTerrain` で高さ場を探す。照会位置を囲む 4 頂点で層ごとの重みを双線形補間し、上位 2 層を返す。`TerrainComponent` が `LayerTablePath` の表を読めた場合は、`TerrainSurfaceProvider::SetLayerSurfaceNames` で各層の `surface` 名を主の高さ場と、それと層数が合う外周の帯に結ぶ。provider は高さ場を弱参照で持ち、その寿命を延ばさない。表を結べる高さ場の数に上限はない。表を結ぶときに、弱参照の期限が切れた項目だけを取り除く。17 件以上の地形に表を結んでも、登録中の各地形は表の表面名を保つ。表を結んだ高さ場では表の名前を、それ以外では仮の地形材質の記述（`MakeProvisionalTerrainMaterialDesc`）の名前を登録簿で解決する。地形の外では濡れの状態だけを返す。
+- `VegetationSurfaceProvider`（優先度 100）は有効な草の標本の密度を `VegetationDensity01` に返す。`Grass_Tall` が登録され、密度がその `vegetationDensityThreshold` を超えたときに種別も返す。明示タグと地形の層がともに種別を返さない場所では `Grass_Tall` が選ばれる。地形の上の濃い草は、地形の種別を保ったまま密度で読める。
+
+両方の provider は `ComputeGroundWetness01` で `Wetness01` を求める。環境が有効なら環境の濡れ、無効なら地形の濡れを基に、草の水気の偏りを反映する。草の標本がなければ偏りは中立の 0.5。CPU から水深を取得する手段がないため、両方とも `PuddleDepthM` は 0 を返す。
+
 ## 物理の結果
 
 コライダーに明示した表面は、`PhysicsRaycastHit`、`PhysicsOverlapHit`、`PhysicsQueryHit` の `Surface` に入る。`RaycastClosest`、`RaycastAll`、`OverlapSphere`、`OverlapBox`、`OverlapCapsule`、`SweepSphere`、`SweepCapsule` と旧入口で共通とする。`PhysicsContactEvent` の `SelfSurface` は通知先、`OtherSurface` は相手のコライダーの表面を表す。いずれも明示なしなら `Default` を返す。
@@ -83,7 +103,21 @@ Entity を持たない静的コライダーでは、物理モジュールが `St
 
 `Hit` と `OverlapBegin` は今のステップの proxy の表面を返す。`OverlapEnd` は両側を個別に扱い、その側の proxy が今のステップにもあれば現在の表面を、なければ最後に重なっていたときの表面を返す。
 
+## 当たりのエフェクト
+
+`HitEffectEmitter` はまず表面名を対応表と完全一致で照合する。`Engine` は `HitEffectEmitter::SetSurfaceRegistry` で登録簿を渡すため、名前が表になければ登録簿の `parent` を順にたどり、最初に一致した親のエフェクトを使う。登録簿を渡さないエミッターは完全一致だけを使う。どちらも一致がなければ表の既定のエフェクトを使う。
+
+## 足ごとの接地
+
+`Component/GroundContactComponent.h` の `GroundContactState` は、最大 4 本の足の結果 `Foot[4]`、体の結果 `Body`、足の数 `FootCount`、公開済みの物理スナップショットの番号 `StepSerial` を持つ。`FindFootIndex` で関節名から足の番号を引ける。`Engine::Engine` が `GroundContactComponent` の型を登録するため、シーンの記述から名前で作れる。
+
+`GroundContactComponent` は PostPhysics 群の優先度 -1 で、同じ群の優先度 0 の消費者より先に状態を更新する。スナップショットの番号を取得できなければ状態を空にし、`StepSerial` を 0 に戻す。新しい番号を読んだときだけ、体と各足から下向きに `RaycastClosest` を行い、当たった位置・法線・コライダーで `QuerySurface` を呼ぶ。足 IK はレイの結果を公開していないため、各足に専用のレイを使う。レイのフィルタの `PhysicsQueryFilter::IgnoreEntity` に持ち主の Entity を設定し、物理側でその Entity のコライダーを候補から除く。レイは体と各足に 1 本ずつ使う。`SetIgnoredColliders`（最大 4 個）と `SetIgnoredBodies` で、持ち主以外に除く対象を指定する。
+
+足音（再生は GR75）・足跡・草の踏み倒し（GR44）の消費者は、実装時にこの状態を読む。犬の足の水しぶき（`FootSplashComponent`）は着地通知を処理するとき、所有者の有効な `GroundContactComponent` から `FindFootIndex(leg.FallbackJoint)` で対応する足を探す。`SceneQuery::GetPublishedSnapshotSequence` で取得した公開番号が 0 以外で `StepSerial` と一致すれば、その足の結果を採る。接地していればその足の `Point` と `Normal` を使い、未接地ならその着地では放出しない。有効なコンポーネントや対応する足がない場合、または公開番号を取得できない、0 である、もしくは `StepSerial` と一致しない場合だけ、`QueryGround` で照会し、当たらなければ地形の `SampleGround` で高さと法線を求める。放出量はどの経路でも従来どおり、環境の生の濡れ（無効なら地形の濡れ）、地形の `SamplePuddlePotential` による凹み度、足の速度から求める。
+
 ## 後の段階
 
-- 地形・草・濡れの provider と、足音・足跡などの消費者。
+- 足音の再生（GR75）。
+- 取り込んだ材質からの表面の継承（GR81）。
+- 濡れた毛への結線。
 - スクリプトへの公開。

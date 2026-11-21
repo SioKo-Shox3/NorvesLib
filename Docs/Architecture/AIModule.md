@@ -1,10 +1,10 @@
-﻿# AI モジュールと地上ナビゲーション
+﻿# AI モジュールと地上動物の移動
 
 地上の移動経路は、地形に沿う均一な XZ 格子をタイル単位で保持し、整数コストの重み付き A* で求める。1 セルに地面の高さを一つだけ持つ 2.5D の表現である。障害物までの余裕を格子に記録し、照会する動物の半径と地形別コストを変えることで、同じタイルを複数の動物が使える。ベイク・距離変換・探索に外部のナビゲーションライブラリは使わない。
 
 ## 構成と所有権
 
-`Library/Modules/AI/CMakeLists.txt` は C++23 の静的ライブラリ `NorvesModule_AI` を定義し、`Core` に `PRIVATE` リンクする。`Public/AI` にナビの型・照会・地形ポート、`Private/AI` に格子の構築、探索、描画の実装を置く。ソースは `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)` で `Public/*.h`、`Private/*.h`、`Private/*.cpp` から集める。
+`Library/Modules/AI/CMakeLists.txt` は C++23 の静的ライブラリ `NorvesModule_AI` を定義し、`Core` と `NorvesModule_Physics` に `PRIVATE` リンクする。CharacterBody への依存は AI → Physics の一方向である。`Public/AI` にナビの型・照会・地形ポートと操舵の Component、`Private/AI` に格子の構築、探索、操舵、四足運動への接続、描画の実装を置く。ソースは `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)` で `Public/*.h`、`Private/*.h`、`Private/*.cpp` から集める。
 
 モジュールとサービスの設計上の入口は `RegisterAIModule`、`FindAIModule`、`IAIModule::GetNavigation()` である。登録後はレジストリからモジュールを引き、そこから `INavigationService` を借りる。モジュールは `NavigationService` とその `NavGrid` を所有する。寿命の遷移、タイルの出し入れ、経路の要求・参照・解放はすべて GameThread で行う。[IModule.h](../../Library/Core/Public/Module/IModule.h)
 
@@ -22,12 +22,12 @@
 | 1 歩の順序 | その歩で行うこと |
 |---|---|
 | 1. World の `FixedBegin` | Transform と補間履歴を準備し、`Physics.FixedPre` が Kinematic の歩の開始位置を控える。 |
-| 2. モジュールの `PreFixedTick` | ナビにその歩の展開予算を配り、行動を決める。移動要求を準備し、Transform への書き戻しは物理に渡す。 |
-| 3. World の `FixedTick` | Component の固定更新をこの段に登録する場合、同じ歩の要求を作る処理は `Physics.CharacterFixed` の前に置く。`Physics.CharacterFixed` が CharacterBody の要求を処理し、続く `Physics.FixedStep` が物理を進める。 |
+| 2. `FixedModulePre.PreFixedTick` | 全モジュールの前段を実行する。AI は `SteeringSystem::BeginStep` で要求の変更と経路の再要求を受け付け、`NavigationService::RunBudget` で探索を進め、`SteeringSystem::Compute` でその歩の操舵速度を確定する。 |
+| 3. World の `FixedTick` | `Physics.CharacterFixed` が固定駆動の CharacterBody に要求を出す。要求内の `BeforeSimulation` でモーターがその歩の操舵速度を変位に写し、続く `Physics.FixedStep` が物理を進める。 |
 | 4. モジュールの `FixedTick` | 物理はすでに一歩進んでいる。AI はここで位置を書き換えない。 |
 | 5. World の `FixedEnd` | Transform を確定し、補間履歴を記録する。 |
 
-Kinematic の速度は物理の一歩の中で `(現在位置 − 歩の開始位置) / dt` と求める。モジュールの `FixedTick` だけで移動すると、その変位は計算に入らず、次の歩では移動後の位置から記録が始まる。他に変位がなければ速度は 0 になる。AI の決定と物理による消費をこの順に置くと、AI と Physics のモジュール登録順に依存しない。[ApplicationProcessor.cpp](../../Library/Core/Private/Engine/ApplicationProcessor.cpp)・[PhysicsModule.cpp](../../Library/Modules/Physics/Private/Physics/PhysicsModule.cpp)
+Kinematic の速度は物理の一歩の中で `(現在位置 − 歩の開始位置) / dt` と求める。モジュールの `FixedTick` だけで移動すると、その変位は計算に入らず、次の歩では移動後の位置から記録が始まる。他に変位がなければ速度は 0 になる。全モジュールの前段が終わってから World の固定更新に入るため、固定駆動では AI と Physics の登録順によらず同じ歩の操舵が間に合う。可変駆動の CharacterBody は固定ステップより前の Movement または PoseFinalize で要求するため、直近に完了した固定歩の操舵速度を使う。[ApplicationProcessor.cpp](../../Library/Core/Private/Engine/ApplicationProcessor.cpp)・[PhysicsModule.cpp](../../Library/Modules/Physics/Private/Physics/PhysicsModule.cpp)
 
 ## 格子、通行条件、連結成分
 
@@ -108,6 +108,82 @@ step  = base + (base * extra) / 128
 
 この 3 件が配布ファイルと組み込みに共通する仮の値である。半径は通行照会、探索、平滑化に渡すため、動物の大きさを変えても静的タイルを焼き直す必要はない。[NavProfiles.json](../../Assets/AI/NavProfiles.json)・[NavAgentProfiles.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavAgentProfiles.cpp)
 
+## 操舵の純関数
+
+操舵はワールド座標系の希望速度（m/s）を返す。地上では XZ 面に射影し、速さを検証済みの `MaxSpeed` 以下に収める。長さ 0、NaN、Inf を含む入力も数値出力は有限である。乱数、距離帯の状態、経路の進捗、軌跡は引数で受け渡し、同じ入力と状態からは同じ結果を得る。[SteeringBehaviors.h](../../Library/Modules/AI/Private/AI/Steering/SteeringBehaviors.h)・[SteeringBehaviors.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringBehaviors.cpp)
+
+| 関数 | 希望速度と状態の契約 |
+|---|---|
+| `Seek` / `Flee` | 目標へ最大速で向かう、または脅威から最大速で離れる。`Seek` は距離が 0.0001 m 未満なら停止する。`Flee` は位置が重なると現在の進行方向、静止中なら +Z を選ぶ。 |
+| `Arrive` / `Pursue` | 到着速度は停止半径内で 0、外では `min(MaxSpeed, sqrt(2 * MaxAcceleration * BrakingFactor * (distance - StopRadius)))`。既定の制動係数は 0.8。`Pursue` は目標の等速移動を既定で最大 1.5 s 先まで予測し、その位置へ同じ曲線で近づく。 |
+| `KeepDistance` | 水平距離の判定には要求の上下端をそのまま使う（既定 6～10 m、幅 0 も可）。上端を超えれば接近、下端を割れば後退し、帯の中央を目指す。停止半径は `min(0.1 m, (0.5 − ヒステリシスの割合) × 帯幅)` とし、帯の内側で止まれるようにする。越えた端から帯幅の一定割合（既定 25%）だけ内側に戻ると保持に移り、相手の速度に合わせる。 |
+| `InitializeWander` / `Wander` | 個体の固定シードで乱数列を初期化し、正の有限な `dt` でだけ前方の円上の角度を揺らす。種 0 は `0x9e3779b9` に置き換える。既定速度は最大速の半分。 |
+| `PathFollow` / `IsPathFollowFinished` | 初回は経路全体、その後は前回の弧長の近くで最近点を探し、進捗 `S` は前回値と最近点の弧長の大きい方にする。先読みの弦が途中の頂点から離れすぎる角では先読みを縮め、必要なら次の頂点を狙う。途中では現在と先の接線の内積で減速し、速度倍率の下限は既定 0.3。終点には `Arrive` で近づく。空経路、または残りの弧長と終点までの水平距離がともに停止半径内なら完了。 |
+| `RecordTrail` / `FollowTrail` | 先頭個体の有限な位置を初回は即時、その後は 0.25 s ごとに 64 点のリングへ記録する。1 回の呼び出しで追加するのは最大 1 点。最新点から 3 次元の弧長を逆にたどり、指定距離に達した最初の記録点（足りなければ最古点）へ `Arrive` する。 |
+| `Separation` / `Alignment` / `Cohesion` | 分離は水平半径内の相手が近いほど強く離れ、水平距離が 0.0001 m 未満の相手とは、ID の組で決まる軸に沿って互いに逆向きに離れる。位置と ID の件数が異なる場合や、どちらかの ID が零または両者が同じ場合は、近傍の添字で向きを決める。操舵系は各個体の所有 Entity の ObjectId を渡す。整列は近傍の平均速度に合わせ、結合は近傍の重心に `Arrive` する。有効な近傍が空なら零速度。 |
+| `CombineWeighted` | 各速度の重み付き和を操舵面と速さの上限に収める。負または非有限の重みの寄与は 0。 |
+
+**速度と旋回の上限。** `IsFiniteVector`、`SanitizeVector`、`ToPlane`、`PlanarLength`、`SafeNormalize`、`ClampLength` がベクトルの検査・射影・長さを扱う。`SanitizeLimits` は負または非有限な上限を項目の既定値に戻す。`ApplySteeringLimits` は射影して最大速に収めた現在速度を起点に、1 歩の速度ベクトルの変化量を `MaxAcceleration * dt` 以下にする。現在と希望の水平速がともに 0.001 m/s を超えるとき、水平の向きの変化も `EvaluateTurnRate(limits, speed) * dt` 以下にする。旋回率は現在の速さと最大速の比を使い、4 個のキーを線形補間する。時間刻みが非有限または 0 以下なら起点の速度を保つ。
+
+**地上のコンテキスト操舵。** `ContextDirection` の 16 方向は +Z から +X 側へ 22.5° 刻み。`AddInterest` は希望速度との向きの一致度と速度比から興味を求める。`AddDangerFromClearance` は先読み距離に対して不足する空きの割合を、`AddDangerFromNeighbors` は近傍の近さと向きを危険に反映する。`ResolveContext` は最小危険値から `DangerTolerance`（既定 0.05）以内の方向のうち興味が最大のものを選ぶ。候補の最大興味が `MinInterest`（既定 0.0001）以下なら最も開いた方向を選ぶ。同点は小さい添字を優先する。
+
+既定の `bKeepExactWhenClear` では、興味で選べて最小危険値が許容値以下、かつ希望方位の両隣が候補なら、希望方位を量子化せず上限内の速さを保つ。それ以外は選んだ方向で速さに `1 - Danger` を掛ける。全方向の危険が 1、または上限適用後の希望水平速が 0.0001 m/s 以下なら停止する。
+
+## エージェントの登録と要求
+
+`SteeringAgentComponent` の公開設定は次の通り。[SteeringAgentComponent.h](../../Library/Modules/AI/Public/AI/Steering/SteeringAgentComponent.h)
+
+| PROPERTY | 既定値 | 用途 |
+|---|---|---|
+| `Dimension` | `Ground` | 操舵面（`Ground` / `Flight`） |
+| `MaxSpeed` | 6 m/s | 操舵速度の上限 |
+| `MaxAcceleration` | 8 m/s² | 操舵速度の変化率の上限 |
+| `TurnRateBySpeed` | (6, 4, 3, 2) rad/s | 速度比 0、1/3、2/3、1 での旋回率 |
+| `NavProfileName` | `Medium` | 地上の経路・通行照会と分離半径に使うプロファイル |
+| `MotorProfilePath` | `AI/Locomotion/Wolf.json` | 四足運動の論理資産パス |
+| `WanderSeed` | 1 | 徘徊要求の開始時に使う種 |
+
+操舵系の登録簿は、個体の照合用に `SteeringAgentComponent` の非所有参照だけを保持する。登録時の重複判定と解除時の検索には、この参照を使う。`ComponentId` は公開プロパティで書き換えられるため、登録簿には保存しない。`Initialize` は個体を `AIModule` に登録し、運動プロファイルを取得して同じ Entity の CharacterBody への接続を試みる。`EndPlay`・`Finalize`・デストラクタはいずれもモーターの接続を外し、登録が残っていれば解除して経路枠を返す。[SteeringAgentComponent.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringAgentComponent.cpp)
+
+各固定歩の開始時に、各 Component の所有 Entity を調べ、Engine の World に属する個体だけを操舵する。World に入る前に `AddComponent` した個体も、入った後の最初の固定歩から操舵の対象になる。所有 Entity の `ObjectId` と `EntityHandle` は固定歩ごとの近傍収集で所有者から読む。同じ Entity に `SteeringAgentComponent` が複数ある場合、操舵、近傍の格子への追加、運動、Animator への公開、デバッグ描画は先頭のものだけを対象とする。運動の層は所有者の先頭、相手の速度を読む `ReadTarget` は相手の先頭の操舵 Component を使う。[SteeringSystem.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringSystem.cpp)
+
+初期要求は `Idle`。GameThread から要求を一つ渡すと、受理時に要求を置き換えて非ゼロの `Revision` を更新する。不正な位置・距離・無効なハンドルを渡した場合は `false` を返し、前の要求を保つ。
+
+| 要求 API | 引数と動作 |
+|---|---|
+| `RequestIdle()` / `RequestWander()` | 主行動の希望速度を零にする、または個体のシードから徘徊を始める。 |
+| `RequestArrive(target, stopRadius)` / `RequestMoveTo(goal, stopRadius)` | ワールド位置へ直接到着する（既定 0.1 m）、またはナビ経路に沿って移動する（既定 0.3 m）。 |
+| `RequestPursue(target)` / `RequestFlee(threat)` | Entity ハンドルで相手を指定し、予測位置を追う、または現在位置から離れる。 |
+| `RequestKeepDistance(target, minDistance, maxDistance)` | 相手との水平距離を指定帯に保つ。距離は有限かつ非負で、下端は上端以下とする。 |
+| `RequestFollowTrail(leader, followDistance)` | 相手の軌跡を指定距離だけ後ろから追う（既定 2 m）。 |
+
+`GetRequest()` は現在の要求、`GetSteeringVelocity()` は直近の固定歩で確定した操舵速度を返す。`MoveTo` は成功・部分到達の折れ線を取り込み、経路が古ければ次の歩で再要求する。完走後、`Partial` は折れ線の終点へ `Arrive` する。`Succeeded` は終点と目的地の水平距離が 0.001 m 以下か、終点から目的地への `NavRaycast` が通れば目的地へ、それ以外は終点へ `Arrive` する。経路待ち・失敗・相手を解決できない場合は主行動の希望速度が零になる。どの要求にも近傍からの分離と速度変化の上限が適用される。[SteeringSystem.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringSystem.cpp)
+
+## 近傍の格子と操舵の更新
+
+`SteeringSystem::Compute` は正の有限な固定刻みごとに、`SteeringSystem::CanSteer` を満たす個体の位置と前回の操舵速度を登録順に集める。所有 Entity は階層内で有効かつ Tick が有効で、操舵 Component は有効かつ Tick が有効で破棄予定でないことが条件となる。解決した個体がこの条件を外れたら、近傍の格子から除き、操舵速度を零に戻す。位置・速度は X、Y、Z ごとの配列（SoA）に保持し、位置の X、Z から `Spatial::UniformGridHash` を作り直す。セル幅の既定は 8 m。全個体を同じ入力から解き終えてから各 Component に結果を書き戻すため、先に解いた個体の新しい速度が後の個体に混ざらない。
+
+`QueryRadius(x, z, radius, out, excludeIndex)` は高さを無視し、倍精度で `dx² + dz² <= radius²` を満たす点の元の配列添字を昇順で返す。円周上の点も入り、自分の添字は指定して除ける。非有限の中心・半径や負の半径では結果は空。物理の AABB の木が衝突形状を扱うのに対し、この格子はエージェントだけを扱う。GR24 は `AIModule::GetNeighborHash()` で近傍を照会し、`AIModule::GetNeighborEntities()` の同じ添字から所有 Entity のハンドルを得る。`SteeringSystem` では、近傍の添字 `i` に対応する `GetNeighborEntities()[i]` と `GetNeighborObjectIds()[i]` は、その固定歩に所有 Entity から読んだ `EntityHandle` と `ObjectId` である。ECS の行がまだ無い個体も位置は格子に入り、ハンドルは無効になる。[UniformGridHash.h](../../Library/Modules/AI/Private/AI/Spatial/UniformGridHash.h)・[UniformGridHash.cpp](../../Library/Modules/AI/Private/AI/Spatial/UniformGridHash.cpp)
+
+`Gather` は `Pursue`・`KeepDistance`・`Flee`・`FollowTrail` の相手をハンドルで解決し、位置と速度を読む。相手に `SteeringAgentComponent` があれば、`CanSteer` を満たすときは前回の操舵速度、満たさないときは零を読む。この判定で、相手を収集する順番にかかわらず同じ速度が得られる。相手に操舵 Component が無ければ、破棄予定でない `CharacterBodyComponent` の速度を使う。`Flee` と `FollowTrail` の計算が使うのは相手の位置だけである。[SteeringSystem.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringSystem.cpp)
+
+操舵系は要求の希望速度と半径 `max(1 m, 2 * profile.Radius)` の分離速度を等しい重みで足す。地上ではさらに 16 方向のナビ照会（先読み 2～6 m）と半径 1.5 m の近傍で危険を評価し、最後に速度・旋回の上限を適用する。足元が未読み込みまたは通行不能ならナビ由来の危険は加えず、近傍の危険だけを使う。行動の選択は現在の要求の種類で決まり、行動木などの上位の決定は GR24 の範囲である。`Flight` は操舵の次元を切り替えるが、飛行する動物の運動と群れの制御は G13-GR22-FLIGHT-FLOCK の範囲である。
+
+## 四足動物の運動と Animator への公開
+
+`AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` を購読する。プレハブやシーンの読み込みでは `Initialize` が所有 Entity の `ObjectId` の採番に先行するため、ID が 0 の間は接続を保留する。所有 Entity のハンドルを取得できない場合や、体の ECS 行の作成が予約中の場合も、購読を保留する。操舵系は各固定歩の開始時に `CanSteer` を満たす個体の接続を確認し、所有者の `ObjectId`、操舵 Component の `ComponentId`、体の ECS 行（番号と世代）のいずれかが変われば結び直す。別の体が同じ `ComponentId` を引き継いでも、行ができた最初の固定歩で新しい体を購読する。
+
+モーターは接続ごとに一意の番号を静的な通し番号から割り当てる。コールバックは購読時の `ObjectId` で所有 Entity を引き、操舵 Component の `ComponentId`、体の ECS 行、破棄状態、`CanSteer` に加え、接続時の番号が現在のモーターの番号と一致することを確認する。配信用にコピーされた古い呼び出しは、体が替われば行の違いで、操舵 Component が交代して再接続すれば接続番号の違いで退ける。[AnimalMotor.cpp](../../Library/Modules/AI/Private/AI/Motor/AnimalMotor.cpp)
+
+解除時は所有 Entity の各 `CharacterBodyComponent` から、`Bind` 時の識別子で自分の購読を外す。`RemoveComponent` で所有者が先に外れた場合は、接続時に保存したハンドルを Engine の World で解決する。解決できなければ体にはアクセスしない。World の破棄中は Component の終了処理より先に Entity の行から参照が消えるため、古いハンドルは解決されず、体自身が終了処理で購読を消す。`AIModule::Shutdown` でも、登録中の各モーターの購読を外してから登録簿を空にする。[SteeringSystem.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringSystem.cpp)
+
+1. `MakeIntent` は操舵の水平速が 0.001 m/s 未満なら移動入力を零にする。それ以上では速歩の上限（`Gaits[1].SpeedMax`）を超えたときだけ `bSprint` を立てる。操舵の単位方向に `min(speed / speedMax, 1)` を掛けて `LocomotionIntent::Move` に渡す。分母は通常なら速歩、スプリントなら襲歩（`Gaits[3].SpeedMax`）の上限。モデルは同じ上限を入力強度に掛けるので、平地でその場旋回をしていなければ、平滑化前の目標速は襲歩の上限まで操舵の水平速に一致する。
+2. `QuadrupedLocomotionModel::Step` に Body の接地・地面法線・速度・足場速度・重力と、持ち主の向きを渡す。モデルが足場に対する観測速度、上下のしきい値、最短滞在時間から歩様を選ぶ。斜面、旋回、加減速、衝突の結果により実際の速さは目標と異なり得る。[QuadrupedLocomotionModel.cpp](../../Library/Core/Private/Locomotion/QuadrupedLocomotionModel.cpp)
+3. Body の準備ができていてモデルが成功したら、`SetDesiredVelocity(Zero)` で速度入力の二重適用を防ぎ、`MoveDelta(output.PlanarDisplacement, output.DeltaYaw)` で同じ要求に水平変位と回転を渡す。両方を Body が受理したときだけ状態と出力を保存する。衝突と移動は CharacterBody が担うため、AI 独自の Kinematic 移動は持たない。歩様表と出力も Core のモデルで共有し、AI 用の `GaitTable` や独自の `LocomotionOutput` を重ねない。
+4. `PostLateTick.ModuleLateTick` は持ち主、次に直下の子の Animator を探す。`SetDriveSignals` にモデルの `Speed`・`TurnRate`・`bGrounded` と Body の `Velocity`・`GroundNormal` を渡し、名前付きパラメータ `GaitId`、`GaitWeight0`～`GaitWeight3`、`PitchAngle`、`BankAngle` を設定する。歩様の混合と姿勢をアニメ側で使えるため、再生速度だけを渡すアダプタは設けない。このフレームの Animation 群はすでに終了している。
+
+`LocomotionProfileCache` は論理パスごとに初回だけ資産を読み、Core の `QuadrupedLocomotionParams` を共有する。空パスは既定値、読み込み・解析失敗時は既定値をそのパスに保持する。`MotorProfilePath` のプロパティ適用時はそのパスで引き直し、モジュールの終了時にキャッシュを消す。配布するオオカミのプロファイルは `locomotion.v1` で、4 歩様の速度上限 1.8、4.5、9、15 m/s を含む値は仮の調整値である。[LocomotionProfileCache.cpp](../../Library/Modules/AI/Private/AI/Motor/LocomotionProfileCache.cpp)・[Wolf.json](../../Assets/AI/Locomotion/Wolf.json)
+
 ## デバッグ描画と対象範囲
 
 格子の印はカメラ位置を中心とする XZ 円内だけを `DebugDrawQueue` に送る。既定半径は 24 m、地面からの高さは 0.05 m、1 回の上限は 4096 セル。複数のフラグがあれば表の上から最初に一致した色を使う。
@@ -121,5 +197,7 @@ step  = base + (base * extra) / 128
 | 水色の斜線 | 浅瀬 |
 
 `LateTick` は格子と経路の描画に同じカメラ位置と半径を渡す。`SubmitNavPathDebug` は経路の各線分をその XZ 円の内側に切り詰め、呼び出し側が指定した色で描く。経路点の縦線は円内と円周上の点にだけ立てる。描画コードは `NORVES_ENABLE_DEBUG_OUTPUT` で囲み、Debug と RelWithDebInfo にだけ含める。[NavDebugDraw.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavDebugDraw.cpp)・[AIModule.cpp](../../Library/Modules/AI/Private/AI/AIModule.cpp)
+
+`IAIModule::SetSteeringDebugDrawEnabled` はナビの描画とは独立したスイッチで、既定は無効。`LateTick` でカメラから XZ 半径 60 m 以内の有効な個体に、上限適用後の操舵速度を緑、適用前の希望速度を黄で描く。目標は水色の球と個体からの線、`KeepDistance` の上下限は目標を中心とする 2 本の円、`MoveTo` の準備済み経路は青い折れ線で示す。要求の版が変わった直後は古い目標・帯・経路を描かない。Release ではスイッチは無効で `IsSteeringDebugDrawEnabled()` は常に `false`。[SteeringDebugDraw.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringDebugDraw.cpp)
 
 この格子が扱う障害物は静的な XZ 足跡である。動く障害物の更新、実地形データと地形ポートの接続、ベイク済みナビ資産の生成・読み込みは対象外。HPA* による階層探索は実測で必要性が示された場合に限る。同じ XZ に複数の歩行面を持つ橋の上下や建物内部の階層は、この単層表現の対象外である。

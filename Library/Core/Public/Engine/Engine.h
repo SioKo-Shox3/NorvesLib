@@ -4,6 +4,7 @@
 #include "Debug/EngineChecks.h"
 #include "Engine/DeterministicCapture.h"
 #include "Engine/TimeSystem.h"
+#include "Engine/SimulationPauseState.h"
 #include "Engine/FixedStepFrameTiming.h"
 #include "GameMode/IStateMachine.h"
 #include "Application/IApplication.h"
@@ -15,6 +16,8 @@
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
 #include "Scene/SurfaceRegistry.h"
+#include "Scene/AcousticTransmission.h"
+#include "Scene/TerrainSurfaceProvider.h"
 #include "Text/StringTable.h"
 #include "Input/InputSystem.h"
 #include "Input/IInputDevice.h"
@@ -472,6 +475,38 @@ namespace NorvesLib::Core::Engine
         }
 
         /**
+         * @brief 地形の表面の provider を取得
+         */
+        Scene::TerrainSurfaceProvider &GetTerrainSurfaceProvider()
+        {
+            return m_TerrainSurfaceProvider;
+        }
+
+        /**
+         * @brief 地形の表面の provider を取得（const版）
+         */
+        const Scene::TerrainSurfaceProvider &GetTerrainSurfaceProvider() const
+        {
+            return m_TerrainSurfaceProvider;
+        }
+
+        /**
+         * @brief 音の通りにくさの評価器を取得（GameThread 専用）
+         */
+        Scene::AcousticTransmissionEvaluator &GetAcoustics()
+        {
+            return m_Acoustics;
+        }
+
+        /**
+         * @brief 音の通りにくさの評価器を取得（const版、GameThread 専用）
+         */
+        const Scene::AcousticTransmissionEvaluator &GetAcoustics() const
+        {
+            return m_Acoustics;
+        }
+
+        /**
          * @brief 言語ごとの文字列表を取得
          */
         StringTable &GetStringTable()
@@ -531,6 +566,14 @@ namespace NorvesLib::Core::Engine
         const TimeSystem& GetTimeSystem() const
         {
             return m_TimeSystem;
+        }
+        SimulationPauseState& GetSimulationPauseState()
+        {
+            return m_SimulationPauseState;
+        }
+        const SimulationPauseState& GetSimulationPauseState() const
+        {
+            return m_SimulationPauseState;
         }
         Input::InputMapper& GetInputMapper() { return m_InputMapper; }
         const Input::InputMapper& GetInputMapper() const { return m_InputMapper; }
@@ -618,11 +661,18 @@ namespace NorvesLib::Core::Engine
         Streaming::StreamingSystem m_StreamingSystem;
         Vegetation::Vegetation m_Vegetation;
         TimeSystem m_TimeSystem;
+        SimulationPauseState m_SimulationPauseState;
 
         // シーン空間検索（GEngine配下で実体保持）
         Scene::SceneQuery m_SceneQuery;
         // 表面の語彙の登録簿（GEngine 配下で実体保持）
         Scene::SurfaceRegistry m_SurfaceRegistry;
+        // 地形の層と草の密度から表面を返す provider（SceneQuery が借りる）。参照する系より後に宣言する。
+        Scene::TerrainSurfaceProvider m_TerrainSurfaceProvider;
+        Scene::VegetationSurfaceProvider m_VegetationSurfaceProvider;
+        // 音の通りにくさの評価器（GEngine 配下で実体保持。GameThread 専用）。
+        // SceneQuery・表面の登録簿・草・地形・気象を借りるので、それらより後に宣言して先に破棄する。
+        Scene::AcousticTransmissionEvaluator m_Acoustics;
         // 言語ごとの文字列表
         StringTable m_StringTable;
 

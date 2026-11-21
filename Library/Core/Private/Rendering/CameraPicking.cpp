@@ -1,6 +1,7 @@
 ﻿#include "Rendering/CameraPicking.h"
 #include "Math/Vector3.h"
 #include "Math/VectorUtils.h"
+#include "Rendering/PathTracingCamera.h"
 #include <cmath>
 
 namespace NorvesLib::Core::Rendering
@@ -86,9 +87,12 @@ namespace
             return true;
         }
 
-        const float fieldOfViewRadians = camera.FieldOfView * (Math::Constants::PI / 180.0f);
-        const float tanHalfFov = std::tan(fieldOfViewRadians * 0.5f);
+        // 物理レンズの画角を描画と同じ規則でビューポートの縦横比から確定する。
         const float aspectRatio = width / height;
+        CameraProxy lensCamera = camera;
+        ResolveCameraLens(lensCamera, aspectRatio);
+        const float fieldOfViewRadians = lensCamera.FieldOfView * (Math::Constants::PI / 180.0f);
+        const float tanHalfFov = std::tan(fieldOfViewRadians * 0.5f);
         const Math::Vector3 direction = Math::VectorUtils::Normalize(
             lookDir
             + right * (ndcX * tanHalfFov * aspectRatio)

@@ -9,6 +9,30 @@
 #include <cmath>
 #include <utility>
 
+namespace NorvesLib::Modules::Audio
+{
+    bool IsPlayableVoiceDesc(uint64_t frameCount, uint64_t pcmBytes, const AudioVoiceDesc& desc) noexcept
+    {
+        if (pcmBytes == 0 || pcmBytes > kAudioMaxVoicePcmBytes)
+        {
+            return false;
+        }
+        if (!std::isfinite(desc.MaxPitchSemitones) || desc.MaxPitchSemitones < 0.0f ||
+            desc.MaxPitchSemitones > kAudioMaxVoicePitchSemitones || desc.StartFrame >= frameCount)
+        {
+            return false;
+        }
+        if (!desc.bLoop)
+        {
+            return desc.LoopBeginFrame == 0 && desc.LoopLengthFrames == 0;
+        }
+        const uint64_t loopEndFrame = desc.LoopLengthFrames == 0
+            ? frameCount
+            : static_cast<uint64_t>(desc.LoopBeginFrame) + desc.LoopLengthFrames;
+        return desc.LoopBeginFrame < frameCount && loopEndFrame <= frameCount && loopEndFrame > desc.StartFrame;
+    }
+}
+
 namespace NorvesLib::Modules::Audio::Private
 {
     namespace
@@ -102,24 +126,7 @@ namespace NorvesLib::Modules::Audio::Private
                     return AudioResult::InvalidState;
                 }
 
-                const uint64_t frameCount = clip->GetFrameCount();
-                if (!std::isfinite(desc.MaxPitchSemitones) || desc.MaxPitchSemitones < 0.0f ||
-                    desc.MaxPitchSemitones > kAudioMaxVoicePitchSemitones || desc.StartFrame >= frameCount)
-                {
-                    return AudioResult::InvalidState;
-                }
-                if (desc.bLoop)
-                {
-                    const uint64_t loopEndFrame = desc.LoopLengthFrames == 0
-                        ? frameCount
-                        : static_cast<uint64_t>(desc.LoopBeginFrame) + desc.LoopLengthFrames;
-                    if (desc.LoopBeginFrame >= frameCount || loopEndFrame > frameCount ||
-                        loopEndFrame <= desc.StartFrame)
-                    {
-                        return AudioResult::InvalidState;
-                    }
-                }
-                else if (desc.LoopBeginFrame != 0 || desc.LoopLengthFrames != 0)
+                if (!IsPlayableVoiceDesc(clip->GetFrameCount(), clip->GetPcmBlob().GetSize(), desc))
                 {
                     return AudioResult::InvalidState;
                 }

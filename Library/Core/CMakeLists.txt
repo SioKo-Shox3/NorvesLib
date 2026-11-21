@@ -246,6 +246,8 @@ set(PRIVATE_SOURCES
     Private/Engine/TimeScaleFadeMath.h
     Private/Engine/TimeSystem.cpp
     Public/Engine/TimeSystem.h
+    Private/Engine/SimulationPauseState.cpp
+    Public/Engine/SimulationPauseState.h
     Public/Engine/FixedStepFrameTiming.h
     Public/Engine/TimeChannels.h
     Private/Scripting/AngelScriptEngineOwner.cpp
@@ -256,10 +258,12 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/AcousticDistance.cpp
+    Private/Scene/AcousticTransmission.cpp
     Private/Scene/SceneQuery.cpp
     Private/Scene/LevelSnap.cpp
     Private/Scene/PhysicsLayerTable.cpp
     Private/Scene/SurfaceRegistry.cpp
+    Private/Scene/TerrainSurfaceProvider.cpp
     Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
     Private/Scene/MapTransform.cpp
@@ -533,6 +537,7 @@ set(PRIVATE_SOURCES
     Private/Component/GrassFieldComponent.cpp
     Private/Component/WitherSourceComponent.cpp
     Private/Component/FootSplashComponent.cpp
+    Private/Component/GroundContactComponent.cpp
     Private/Component/ParticleEmitterComponent.cpp
     Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
@@ -759,6 +764,7 @@ set(PUBLIC_HEADERS
     Public/Component/AnimatorComponent.h
     # Scene
     Public/Scene/AcousticDistance.h
+    Public/Scene/AcousticTransmission.h
     Public/Scene/SceneQuery.h
     Public/Scene/LevelSnap.h
     Public/Scene/RenderTransformHistory.h
@@ -767,6 +773,7 @@ set(PUBLIC_HEADERS
     Public/Scene/PhysicsHandles.h
     Public/Scene/PhysicsLayerTable.h
     Public/Scene/SurfaceRegistry.h
+    Public/Scene/TerrainSurfaceProvider.h
     Public/Scene/SceneSerializer.h
     Public/Scene/MapTransform.h
     Public/Scene/MapCapturePlan.h
@@ -1001,6 +1008,7 @@ set(PUBLIC_HEADERS
     Public/Component/GrassFieldComponent.h
     Public/Component/WitherSourceComponent.h
     Public/Component/FootSplashComponent.h
+    Public/Component/GroundContactComponent.h
     Public/Component/ParticleEmitterComponent.h
     Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h

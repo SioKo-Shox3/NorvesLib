@@ -308,6 +308,10 @@ namespace NorvesLib::Core
          */
         void SetTickEnabled(bool bEnabled) { getbTickEnabled().Set(bEnabled); }
 
+        /// ポーズ中に直下の Component を更新する。子 Entity には伝播せず、個別の印と重なる Component も各群で一度だけ呼ぶ。
+        void SetTickWhenPaused(bool bEnabled);
+        bool IsTickWhenPaused() const { return m_bTickWhenPaused; }
+
         // ========================================
         // アクティブ状態
         // ========================================
@@ -396,6 +400,9 @@ namespace NorvesLib::Core
 
       private:
         friend class World;
+        bool m_bTickWhenPaused = false;
+        /// 木に結合されている間の登録先。切り離しを開始した後は印を変更しても再登録しない。
+        World* m_PausedTickWorld = nullptr;
         void RemoveComponentImmediately(Component::Component* component);
         void MarkRenderStateDirtyRecursive();
         void SetLocalTransform(const Math::Transform& transform);

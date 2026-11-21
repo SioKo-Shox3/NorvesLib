@@ -1136,6 +1136,15 @@ namespace NorvesLib::Core::Rendering
                                         sizeof(activeCamera.ShutterSpeed));
         cameraSignature = HashPathBytes(cameraSignature, &activeCamera.FocusDistance,
                                         sizeof(activeCamera.FocusDistance));
+        const auto& cinematic = activeCamera.Cinematic;
+        cameraSignature = HashPathBytes(cameraSignature, &cinematic.Shutter.ShutterAngleDegrees,
+                                        sizeof(cinematic.Shutter.ShutterAngleDegrees));
+        cameraSignature = HashPathBytes(cameraSignature, &cinematic.Shutter.VirtualFrameRate,
+                                        sizeof(cinematic.Shutter.VirtualFrameRate));
+        cameraSignature = HashPathBytes(cameraSignature, &cinematic.Lens.SensorHeightMm,
+                                        sizeof(cinematic.Lens.SensorHeightMm));
+        cameraSignature = HashPathBytes(cameraSignature, &cinematic.Lens.bFocusBreathing,
+                                        sizeof(cinematic.Lens.bFocusBreathing));
         // 発光と環境はプリエクスポージャを掛けて累積するため、露出の変化でも履歴を捨てる。
         cameraSignature = HashPathBytes(cameraSignature, &activeCamera.PreExposure,
                                         sizeof(activeCamera.PreExposure));
@@ -1277,11 +1286,11 @@ namespace NorvesLib::Core::Rendering
             m_SequenceFrame.bEnabled ? m_SequenceFrame.FrameDuration : context.SnapshotDeltaTime,
             history.DispatchCount);
         CameraProxy opticalCamera = cameraSample.Camera;
-        if (cameraSample.bThinLens)
+        if (cameraSample.bThinLens && opticalCamera.Cinematic.Lens.bFocusBreathing)
         {
             const float focalLength = PathTracingCameraDetail::FocalLength(
-                opticalCamera.FieldOfView);
-            const float filmScale = 1.0f - focalLength / opticalCamera.FocusDistance;
+                opticalCamera.FieldOfView, CameraSensorHeightMeters(opticalCamera));
+            const float filmScale = ComputeFocusBreathingScale(opticalCamera, focalLength);
             opticalCamera.FieldOfView = 360.0f / PathTracingCameraDetail::Pi *
                 std::atan(std::tan(opticalCamera.FieldOfView *
                                    PathTracingCameraDetail::Pi / 360.0f) *

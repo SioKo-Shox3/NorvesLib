@@ -4,12 +4,13 @@
     {
       "name": "Default",
       "flags": [],
-      "audio": {"footstepSet": "default", "noiseLevelDb": -10, "transmissionLossDb": 0},
+      "audio": {"footstepSet": "default", "noiseLevelDb": -10},
       "visual": {"footprint": "", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0},
       "physical": {"friction": 0.6, "restitution": 0, "footSinkCm": 0}
     },
     {
       "name": "Grass_Tall",
+      "vegetationDensityThreshold": 0.35,
       "parent": "Default",
       "flags": ["Soft", "Vegetated", "Wettable"],
       "audio": {"footstepSet": "grass", "noiseLevelDb": -14, "transmissionLossDb": 3},
@@ -20,7 +21,7 @@
       "name": "Dirt_Mud",
       "parent": "Default",
       "flags": ["Soft", "Wettable"],
-      "audio": {"footstepSet": "mud", "noiseLevelDb": -8, "transmissionLossDb": 0},
+      "audio": {"footstepSet": "mud", "noiseLevelDb": -8},
       "visual": {"footprint": "mud", "splash": "mud", "ripple": "", "grassTrample": 0.3, "wetFurTransfer": 0.4},
       "physical": {"friction": 0.4, "restitution": 0, "footSinkCm": 4}
     },
@@ -28,7 +29,7 @@
       "name": "Rock",
       "parent": "Default",
       "flags": ["Hard"],
-      "audio": {"footstepSet": "rock", "noiseLevelDb": -6, "transmissionLossDb": 0},
+      "audio": {"footstepSet": "rock", "noiseLevelDb": -6},
       "visual": {"footprint": "", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0},
       "physical": {"friction": 0.8, "restitution": 0.1, "footSinkCm": 0}
     },
@@ -36,7 +37,7 @@
       "name": "Concrete",
       "parent": "Rock",
       "flags": ["Hard"],
-      "audio": {"footstepSet": "concrete", "noiseLevelDb": -5, "transmissionLossDb": 0},
+      "audio": {"footstepSet": "concrete", "noiseLevelDb": -5},
       "visual": {"footprint": "", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0},
       "physical": {"friction": 0.9, "restitution": 0.1, "footSinkCm": 0}
     },
@@ -44,7 +45,7 @@
       "name": "Metal",
       "parent": "Default",
       "flags": ["Hard"],
-      "audio": {"footstepSet": "metal", "noiseLevelDb": 0, "transmissionLossDb": 0},
+      "audio": {"footstepSet": "metal", "noiseLevelDb": 0},
       "visual": {"footprint": "", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0},
       "physical": {"friction": 0.5, "restitution": 0.2, "footSinkCm": 0}
     },
@@ -52,7 +53,7 @@
       "name": "Water_Shallow",
       "parent": "Default",
       "flags": ["Liquid", "Wettable"],
-      "audio": {"footstepSet": "water", "noiseLevelDb": -2, "transmissionLossDb": 0},
+      "audio": {"footstepSet": "water", "noiseLevelDb": -2},
       "visual": {"footprint": "", "splash": "water", "ripple": "water", "grassTrample": 0, "wetFurTransfer": 1.0},
       "physical": {"friction": 0.3, "restitution": 0, "footSinkCm": 2}
     },
@@ -60,9 +61,57 @@
       "name": "Wood",
       "parent": "Default",
       "flags": ["Hard"],
-      "audio": {"footstepSet": "wood", "noiseLevelDb": -4, "transmissionLossDb": 0},
+      "audio": {"footstepSet": "wood", "noiseLevelDb": -4},
       "visual": {"footprint": "", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0},
       "physical": {"friction": 0.7, "restitution": 0.1, "footSinkCm": 0}
+    },
+    {
+      "name": "Soil",
+      "parent": "Dirt_Mud",
+      "flags": ["Soft", "Wettable"],
+      "audio": {"footstepSet": "soil", "noiseLevelDb": -10, "transmissionLossDb": 0},
+      "visual": {"footprint": "soil", "splash": "", "ripple": "", "grassTrample": 0.3, "wetFurTransfer": 0.2},
+      "physical": {"friction": 0.5, "restitution": 0, "footSinkCm": 2}
+    },
+    {
+      "name": "Gravel",
+      "parent": "Rock",
+      "flags": ["Hard"],
+      "audio": {"footstepSet": "gravel", "noiseLevelDb": -6, "transmissionLossDb": 0},
+      "visual": {"footprint": "", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0},
+      "physical": {"friction": 0.8, "restitution": 0.1, "footSinkCm": 0}
+    },
+    {
+      "name": "Moss",
+      "parent": "Default",
+      "flags": ["Soft", "Wettable"],
+      "audio": {"footstepSet": "moss", "noiseLevelDb": -12, "transmissionLossDb": 0},
+      "visual": {"footprint": "moss", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0.2},
+      "physical": {"friction": 0.6, "restitution": 0, "footSinkCm": 1}
+    },
+    {
+      "name": "Mud",
+      "parent": "Dirt_Mud",
+      "flags": ["Soft", "Wettable"],
+      "audio": {"footstepSet": "mud", "noiseLevelDb": -8, "transmissionLossDb": 0},
+      "visual": {"footprint": "mud", "splash": "mud", "ripple": "", "grassTrample": 0.3, "wetFurTransfer": 0.4},
+      "physical": {"friction": 0.4, "restitution": 0, "footSinkCm": 4}
+    },
+    {
+      "name": "Sand",
+      "parent": "Default",
+      "flags": ["Soft"],
+      "audio": {"footstepSet": "sand", "noiseLevelDb": -10, "transmissionLossDb": 0},
+      "visual": {"footprint": "sand", "splash": "", "ripple": "", "grassTrample": 0, "wetFurTransfer": 0},
+      "physical": {"friction": 0.6, "restitution": 0, "footSinkCm": 2}
+    },
+    {
+      "name": "Water",
+      "parent": "Water_Shallow",
+      "flags": ["Liquid", "Wettable"],
+      "audio": {"footstepSet": "water", "noiseLevelDb": -2, "transmissionLossDb": 0},
+      "visual": {"footprint": "", "splash": "water", "ripple": "water", "grassTrample": 0, "wetFurTransfer": 1.0},
+      "physical": {"friction": 0.3, "restitution": 0, "footSinkCm": 2}
     }
   ]
 }

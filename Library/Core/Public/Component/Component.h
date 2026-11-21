@@ -189,6 +189,11 @@ namespace NorvesLib::Core::Component
          */
         void SetTickEnabled(bool bEnabled) { getbTickEnabled().Set(bEnabled); }
         bool IsTickEnabled() const { return getbTickEnabled().Get(); }
+
+        /// ポーズ中にこの Component だけを更新する。持ち主の Entity にも印がある場合は各群で一度だけ呼ぶ。
+        void SetTickWhenPaused(bool bEnabled);
+        bool IsTickWhenPaused() const { return m_bTickWhenPaused; }
+
         ETickGroup GetTickGroup() const
         {
             return LoadTickConfiguration().GetGroup();
@@ -289,6 +294,9 @@ namespace NorvesLib::Core::Component
 
     private:
         friend class ::NorvesLib::Core::World;
+        bool m_bTickWhenPaused = false;
+        /// 持ち主が木にいる間の登録先。行を外す通知より先に解除する。
+        ::NorvesLib::Core::World* m_PausedTickWorld = nullptr;
         /// 描画の同期が必要になったことを World の変更ログへ知らせる（World が無ければ何もしない）
         void NotifyRenderStateDirty();
 
