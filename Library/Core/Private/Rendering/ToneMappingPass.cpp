@@ -33,6 +33,8 @@ namespace NorvesLib::Core::Rendering
 
         // ディザにはグレインと別の開始値を使い、同じフレームでも模様を分ける。
         constexpr uint32_t DitherBaseSeed = 0xD1B54A35u;
+        // プロファイルのグレインは View の設定に依存しない開始値を使う。
+        constexpr uint32_t ProfileFilmGrainBaseSeed = 0xA511E9B3u;
 
         // Scripts/BakeAcesOutputLut.py が書く見出し（32 byte、little-endian）
         constexpr char Aces20LutMagic[8] = {'N', 'L', 'U', 'T', '3', 'D', '0', '1'};
@@ -864,6 +866,9 @@ namespace NorvesLib::Core::Rendering
             params.vignetteRadius = pp.Lens.Vignette.Radius;
             params.vignetteSoftness = pp.Lens.Vignette.Softness;
             params.filmGrainStrength = pp.Lens.Grain;
+            params.filmGrainSeed = params.filmGrainStrength > 0.0f
+                                       ? MakeFilmGrainFrameSeed(ProfileFilmGrainBaseSeed, context.FrameNumber)
+                                       : 0u;
             params.ditherStrength = pp.DitherStrength;
             params.ditherSeed = MakeFilmGrainFrameSeed(DitherBaseSeed, context.FrameNumber);
         }
@@ -878,6 +883,9 @@ namespace NorvesLib::Core::Rendering
             params.vignetteRadius = m_Settings.VignetteRadius;
             params.vignetteSoftness = m_Settings.VignetteSoftness;
             params.filmGrainStrength = m_Settings.FilmGrainStrength > 0.0f ? m_Settings.FilmGrainStrength : 0.0f;
+            params.filmGrainSeed = params.filmGrainStrength > 0.0f
+                                       ? MakeFilmGrainFrameSeed(m_Settings.FilmGrainSeed, context.FrameNumber)
+                                       : 0u;
             params.gradingMode = 0u;
             params.colorFilter[0] = m_Settings.ColorFilter[0];
             params.colorFilter[1] = m_Settings.ColorFilter[1];
@@ -909,9 +917,6 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
-        params.filmGrainSeed = params.filmGrainStrength > 0.0f
-                                   ? MakeFilmGrainFrameSeed(m_Settings.FilmGrainSeed, context.FrameNumber)
-                                   : 0u;
         m_PreparedLookLut.reset();
         m_PreparedLookLutB.reset();
 

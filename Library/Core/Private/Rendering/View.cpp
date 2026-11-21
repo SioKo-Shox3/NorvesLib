@@ -355,18 +355,17 @@ namespace NorvesLib::Core::Rendering
             if (activeCamera)
             {
                 m_FrameSceneColorDisplay.bNeutralLinear = activeCamera->ToneMapCurve == CameraToneMapCurve::NeutralLinear;
-                const PostProcessSettings& profile = activeCamera->PostProcess;
-                if (profile.bValid)
+                if (activeCamera->PostProcess.bValid)
                 {
+                    PostProcessSettings profile = activeCamera->PostProcess;
+                    profile.Sanitize();
                     m_FrameSceneColorDisplay.bGradingOverride = false;
                     const PostProcessLook& look = profile.Look;
                     m_FrameSceneColorDisplay.bLookLut = look.Intensity > 0.0f &&
                         ((look.LutA != nullptr && look.LutA[0] != '\0') || (look.LutB != nullptr && look.LutB[0] != '\0'));
                     const PostProcessLens& lens = profile.Lens;
-                    m_FrameSceneColorDisplay.ChromaticAberrationPixels = std::isfinite(lens.ChromaticAberrationPixels)
-                        ? std::clamp(lens.ChromaticAberrationPixels, 0.0f, 16.0f) : 0.0f;
-                    m_FrameSceneColorDisplay.LensDirtIntensity = std::isfinite(lens.LensDirtIntensity)
-                        ? std::clamp(lens.LensDirtIntensity, 0.0f, 4.0f) : 0.0f;
+                    m_FrameSceneColorDisplay.ChromaticAberrationPixels = lens.ChromaticAberrationPixels;
+                    m_FrameSceneColorDisplay.LensDirtIntensity = lens.LensDirtIntensity;
                 }
                 else
                 {

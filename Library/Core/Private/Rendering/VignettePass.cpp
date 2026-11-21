@@ -450,7 +450,9 @@ namespace NorvesLib::Core::Rendering
             // ビネットはトーンマップで掛ける。強度 0 でもシェーダーが補間するため、幅は正にする。
             params.intensity = 0.0f;
             params.softness = 1.0f;
-            chromaticAberrationPixels = activeCamera->PostProcess.Lens.ChromaticAberrationPixels;
+            PostProcessSettings profile = activeCamera->PostProcess;
+            profile.Sanitize();
+            chromaticAberrationPixels = profile.Lens.ChromaticAberrationPixels;
         }
         else
         {

@@ -683,7 +683,9 @@ namespace NorvesLib::Core::Rendering
         float lensDirtIntensity;
         if (bUseProfile)
         {
-            lensDirtIntensity = activeCamera->PostProcess.Lens.LensDirtIntensity;
+            PostProcessSettings profile = activeCamera->PostProcess;
+            profile.Sanitize();
+            lensDirtIntensity = profile.Lens.LensDirtIntensity;
         }
         else if (activeCamera != nullptr && activeCamera->LensEffects.LensDirtIntensity > 0.0f)
         {
@@ -695,10 +697,6 @@ namespace NorvesLib::Core::Rendering
         }
         params.lensDirtIntensity =
             (bDebugPostProcessBypass || !std::isfinite(lensDirtIntensity)) ? 0.0f : std::max(lensDirtIntensity, 0.0f);
-        if (bUseProfile)
-        {
-            params.lensDirtIntensity = std::min(params.lensDirtIntensity, 4.0f);
-        }
         params.lensDirtThreshold =
             std::isfinite(m_Settings.LensDirtThreshold) ? std::max(m_Settings.LensDirtThreshold, 0.0f) : 0.0f;
         params.lensDirtSceneRatio =

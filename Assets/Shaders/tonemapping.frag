@@ -243,6 +243,7 @@ float GradeContrastChannel(float value, float pivot, float contrast)
 // 表示変換より前のシーンリニア値に、カメラの色補正を掛ける。
 vec3 ApplyGrade(vec3 c)
 {
+    const float GRADE_VALUE_MAX = 65504.0;
     const vec3 luma = vec3(0.2126, 0.7152, 0.0722);
     c *= params.gradeExposureScale;
     c *= params.gradeWhiteBalanceGain.rgb;
@@ -262,6 +263,9 @@ vec3 ApplyGrade(vec3 c)
                  GradeContrastChannel(c.g, pivot, contrast),
                  GradeContrastChannel(c.b, pivot, contrast));
     }
+
+    // シーンカラーの半精度上限でべき乗の結果を抑え、彩度計算で無限大同士を引くのを防ぐ。
+    c = min(c, vec3(GRADE_VALUE_MAX));
 
     float saturation = params.gradeSaturation;
     if (saturation != 1.0)
@@ -290,7 +294,8 @@ vec3 ApplyGrade(vec3 c)
     float y = dot(max(c, vec3(0.0)), luma);
     float t = smoothstep(-2.0, 2.0, log2(max(y, 1e-6) / pivot));
     vec3 tint = params.gradeShadowTint.rgb + (params.gradeHighlightTint.rgb - params.gradeShadowTint.rgb) * t;
-    return c * tint;
+    // 色を掛けた後も同じ上限を守り、表示変換の二次式があふれるのを防ぐ。
+    return min(c * tint, vec3(GRADE_VALUE_MAX));
 }
 
 // フィルムグレイン: 画素・フレームごとのseedから決まる、平均0・分散1の三角分布の雑音（PCGのhash）。
