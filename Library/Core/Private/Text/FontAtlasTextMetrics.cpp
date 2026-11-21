@@ -91,9 +91,14 @@ namespace NorvesLib::Core
         m_Generation = 0;
     }
 
+    bool FontAtlasTextMetrics::HasUsableAtlas() const
+    {
+        return m_Atlas && m_Atlas->IsCpuBuilt();
+    }
+
     TextGlyphMetrics FontAtlasTextMetrics::GetGlyphMetrics(uint32_t codepoint) const
     {
-        if (!m_Atlas)
+        if (!HasUsableAtlas())
         {
             return {};
         }
@@ -101,8 +106,23 @@ namespace NorvesLib::Core
         return {glyph.AdvancePx, glyph.SizePx, glyph.BearingPx, glyph.bValid};
     }
 
+    float FontAtlasTextMetrics::GetAscenderPx() const
+    {
+        return HasUsableAtlas() ? m_AscenderPx : 0.0f;
+    }
+
+    float FontAtlasTextMetrics::GetDescenderPx() const
+    {
+        return HasUsableAtlas() ? m_DescenderPx : 0.0f;
+    }
+
     float FontAtlasTextMetrics::GetLineAdvancePx() const
     {
-        return m_Atlas ? (std::max)(m_Atlas->GetLineAdvancePx(), m_AscenderPx + m_DescenderPx) : 0.0f;
+        return HasUsableAtlas() ? (std::max)(m_Atlas->GetLineAdvancePx(), m_AscenderPx + m_DescenderPx) : 0.0f;
+    }
+
+    uint64_t FontAtlasTextMetrics::GetGeneration() const
+    {
+        return HasUsableAtlas() ? m_Generation : 0;
     }
 }
