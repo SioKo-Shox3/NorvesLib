@@ -13146,3 +13146,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（GrassField は Public API）。G13-GR24-PERCEPTION-SERVICE が `PerceptionTuning` の読み込みとモデルの配線、固体の遮蔽を受け持つ。
 - Notes: 採った判断: 枯れ度は GR24 の側で掛けず `GrassField` の多重定義の中で 1 回だけ掛ける（LayerB の A を読めるのが草の場だけのため）。遠景の帯の草丈の潰しは視点の距離で決まる描画だけの効果なので知覚には掛けない（近景の帯の値）。草の倍率 `grass.opacityScale` は光学的厚さに掛ける（T^scale、T=1 は 1 のまま）。聴覚の量は (R/d)^2 の線形（可聴半径の換算は評価器の `ComputeHearingRadiusThresholdDb`）、強さは 1−exp(−量)、騒音床のマスキングは 1/(1+10^((床−受音)/10))。嗅覚は風上の拡散に横風の境で 1・真の風上で `upwindAxisRatio`（仮 0.5）の角度の倍率を掛け、同じ距離で横風 > 風上を保つ（要件の式からの差）。気づきの上がる遷移は段ごとに遅れを数えるので、Unaware から一気に Alert へ上がると遅れが 2 回入ることがある。感度は気づきの積分の側だけで掛ける。踏み倒し（GR44）は CPU から読めないので知覚に入れていない。
 - U10 目が草の先端より高いと草の透過率を 1 にし、倍率を光学的厚さに掛けてから指数を取る: 着地(直し 0 回)
+- U11 嗅覚の濃さを風上・風下とも決めた式どおりにし、視野の縁の幅に正の値を求める: 着地(直し 0 回)

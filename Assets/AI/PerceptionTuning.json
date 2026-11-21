@@ -25,7 +25,6 @@
     "downwindLengthMeters": 40,
     "upwindLengthMeters": 3,
     "upwindFactor": 0.1,
-    "upwindAxisRatio": 0.5,
     "crossSigmaBaseMeters": 2,
     "crossSigmaSpreadPerMeter": 0.15,
     "calmWindSpeed": 0.3,

@@ -19,7 +19,6 @@ namespace NorvesLib::Modules::AI::Perception
             return std::isfinite(tuning.DownwindLengthMeters) && tuning.DownwindLengthMeters > 0.0f &&
                    std::isfinite(tuning.UpwindLengthMeters) && tuning.UpwindLengthMeters > 0.0f &&
                    std::isfinite(tuning.UpwindFactor) && tuning.UpwindFactor >= 0.0f &&
-                   std::isfinite(tuning.UpwindAxisRatio) && tuning.UpwindAxisRatio >= 0.0f &&
                    std::isfinite(tuning.CrossSigmaBaseMeters) && tuning.CrossSigmaBaseMeters > 0.0f &&
                    std::isfinite(tuning.CrossSigmaSpreadPerMeter) && tuning.CrossSigmaSpreadPerMeter >= 0.0f &&
                    std::isfinite(tuning.CalmWindSpeed) && tuning.CalmWindSpeed >= 0.0f &&
@@ -92,21 +91,18 @@ namespace NorvesLib::Modules::AI::Perception
         const double along = (dx * windX + dz * windZ) / speed;
         // 風と直交する水平単位ベクトルへの射影で、風の軸からの距離を得る。
         const double cross = std::abs(dx * windZ - dz * windX) / speed;
-        const double back = static_cast<double>(query.Strength) * tuning.UpwindFactor *
-                            std::exp(-distance / tuning.UpwindLengthMeters);
         double directional;
         if (along >= 0.0)
         {
             const double sigma = tuning.CrossSigmaBaseMeters + tuning.CrossSigmaSpreadPerMeter * along;
             const double crossInSigmas = cross / sigma;
-            const double plume = query.Strength * std::exp(-along / tuning.DownwindLengthMeters -
-                                                          0.5 * crossInSigmas * crossInSigmas);
-            directional = std::max(plume, back);
+            directional = query.Strength * std::exp(-along / tuning.DownwindLengthMeters -
+                                                   0.5 * crossInSigmas * crossInSigmas);
         }
         else
         {
-            const double axisFraction = std::min(1.0, -along / distance);
-            directional = back * std::lerp(1.0, static_cast<double>(tuning.UpwindAxisRatio), axisFraction);
+            directional = static_cast<double>(query.Strength) * tuning.UpwindFactor *
+                          std::exp(-distance / tuning.UpwindLengthMeters);
         }
 
         result.Concentration = ToFiniteFloat(std::lerp(isotropic, directional, weight));

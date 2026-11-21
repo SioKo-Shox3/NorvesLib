@@ -1,8 +1,8 @@
 ﻿// 匂いは雨の影響を受けない。
-// 水平距離 d の無風の濃さ S exp(−d/L_calm) と風の分布を、水平風速の smoothstep で補間する。
-// 風下距離 a ≥ 0 では煙 S exp(−a/L_down − c²/(2σ²)) と拡散 B = S F exp(−d/L_up) の大きい方を採る。
+// 水平距離 d に応じた無風の等方分布 S exp(−d/L_calm) と風の分布を、水平風速の smoothstep で補間する。
+// 風下距離 a ≥ 0 では煙の濃さ S exp(−a/L_down − c²/(2σ²)) を使う。
 // c は横風距離、σ は風下へ進むほど base + spread × a で広がる煙の幅。
-// a < 0 の拡散は B × lerp(1, UpwindAxisRatio, |a|/d)。同じ距離なら横風より真の風上を薄くする。
+// 風上 a < 0 では拡散の濃さ S · UpwindFactor · exp(−d/L_up) を使う。
 #pragma once
 
 #include "Math/Vector3.h"
@@ -13,8 +13,7 @@ namespace NorvesLib::Modules::AI::Perception
     {
         float DownwindLengthMeters = 40.0f;     // 風下で煙が減衰する長さ（m）
         float UpwindLengthMeters = 3.0f;        // 風上への拡散が減衰する長さ（m）
-        float UpwindFactor = 0.1f;              // 横風の境での拡散の倍率
-        float UpwindAxisRatio = 0.5f;           // 横風を 1 とした真の風上の拡散の割合
+        float UpwindFactor = 0.1f;              // 風上の拡散の倍率（決まりの 0.1）
         float CrossSigmaBaseMeters = 2.0f;      // 源での煙の幅（m）
         float CrossSigmaSpreadPerMeter = 0.15f; // 風下に 1 m 進むごとの幅の増分（m）
         float CalmWindSpeed = 0.3f;             // 等方分布だけを使う風速の上限（m/s）

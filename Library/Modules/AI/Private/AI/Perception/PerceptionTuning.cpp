@@ -72,7 +72,7 @@ namespace NorvesLib::Modules::AI::Perception
         const Section sections[] = {
             {"vision", {
                 {"fieldOfViewDegrees", next.Vision.FieldOfViewDegrees, Range::FieldOfView},
-                {"fieldOfViewEdgeDegrees", next.Vision.FieldOfViewEdgeDegrees, Range::NonNegative},
+                {"fieldOfViewEdgeDegrees", next.Vision.FieldOfViewEdgeDegrees, Range::Positive},
                 {"fadeStartMeters", next.Vision.FadeStartMeters, Range::Positive},
                 {"maxDistanceMeters", next.Vision.MaxDistanceMeters, Range::Positive},
                 {"terrainClearanceMeters", next.Vision.TerrainClearanceMeters, Range::NonNegative},
@@ -95,7 +95,6 @@ namespace NorvesLib::Modules::AI::Perception
                 {"downwindLengthMeters", next.Smell.DownwindLengthMeters, Range::Positive},
                 {"upwindLengthMeters", next.Smell.UpwindLengthMeters, Range::Positive},
                 {"upwindFactor", next.Smell.UpwindFactor, Range::Unit},
-                {"upwindAxisRatio", next.Smell.UpwindAxisRatio, Range::Unit},
                 {"crossSigmaBaseMeters", next.Smell.CrossSigmaBaseMeters, Range::Positive},
                 {"crossSigmaSpreadPerMeter", next.Smell.CrossSigmaSpreadPerMeter, Range::NonNegative},
                 {"calmWindSpeed", next.Smell.CalmWindSpeed, Range::NonNegative},
