@@ -373,7 +373,8 @@ namespace NorvesLib::Core::Scene
             candidate[0].Desc.Name = DefaultSurfaceName;
             candidate[0].bActive = true;
             bool bDefaultSpecified = false;
-            static constexpr const char* surfaceKeys[] = {"name", "parent", "flags", "audio", "visual", "physical"};
+            static constexpr const char* thresholdKey = "vegetationDensityThreshold";
+            static constexpr const char* surfaceKeys[] = {"name", "parent", "flags", "audio", "visual", "physical", thresholdKey};
             for (size_t i = 0; i < surfaces.GetArraySize(); ++i)
             {
                 const auto value = surfaces.GetArrayElement(i);
@@ -384,7 +385,7 @@ namespace NorvesLib::Core::Scene
                 const auto nameValue = value.FindMember("name");
                 const Container::StringView displayName = nameValue.IsString()
                     ? Container::StringView(nameValue.AsString()) : Container::StringView("未指定");
-                result = CheckKeys(value, surfaceKeys, 6, displayName);
+                result = CheckKeys(value, surfaceKeys, 7, displayName);
                 if (!result.Succeeded())
                 {
                     return result;
@@ -442,6 +443,23 @@ namespace NorvesLib::Core::Scene
                 if (!result.Succeeded())
                 {
                     return result;
+                }
+                if (const auto threshold = value.FindMember(thresholdKey); threshold.IsValid())
+                {
+                    if (!threshold.IsNumber())
+                    {
+                        return Fail(Error::InvalidType, "数ではありません", name, thresholdKey);
+                    }
+                    const double number = threshold.AsNumber();
+                    if (!std::isfinite(number) || std::abs(number) > std::numeric_limits<float>::max())
+                    {
+                        return Fail(Error::NonFiniteNumber, "有限の float に収まりません", name, thresholdKey);
+                    }
+                    if (number < 0.0 || number > 1.0)
+                    {
+                        return Fail(Error::OutOfRange, "数値が範囲外です", name, thresholdKey);
+                    }
+                    desc.VegetationDensityThreshold = static_cast<float>(number);
                 }
                 candidate[index].Desc = std::move(desc);
                 candidate[index].bActive = true;

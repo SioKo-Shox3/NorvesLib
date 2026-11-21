@@ -952,6 +952,11 @@ namespace NorvesLib::Modules::Physics
             {
                 return Result::NoHit;
             }
+            if (bApplyFilter && query.Filter.IgnoreEntity.IsValid() && proxy.bHasEntity
+                && proxy.Entity == query.Filter.IgnoreEntity)
+            {
+                return Result::NoHit;
+            }
             if (!HasRepresentableQueryScale(proxy,query))
             {
                 return Result::InvalidArgument;
