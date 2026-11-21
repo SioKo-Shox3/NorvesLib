@@ -12945,3 +12945,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（危険地帯）。ポーズを使う側（G15-GR119-WINDOW-EVENTS のフォーカス・最小化、G15-GR119-GAME-FLOW のメニュー）。
 - Notes: 採った判断: ポーズ中の秒は丸めないので、デバッガの停止の後などには長い秒が 1 回渡る（印の付いたものは実時間で進む契約に合わせた）。`World::GetTickWhenPausedEntryCount()` は名前を変えず、候補の Component の数を返す（ほかに使う所は無い）。Running になった後に登録されたモジュールが、その時点のポーズの理由を受け取らないのは前のまま。
 - U9 印の付いた対象が無いポーズ中は順序の作り直しと収集を飛ばし、文書に作り直しの条件を書いてビルドで確かめる: 着地(直し 0 回)
+
+## G15-GR119-PAUSE-GATE 人の判断による再開の仕上げ（2026-11-22）
+- Done: `World::TickWhenPaused` は、印の付いた対象の集合が空なら順序の作り直し（`SyncOrderedTicks`）も呼び先の収集もせず、破棄予約の回収（`CleanupDestroyedObjects`）だけを行って抜ける。順序の汚れの印は下ろさず、再開後の通常の更新で付け直す。対象が 1 件以上あるときの流れは変えていない。`Docs/Architecture/TickStages.md` のポーズの節に、作り直しは対象があり木の構造・Tick の設定が変わったフレームだけで、費用は通常のフレームと同じことを書いた。書き換えた done-when の (1)〜(5) は前の反復までの実装とこの直しで満たし、(6) は下のビルド。
+- 証拠: `.harness/runs/20261122-015216/verify-G15-GR119-PAUSE-GATE-U9.txt`（`cmake --build build --config Debug --target Game -- /m:1` が `exit=0`、`Core.vcxproj -> ...Core.lib` と `Game.vcxproj -> ...\Game\Debug\Game.exe` まで生成、`World.cpp` 由来の警告 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は World.cpp 7/0・TickStages.md 1/1 で一致）。
+- 採った判断: 対象があるときに作り直しを飛ばすと、ポーズ中に足された対象を `m_OrderedTicks` から引けずに取りこぼすので、対象があり順序が汚れたフレームでは通常の更新と共通の `SyncOrderedTicks` を走らせる（変化の無いフレームでは走らず、毎フレームの全走査にはならない）。ポーズ用の順序を差分で別に保つ作りは、World と Object の寿命に第 2 の順序の仕組みを足すことになり、得るものに見合わないので採らなかった。試験は決まりにより足さず、回していない。
+- 人が見るときの見どころ: ポーズの理由を Push する呼び手がまだ無いので、ランチャーと各シーンの動き・見た目は変わらない。
+- Next: ランナーの評価者の反証（危険地帯）。ポーズを使う側（G15-GR119-WINDOW-EVENTS のフォーカス・最小化、G15-GR119-GAME-FLOW のメニュー）。
+- Notes: 要起票: Running になった後に登録したモジュールへ、そのときのポーズの理由を最初に 1 回届ける
