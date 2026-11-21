@@ -121,6 +121,11 @@ namespace NorvesLib::Modules::Audio
          */
         virtual AudioResult SetEmitterPosition(SoundInstanceHandle handle, const Math::Vector3& position) = 0;
         [[nodiscard]] virtual bool IsPlaying(SoundInstanceHandle handle) const = 0;
+        /**
+         * ハンドルが有効で、物理ボイスに停止を発行するまでは真を返す。
+         * フェードアウト中も真を返し、音源の位置同期を続けるかの判定に使う。
+         */
+        [[nodiscard]] virtual bool IsAudible(SoundInstanceHandle handle) const = 0;
         virtual void SetMasterVolume(float volume) = 0;
         [[nodiscard]] virtual float GetMasterVolume() const = 0;
         virtual void SetCategoryVolume(SoundCategory category, float volume) = 0;

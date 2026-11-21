@@ -54,7 +54,7 @@ namespace NorvesLib::Modules::Audio
     void AudioComponent::PruneHandles(ISoundSystem& soundSystem)
     {
         m_Handles.erase(std::remove_if(m_Handles.begin(), m_Handles.end(),
-            [&soundSystem](SoundInstanceHandle handle) { return !soundSystem.IsPlaying(handle); }),
+            [&soundSystem](SoundInstanceHandle handle) { return !soundSystem.IsAudible(handle); }),
             m_Handles.end());
     }
 

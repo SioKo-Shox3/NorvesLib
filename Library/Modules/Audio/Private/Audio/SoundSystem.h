@@ -44,6 +44,7 @@ namespace NorvesLib::Modules::Audio::Private
         AudioResult SetPitch(SoundInstanceHandle handle, float semitones) override;
         AudioResult SetEmitterPosition(SoundInstanceHandle handle, const Math::Vector3& position) override;
         [[nodiscard]] bool IsPlaying(SoundInstanceHandle handle) const override;
+        [[nodiscard]] bool IsAudible(SoundInstanceHandle handle) const override;
         void SetMasterVolume(float volume) override;
         [[nodiscard]] float GetMasterVolume() const override;
         void SetCategoryVolume(SoundCategory category, float volume) override;

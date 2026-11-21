@@ -449,6 +449,13 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return admission;
         }
+        const float pitch = instance.Params.PitchSemitones;
+        if (pitch > kAudioMaxVoicePitchSemitones)
+        {
+            return AudioResult::InvalidState;
+        }
+        const AudioVoiceDesc desc{definition.bLoop, definition.LoopBeginFrame, definition.LoopLengthFrames, 0,
+            std::min(std::max(12.0f, pitch) + (instance.bSpatial ? 12.0f : 0.0f), kAudioMaxVoicePitchSemitones)};
         if (instance.bSpatial)
         {
             // 再生できない 3D 音源のために既存のボイスを奪わない。
@@ -480,8 +487,6 @@ namespace NorvesLib::Modules::Audio::Private
             return AudioResult::InvalidState;
         }
 
-        const AudioVoiceDesc desc{definition.bLoop, definition.LoopBeginFrame, definition.LoopLengthFrames, 0,
-            std::max(12.0f, instance.Params.PitchSemitones) + (instance.bSpatial ? 12.0f : 0.0f)};
         if (!instance.bSpatial)
         {
             clip = SelectClip(definition);
@@ -637,7 +642,9 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return AudioResult::InvalidState;
         }
-        if (volume == instance.LastVoiceVolume)
+        if (volume == instance.LastVoiceVolume ||
+            (instance.bSpatial && volume != 0.0f &&
+             std::fabs(volume - instance.LastVoiceVolume) <= kAudioSpatialParameterEpsilon))
         {
             return AudioResult::Success;
         }
@@ -814,6 +821,11 @@ namespace NorvesLib::Modules::Audio::Private
         if (instance->bSpatial)
         {
             const float ratio = GetSpatialFrequencyRatio(semitones, instance->DopplerRatio);
+            if (std::fabs(ratio - instance->LastFrequencyRatio) <= kAudioSpatialParameterEpsilon)
+            {
+                instance->Params.PitchSemitones = semitones;
+                return AudioResult::Success;
+            }
             const AudioResult result = m_Service.SetVoiceFrequencyRatio(instance->Voice, ratio);
             if (result == AudioResult::Success)
             {
@@ -858,6 +870,16 @@ namespace NorvesLib::Modules::Audio::Private
         }
         const Instance* instance = Resolve(handle);
         return instance != nullptr && !instance->bStopRequested;
+    }
+
+    bool SoundSystem::IsAudible(SoundInstanceHandle handle) const
+    {
+        if (!IsOwnerThread() || m_bShutdown)
+        {
+            return false;
+        }
+        const Instance* instance = Resolve(handle);
+        return instance != nullptr && !instance->bStopVoiceIssued;
     }
 
     void SoundSystem::SetMasterVolume(float volume)

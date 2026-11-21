@@ -104,7 +104,7 @@ namespace NorvesLib::Modules::Audio::Private
 
                 const uint64_t frameCount = clip->GetFrameCount();
                 if (!std::isfinite(desc.MaxPitchSemitones) || desc.MaxPitchSemitones < 0.0f ||
-                    desc.MaxPitchSemitones > 120.0f || desc.StartFrame >= frameCount)
+                    desc.MaxPitchSemitones > kAudioMaxVoicePitchSemitones || desc.StartFrame >= frameCount)
                 {
                     return AudioResult::InvalidState;
                 }

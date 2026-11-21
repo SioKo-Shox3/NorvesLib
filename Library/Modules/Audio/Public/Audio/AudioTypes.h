@@ -77,6 +77,9 @@ namespace NorvesLib::Modules::Audio
         uint64_t SuppressedByCooldownCount = 0;
     };
 
+    // サービスがボイス作成時に受け付けるピッチの上限（半音）。周波数比は 1024。
+    inline constexpr float kAudioMaxVoicePitchSemitones = 120.0f;
+
     struct AudioVoiceDesc
     {
         bool bLoop = false;
