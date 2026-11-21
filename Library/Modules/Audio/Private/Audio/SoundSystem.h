@@ -61,6 +61,9 @@ namespace NorvesLib::Modules::Audio::Private
             bool bGlobal = true;
             bool bLoop = false;
             VoiceHandle Voice;
+            Core::Container::TSharedPtr<AudioClipResource> Clip; ///< ボイスの再作成に使う、選択済みのクリップ。
+            AudioVoiceDesc VoiceDesc; ///< 作成時のループ区間とピッチ上限を保持し、開始フレームは作成のたびに指定する。
+            double PlayFrame = 0.0; ///< 仮想時計で進めるクリップ内の再生位置（フレーム）。
             SoundId DefinitionId;
             SoundPlayParams Params;
             uint64_t OwnerKey = 0;
@@ -90,6 +93,8 @@ namespace NorvesLib::Modules::Audio::Private
             SoundFadeCurve FadeCurve = SoundFadeCurve::Linear;
             float LastVoiceVolume = 0.0f;
 
+            /** 再生区間の終端（含まない）を返す。クリップが空なら 0 を返す。 */
+            [[nodiscard]] uint64_t GetPlaybackEndFrame() const;
             /** 現在位置での係数を求め、音量とピッチの変更にも使う値を保持する。 */
             AudioSpatialResult ComputeSpatial(const AudioListenerState& listener);
         };
@@ -119,6 +124,14 @@ namespace NorvesLib::Modules::Audio::Private
                                      const SoundBankClipResolver& resolveClip, SoundBankLoadReport& outReport);
         AudioResult Play(SoundId id, const Math::Vector3& position, bool bGlobal,
                          const SoundPlayParams& params, SoundInstanceHandle& outHandle);
+        /**
+         * 指定フレームからボイスを開始する。休眠からの復帰時も再開フレームを渡して作り直す。
+         * ストリームのボイス（G16-GR74-STREAM-VOICE）では、この位置をデコーダの Seek に渡す。
+         */
+        AudioResult StartInstanceVoice(Instance& instance, uint32_t startFrame);
+        [[nodiscard]] float GetInstanceFrequencyRatio(const Instance& instance) const;
+        bool AdvancePlayFrame(Instance& instance, float deltaSeconds) const;
+        [[nodiscard]] uint32_t GetResumeFrame(const Instance& instance) const;
         // 上限と抑制の方針は、この入口に集約する。
         AudioResult CheckPlayAdmission(const SoundDefinition& definition, Instance& candidate, uint32_t& outStealIndex);
         [[nodiscard]] static bool IsLowerVoiceRank(const Instance& left, const Instance& right);
