@@ -2,6 +2,7 @@
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
 #include "Application/IApplicationHandler.h"
+#include "Component/GroundContactComponent.h"
 #include "Logging/LogMacros.h"
 #include <cmath>
 
@@ -49,6 +50,8 @@ namespace NorvesLib::Core::Engine
           m_InputRebindCapture(m_InputSystem, m_InputRouter, m_InputMapper)
     {
         (void)Component::WorldFieldInteractorComponent::StaticClass();
+        // 静的ライブラリから型が落ちず、シーンの読み込みで名前から作れるように登録する。
+        (void)Component::GroundContactComponent::StaticClass();
         m_ScatterSystem.SetRenderWorld(&m_RenderWorld);
         // 地形は照会ごとに TerrainSystem::FindTerrain で探し、地形の外では種別を返さない。
         // TerrainComponent の登録・解除をまたいで provider を結んでおける。

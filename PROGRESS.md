@@ -12771,3 +12771,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: 足 IK（G9-GR14）は足の接地のレイの結果を外へ出していないので、足ごとに自前の下向きのレイを 1 本撃つ。GR59 の水たまりは CPU で水深を引ける形が無い（`SamplePuddlePotential` は凹み度）ので `PuddleDepthM` は 0。provider は照会ごとに `TerrainSystem::FindTerrain` で地形を引くので、地形の登録・解除に合わせず Engine の構築時に 1 回結ぶ。
 - Notes: 判断: 犬の足の水しぶき（`FootSplashComponent`）は表面の種別を判定しておらず、足の接地の通知の時点で自前の照会と生の濡れを読む。`GroundContactState` は時点（固定ステップ）と濡れの式（草の水気の偏りを含む）が違い、読み替えると水しぶきの量が変わるので置き換えていない。踏み倒し（GR44）は今のコードに無いので置き換えるものが無い。
 - Notes: 既知の限界: TerrainComponent の `LayerTablePath` の記述は provider から参照できないので、層→表面名は高さ場の層名から作る仮の材質の記述（`MakeProvisionalTerrainMaterialDesc`）を使う。草のしきい値 0.35 は根拠の無い仮の値（データで替える）。優先度は地形 200 > 草 100 なので、草が種別を決めるのは地形の無い所だけで、地形の上の濃い草は `VegetationDensity01` で返る。
+- U6 接地の自己ヒットを足ごとに撃ち直し、取得できないときは番号も戻し、型を Engine で登録して tick を消費者より先にする: 着地(直し 0 回)

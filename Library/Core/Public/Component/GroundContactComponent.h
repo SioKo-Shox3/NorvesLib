@@ -35,6 +35,9 @@ namespace NorvesLib::Core::Component
         REFLECTION_CLASS(GroundContactComponent, Component)
 
     public:
+        /// 同じ PostPhysics 群の消費者（既定の優先度 0）より先に接地の状態を更新する。
+        static constexpr int16_t kTickPriority = -1;
+
         GroundContactComponent();
         explicit GroundContactComponent(const FieldInitializer* initializer);
         explicit GroundContactComponent(const IUnknown* sourceObject);
@@ -44,6 +47,10 @@ namespace NorvesLib::Core::Component
         void EndPlay() override;
 
         const GroundContactState& GetGroundContactState() const { return m_State; }
+        /// 水しぶき・足跡などの消費者が、自分の脚の関節名から接地の状態の足の番号を引く。該当する足がなければ -1。
+        int32_t FindFootIndex(Identity joint) const;
+
+        /// 自己ヒットは標本ごとに覚えて撃ち直す。除外枠が満ちたら、生きていない学習済みの枠を空ける。
         bool SetIgnoredColliders(Container::Span<const Scene::ColliderHandle> colliders);
         bool SetIgnoredBodies(Container::Span<const Scene::BodyHandle> bodies);
 
@@ -60,6 +67,7 @@ namespace NorvesLib::Core::Component
         PROPERTY(float, RayLength)
 
     private:
+        const Container::String& GetFootJointName(uint32_t index) const;
         void SetDefaults();
         void TickContacts(float dt);
 

@@ -16,24 +16,34 @@ namespace NorvesLib::Core::Component
 {
     namespace
     {
-        bool AddIgnoredCollider(Scene::PhysicsQueryFilter& filter, Scene::ColliderHandle collider)
+        bool AddIgnoredCollider(Scene::PhysicsQueryFilter& filter, Scene::ColliderHandle collider,
+                                const Scene::SceneQuery* query = nullptr, size_t explicitCount = 0)
         {
-            if (collider.IsValid())
+            auto& slots = filter.IgnoreColliders;
+            auto end = std::end(slots);
+            if (!collider.IsValid() || std::find(std::begin(slots), end, collider) != end)
             {
-                for (auto& slot : filter.IgnoreColliders)
+                return false;
+            }
+            auto empty = std::find(std::begin(slots), end, Scene::ColliderHandle{});
+            if (empty == end && query)
+            {
+                for (size_t i = explicitCount; i < std::size(slots); ++i)
                 {
-                    if (slot == collider)
+                    bool alive = true;
+                    if (query->IsAlive(slots[i], alive) == Scene::EPhysicsSceneQueryResult::Success && !alive)
                     {
-                        return false;
-                    }
-                    if (!slot.IsValid())
-                    {
-                        slot = collider;
-                        return true;
+                        slots[i] = {};
                     }
                 }
+                empty = std::find(std::begin(slots) + explicitCount, end, Scene::ColliderHandle{});
             }
-            return false;
+            if (empty == end)
+            {
+                return false;
+            }
+            *empty = collider;
+            return true;
         }
 
         float NonnegativeDistance(float value)
@@ -78,7 +88,32 @@ namespace NorvesLib::Core::Component
         getRayStartHeight() = 0.5f;
         getRayLength() = 1.5f;
         SetTickGroup(ETickGroup::PostPhysics);
+        SetTickPriority(kTickPriority);
         SetTickEnabled(true);
+    }
+
+    const Container::String& GroundContactComponent::GetFootJointName(uint32_t index) const
+    {
+        const Container::String* joints[] = {&FootJoint0.Get(), &FootJoint1.Get(), &FootJoint2.Get(), &FootJoint3.Get()};
+        return *joints[index];
+    }
+
+    int32_t GroundContactComponent::FindFootIndex(Identity joint) const
+    {
+        if (!joint.IsValid())
+        {
+            return -1;
+        }
+        const uint32_t count = (std::min)(FootCount.Get(), GroundContactState::MaxFeet);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const auto& name = GetFootJointName(i);
+            if (!name.empty() && Identity(name) == joint)
+            {
+                return static_cast<int32_t>(i);
+            }
+        }
+        return -1;
     }
 
     bool GroundContactComponent::SetIgnoredColliders(Container::Span<const Scene::ColliderHandle> colliders)
@@ -160,9 +195,8 @@ namespace NorvesLib::Core::Component
         uint64_t sequence = 0;
         if (query.GetPublishedSnapshotSequence(sequence) != EPhysicsSceneQueryResult::Success || sequence == 0)
         {
-            const uint64_t previous = m_State.StepSerial;
+            // 復帰したときに同じ番号でも取り直すため、状態と番号を未更新に戻す。
             m_State = GroundContactState{};
-            m_State.StepSerial = previous;
             return;
         }
         if (sequence == m_State.StepSerial)
@@ -189,11 +223,11 @@ namespace NorvesLib::Core::Component
         desc.MaxHits = 1;
         Container::VariableArray<Scene::PhysicsQueryHit> hits;
         const auto ownerHandle = owner->GetEntityHandle();
-        bool retryAvailable = true;
+        // 学習した自己コライダーはフィルタに残るので、以後のステップでは各足のレイは通常 1 本で済む。
         auto sampleAt = [&](const Math::Vector3& position, GroundContactSample& sample)
         {
             desc.Ray.Origin = position + Math::Vector3(0.0f, height, 0.0f);
-            for (;;)
+            for (size_t retries = 0; retries <= std::size(m_Filter.IgnoreColliders); ++retries)
             {
                 desc.Filter = m_Filter;
                 if (query.ExecuteQuery(desc, hits) != EPhysicsSceneQueryResult::Success || hits.empty())
@@ -203,13 +237,11 @@ namespace NorvesLib::Core::Component
                 const auto& hit = hits[0];
                 if (hit.bHasEntity && hit.Entity == ownerHandle)
                 {
-                    AddIgnoredCollider(m_Filter, hit.Collider);
-                    if (retryAvailable)
+                    if (!AddIgnoredCollider(m_Filter, hit.Collider, &query, m_ExplicitColliderCount))
                     {
-                        retryAvailable = false;
-                        continue;
+                        return;
                     }
-                    return;
+                    continue;
                 }
                 sample.bHit = true;
                 sample.Point = hit.Point;
@@ -232,14 +264,14 @@ namespace NorvesLib::Core::Component
         sampleAt(world.position, next.Body);
         const auto* mesh = owner->GetComponent<SkinnedMeshComponent>();
         const bool useJoints = mesh && mesh->IsActive() && !mesh->IsPendingDestroy();
-        const Container::String* joints[] = {&FootJoint0.Get(), &FootJoint1.Get(), &FootJoint2.Get(), &FootJoint3.Get()};
         const Math::Vector3 offsets[] = {FootLocalOffset0, FootLocalOffset1, FootLocalOffset2, FootLocalOffset3};
         for (uint32_t i = 0; i < next.FootCount; ++i)
         {
             Math::Transform foot;
-            if (useJoints && !joints[i]->empty())
+            const auto& joint = GetFootJointName(i);
+            if (useJoints && !joint.empty())
             {
-                const auto index = mesh->FindJointIndex(Identity(*joints[i]));
+                const auto index = mesh->FindJointIndex(Identity(joint));
                 if (index >= 0 && mesh->TryGetJointWorldTransform(static_cast<uint32_t>(index), foot))
                 {
                     sampleAt(foot.position, next.Foot[i]);
