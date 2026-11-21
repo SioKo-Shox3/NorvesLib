@@ -130,6 +130,22 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 
 真後ろでの音量減衰は 6 dB、高域の係数は 0.5。`MinDistance` の内側では、近距離の広がりと同じ係数 s = d/MinDistance で背後の効果も弱まる。式と受入れ条件は [GR73 3D 定位とリスナーの受入れ記録](../AudioValidation/GR73Acceptance.md)を参照。
 
+### 遮蔽とローパス
+
+`SoundSystem` は 3D の定義から物理 voice を開始すると、`IAudioOcclusion::TrackVoiceAcoustics` に音源の位置、定義の `sound_class`（既定は `ambient`）、優先度を渡して追跡を始める。
+
+音声モジュールは毎 Tick、GR73 のリスナー解決で得た位置を `SetListenerPosition` で更新器へ渡す。位置は `MainCamera` なら主カメラ、`Entity` と `Hybrid` なら選んだ `AudioListenerComponent` の Entity から取る。必要な入力が欠けて既定の姿勢へ退避したときは、`ClearListenerPosition` で経路の評価を止める。外部から `SetListenerPosition` を呼んだ場合も、次の Tick の解決結果で上書きされる。
+
+モジュールの Tick の最後に `AudioOcclusionUpdater::Tick` が走り、そのフレームの `SoundSystem::Update` で始まった声も評価の対象に入る。破棄済み、`Stopping` 以降、または `Quarantined` の声はバックエンドに触れずに追跡から外す。
+
+1. `Assets/Data/Acoustics.json` の `voiceBudgetPerFrame`（4 声）が 1 フレームの評価上限、`updateHz`（10 Hz）が各声の再評価頻度を決める。未評価の声を先に選び、再評価の順番は「待ち時間 + 優先度の加点」の大きい順とする。加点の上限は 1 周期である。
+2. `AcousticTransmissionEvaluator::Evaluate` がリスナーと音源の間の経路を評価し、分類ごとの免除を反映する。距離減衰は GR73 の定位で掛けるため、更新器は評価結果から距離減衰を引き、遮蔽分の利得だけを使う。遮断周波数は評価器が `hfLossToCutoff` の設定に従い、高域損失から対数補間で求める。
+3. 初回は評価値をそのまま適用する。以後は利得を dB、遮断周波数を対数周波数で、時定数 0.15 秒（暫定）の 1 次遅れで目標値へ近づける。`IAudioService::SetVoiceAcoustics` を通じて、バックエンドの `SetVoiceVolume` に呼び手の音量 × 遮蔽の線形利得を、`SetVoiceFilter` に遮断周波数を渡す。
+
+XAudio2 は遮断周波数 `f` を `2·sin(π·f/fs)` でフィルタ係数に変換する。`fs` は送り先の入力サンプルレートである。係数の上限 `XAUDIO2_MAX_FILTER_FREQUENCY` は素通しに相当するため、`fs` が 48 kHz の場合、約 8 kHz 以上の設定では素通しになる。
+
+遮蔽の利得とローパスの効き具合は、人がゲーム内で音源とリスナーの間に遮蔽物が入る前後の音を聞いて確かめる。起動確認用の台本はない。
+
 ### 休眠(virtual voice)
 
 1 voice に渡せる PCM は 2 GiB（`kAudioMaxVoicePcmBytes`、XAudio2 の単一バッファの上限）までとする。上限を超えると `IsPlayableVoiceDesc` の検査により開始時の距離にかかわらず `InvalidState` を返し、休眠のハンドルも発行しない。

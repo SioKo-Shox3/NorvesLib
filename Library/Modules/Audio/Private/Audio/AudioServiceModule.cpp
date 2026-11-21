@@ -3,10 +3,12 @@
 
 #include "Audio/AudioListenerComponent.h"
 #include "Audio/AudioListenerResolver.h"
+#include "Audio/AudioOcclusionUpdater.h"
 #include "Audio/AudioSpatialHost.h"
 #include "Audio/NullAudioBackend.h"
 #include "Audio/SoundSystem.h"
 #include "CoreTypes.h"
+#include "Engine/Engine.h"
 #include "Logging/LogMacros.h"
 
 #include <algorithm>
@@ -82,6 +84,7 @@ namespace NorvesLib::Modules::Audio::Private
                 if (m_Service)
                 {
                     m_SoundSystem = Core::Container::MakeUnique<SoundSystem>(*m_Service, Random::Generator{});
+                    m_SoundSystem->SetAudioOcclusion(&m_Occlusion);
                 }
             }
 
@@ -126,9 +129,11 @@ namespace NorvesLib::Modules::Audio::Private
                     // SoundSystem の参照先を破棄する前に、参照する側を終了して外す。
                     m_SoundSystem->Shutdown();
                     m_SoundSystem.reset();
+                    m_Occlusion.Reset();
                     m_Service->Shutdown();
                     m_Service = CreateAudioServiceForBackend(Core::Container::MakeUnique<NullAudioBackend>());
                     m_SoundSystem = Core::Container::MakeUnique<SoundSystem>(*m_Service, Random::Generator{});
+                    m_SoundSystem->SetAudioOcclusion(&m_Occlusion);
                     result = m_Service->Initialize();
                     if (result == AudioResult::Success)
                     {
@@ -154,12 +159,23 @@ namespace NorvesLib::Modules::Audio::Private
                     m_Service->Tick();
                     const AudioListenerState listener = m_ListenerResolver.Resolve(m_CameraListenerSource,
                         Core::Container::Span<AudioListenerComponent* const>(m_Listeners), deltaSeconds);
+                    // GR73 のリスナーを遮蔽の更新器へつなぐ。退避中は評価しない。
+                    if (m_ListenerResolver.IsUsingFallback())
+                    {
+                        m_Occlusion.ClearListenerPosition();
+                    }
+                    else
+                    {
+                        m_Occlusion.SetListenerPosition(listener.Position);
+                    }
                     m_SoundSystem->SetListener(listener);
                     for (AudioComponent* emitter : m_SpatialEmitters)
                     {
                         emitter->SyncSpatialEmitter(*m_SoundSystem);
                     }
                     m_SoundSystem->Update(deltaSeconds);
+                    // SoundSystem の更新で始まった声も同じフレームで評価する。
+                    m_Occlusion.Tick(*m_Service, m_Engine != nullptr ? &m_Engine->GetAcoustics() : nullptr, deltaSeconds);
                 }
             }
 
@@ -172,6 +188,8 @@ namespace NorvesLib::Modules::Audio::Private
                 if (m_Service)
                 {
                     m_SoundSystem->Shutdown();
+                    m_SoundSystem->SetAudioOcclusion(nullptr);
+                    m_Occlusion.Reset();
                     m_Service->Shutdown();
                 }
             }
@@ -215,6 +233,11 @@ namespace NorvesLib::Modules::Audio::Private
                 return *m_SoundSystem;
             }
 
+            IAudioOcclusion* GetAudioOcclusion() override
+            {
+                return m_Service ? &m_Occlusion : nullptr;
+            }
+
             const AudioBackendStatus& GetBackendStatus() const override
             {
                 return m_BackendStatus;
@@ -230,6 +253,7 @@ namespace NorvesLib::Modules::Audio::Private
             }
 
             Core::Container::TUniquePtr<IAudioService> m_Service;
+            AudioOcclusionUpdater m_Occlusion;
             Core::Container::TUniquePtr<SoundSystem> m_SoundSystem;
             Core::Engine::Engine* m_Engine = nullptr;
             MainCameraAudioListenerSource m_CameraListenerSource;

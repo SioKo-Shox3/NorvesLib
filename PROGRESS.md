@@ -13101,3 +13101,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 SoundDefinition に音の分類 sound_class を足し、バンクから読む: 着地(直し 0 回)
 - U3 AudioOcclusionUpdater(予算つきの評価と 1 次遅れの平滑)を作る: 着地(直し 0 回)
 - U4 SoundSystem が 3D の声を遮蔽の追跡に載せ、外す: 着地(直し 0 回)
+- U5 モジュールに更新器をつなぎ、解決したリスナーの位置を渡し、文書と設定を直す: 着地(直し 0 回)
