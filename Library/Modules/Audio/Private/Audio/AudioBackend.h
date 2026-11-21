@@ -182,14 +182,21 @@ namespace NorvesLib::Modules::Audio::Private
         uint32_t StartFrame = 0;       // 再生を始めるフレーム。
     };
 
+    struct AudioBackendVoiceDesc
+    {
+        AudioPcmFormat Format;
+        float MaxFrequencyRatio = 2.0f;
+        AudioBusId OutputBus = AudioBusId::Se;
+    };
+
     class IAudioBackend
     {
     public:
         virtual ~IAudioBackend() = default;
         virtual AudioResult Initialize(IAudioBackendEventSink& eventSink, uint64_t shutdownEpoch) = 0;
+        /** @brief 指定のバスへ送る。未作成なら Master へ、Master も未作成なら出力へ直接送る。 */
         virtual AudioResult CreateVoice(VoiceHandle handle,
-                                        const AudioPcmFormat& format,
-                                        float maxFrequencyRatio,
+                                        const AudioBackendVoiceDesc& desc,
                                         AudioBackendEventMailbox& mailbox) = 0;
         virtual AudioResult SubmitVoice(VoiceHandle handle,
                                         Core::Container::Span<const uint8_t> pcmBytes,
@@ -210,6 +217,15 @@ namespace NorvesLib::Modules::Audio::Private
          * its mailbox or submitted PCM bytes.
          */
         virtual AudioResult DestroyVoice(VoiceHandle handle) = 0;
+        /** @brief 全バスを破棄する。再び Initialize した後はバスを作り直す。 */
         virtual void Shutdown() = 0;
+
+        /**
+         * @brief Master は親を無視して出力へ直接送り、他のバスは作成済みの親へ送る。
+         * @details 作成済みのバスは変更せず AlreadyInState を返す。
+         */
+        virtual AudioResult CreateBus(AudioBusId bus, AudioBusId parent) = 0;
+        /** @brief 作成済みのバスの音量を有限で 0 以上の線形倍率に設定する。 */
+        virtual AudioResult SetBusVolume(AudioBusId bus, float gain) = 0;
     };
 } // namespace NorvesLib::Modules::Audio::Private

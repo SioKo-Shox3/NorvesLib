@@ -12996,3 +12996,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: `GroundContactComponent` を付けた呼び手はまだ無く、どのシーンでも既定の見た目は変わらない。付けた犬では、接地の `RayLength` が短く足が床に届かない場面で水しぶきが出なくなる（共有の接地状態が未接地のため）。
 - Next: 地形の provider の層の選び方が層の境の近くで `TerrainHeightField::SampleSurface`（最寄りの頂点）と食い違う件と、`PuddleDepthM` が常に 0 の件は、今回の完了条件の外として残る。
 - Notes: 判断: Public API の `PhysicsQueryFilter::IgnoreEntity` は構造体の末尾に足し、既定の無効なハンドルでは何も除かないので、既存の呼び手の挙動は変わらない。`bHasEntity` が偽の代理形状（Entity の無い静的なコライダー）には効かない。
+- U1 バスの SPI・voice の送り先・サービスの口と、XAudio2 と Null のバックエンドの実装: 着地(直し 0 回)

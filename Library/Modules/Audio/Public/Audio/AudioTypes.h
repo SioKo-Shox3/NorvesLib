@@ -16,6 +16,17 @@ namespace NorvesLib::Modules::Audio
         Rejected,
     };
 
+    enum class AudioBusId : uint8_t
+    {
+        Master = 0,
+        Se = 1,
+        Ambient = 2,
+        Music = 3,
+        Ui = 4,
+    };
+
+    inline constexpr uint32_t kAudioBusCount = 5;
+
     enum class AudioVoiceState : uint8_t
     {
         Created = 0,
@@ -91,5 +102,6 @@ namespace NorvesLib::Modules::Audio
         uint32_t LoopLengthFrames = 0;   // 0 はループ開始から末尾まで。
         uint32_t StartFrame = 0;
         float MaxPitchSemitones = 12.0f; // 上げられるピッチの上限。12 半音は周波数比 2.0。
+        AudioBusId OutputBus = AudioBusId::Se; ///< 作成時の送り先のバス。
     };
 } // namespace NorvesLib::Modules::Audio
