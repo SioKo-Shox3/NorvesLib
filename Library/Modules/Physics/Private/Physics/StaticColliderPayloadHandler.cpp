@@ -4,6 +4,7 @@
 #include "Asset/AssetFileReader.h"
 #include "Logging/LogMacros.h"
 #include "Physics/ColliderShapeTransform.h"
+#include "Physics/PhysicsSurfaceName.h"
 #include "Scatter/ScatterSystem.h"
 #include "Text/JsonDocument.h"
 
@@ -292,12 +293,19 @@ namespace NorvesLib::Modules::Physics
             }
             if (surface.IsValid())
             {
-                if (!surface.IsIntegerLiteral() || !std::isfinite(surface.AsNumber()) ||
-                    surface.AsNumber() < 0.0 || surface.AsNumber() > UINT8_MAX)
+                if (surface.IsIntegerLiteral() && std::isfinite(surface.AsNumber()) &&
+                    surface.AsNumber() >= 0.0 && surface.AsNumber() <= UINT8_MAX)
+                {
+                    out.SurfaceId = static_cast<uint8_t>(surface.AsUInt32());
+                }
+                else if (surface.IsString() && IsValidSurfaceName(surface.AsString()))
+                {
+                    out.SurfaceName = surface.AsString();
+                }
+                else
                 {
                     return false;
                 }
-                out.SurfaceId = static_cast<uint8_t>(surface.AsUInt32());
             }
             return true;
         }
@@ -479,7 +487,7 @@ namespace NorvesLib::Modules::Physics
             {
                 return fail("コライダーの形状・位置・寸法・回転・拡大・表面が不正です");
             }
-            state.Colliders.push_back(desc);
+            state.Colliders.push_back(std::move(desc));
         }
         for (size_t i = 0; i < scatter.GetArraySize(); ++i)
         {

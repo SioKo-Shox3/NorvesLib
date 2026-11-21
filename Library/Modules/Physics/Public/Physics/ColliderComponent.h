@@ -2,9 +2,12 @@
 
 #include "Component/Component.h"
 #include "Container/PointerTypes.h"
+#include "Container/String.h"
+#include "Container/StringView.h"
 #include "Delegate/Delegate.h"
 #include "Math/Transform.h"
 #include "Physics/PhysicsTypes.h"
+#include "Scene/SurfaceTypes.h"
 
 namespace NorvesLib::Core::Rendering::Terrain
 {
@@ -20,6 +23,12 @@ namespace NorvesLib::Modules::Physics
         REFLECTION_CLASS(ColliderComponent, Core::Component::Component)
 
     public:
+        /// 表面の名前を設定し、すぐ登録簿で解決する。空で明示を外す。
+        /// 名前の形式が不正なら InvalidArgument を返して旧値を保つ。結果には次の公開で反映する。
+        EPhysicsResult SetSurface(Core::Container::StringView name);
+        /// 解決済みの表面。明示なし・未知の名前は Default。
+        Core::Scene::SurfaceId GetSurface() const { return m_Surface; }
+
         EPhysicsResult SetSphere(float radius);
         EPhysicsResult SetBox(const Math::Vector3& halfExtents);
         EPhysicsResult SetCapsule(float radius, float halfHeight);
@@ -54,6 +63,10 @@ namespace NorvesLib::Modules::Physics
 
         void Initialize() override;
         void Finalize() override;
+        void OnPropertyApplied(const Core::ClassProperty& property) override;
+
+        /// 登録簿の表面の名前。空なら表面を明示しない。保存・読み込みの対象。
+        PROPERTY(Core::Container::String, SurfaceName)
 
     private:
         enum class EColliderShape : uint8_t
@@ -82,6 +95,7 @@ namespace NorvesLib::Modules::Physics
         float m_CapsuleHalfHeight = 0.0f;
         Core::Container::TSharedPtr<const Core::Rendering::Terrain::TerrainHeightField> m_HeightField;
         EColliderShape m_Shape = EColliderShape::None;
+        Core::Scene::SurfaceId m_Surface{};
         uint8_t m_SurfaceId = Core::Scene::kInvalidPhysicsSurfaceId;
         bool m_bHasShape = false;
         bool m_bTrigger = false;

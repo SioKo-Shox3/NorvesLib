@@ -57,5 +57,16 @@ namespace NorvesLib::Modules::Audio
          * 不完全な停止結果、破棄失敗ではボイスを隔離する。
          */
         virtual AudioResult AbortVoice(VoiceHandle handle) = 0;
+
+        /**
+         * @brief 出力の左右の係数を線形でそのまま設定する(3D の定位で距離のゲインとパンを掛けた値を渡す)。
+         * @details 各係数は有限で 0 以上。SetVoicePan と同じく Created・Submitted・Playing でのみバックエンドを呼ぶ。
+         */
+        virtual AudioResult SetVoiceOutputGains(VoiceHandle handle, float leftGain, float rightGain) = 0;
+        /**
+         * @brief 周波数比を直接設定する(ピッチとドップラーを掛けた値)。
+         * @details 有限で 0 より大きい値を受け、作成時の上限と下限 1/1024 に丸めてバックエンドへ渡す。
+         */
+        virtual AudioResult SetVoiceFrequencyRatio(VoiceHandle handle, float ratio) = 0;
     };
 } // namespace NorvesLib::Modules::Audio

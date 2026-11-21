@@ -205,6 +205,7 @@ set(PRIVATE_SOURCES
     Private/Text/Base64.h
     Private/Text/Base64.cpp
     Private/Text/JsonWriter.cpp
+    Private/Text/Utf8.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
     Private/Debug/DebugOutput.cpp
@@ -251,6 +252,7 @@ set(PRIVATE_SOURCES
     Private/Component/ScriptComponent.cpp
     Private/Engine/ApplicationProcessor.cpp
     # Scene
+    Private/Scene/AcousticDistance.cpp
     Private/Scene/SceneQuery.cpp
     Private/Scene/LevelSnap.cpp
     Private/Scene/PhysicsLayerTable.cpp
@@ -272,6 +274,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/CanvasView.cpp
     Private/Rendering/Viewport.cpp
     Private/Rendering/CameraViewConstants.cpp
+    Private/Rendering/PostProcessProfile.cpp
+    Private/Rendering/PostProcessProfileJson.cpp
     Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
     Private/Rendering/RenderExtension/RenderExtensionRegistry.cpp
@@ -493,6 +497,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfBufferJson.cpp
     Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
+    Private/Resource/FontFaceCache.cpp
     Private/Resource/ModelAssetLoader.cpp
     Private/Resource/SkeletalAssetLoader.cpp
     Private/Resource/SkeletalAssetPublication.cpp
@@ -632,6 +637,7 @@ set(PUBLIC_HEADERS
     Public/Text/IdentityPool.h
     Public/Text/JsonDocument.h
     Public/Text/JsonWriter.h
+    Public/Text/Utf8.h
     Public/Container/Containers.h
     Public/Container/PointerTypes.h
     Public/Container/VariableArray.h
@@ -745,6 +751,7 @@ set(PUBLIC_HEADERS
     Public/Component/HoldSlotComponent.h
     Public/Component/AnimatorComponent.h
     # Scene
+    Public/Scene/AcousticDistance.h
     Public/Scene/SceneQuery.h
     Public/Scene/LevelSnap.h
     Public/Scene/RenderTransformHistory.h
@@ -972,6 +979,7 @@ set(PUBLIC_HEADERS
     Public/Resource/SkeletalMaterialBindings.h
     Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h
+    Public/Resource/FontFaceCache.h
     # Component
     Public/Component/Component.h
     Public/Component/WorldFieldInteractorComponent.h
@@ -1016,6 +1024,7 @@ set(PUBLIC_HEADERS
     Public/Math/GeometryTypes.h
     Public/Math/GeometryIntersection.h
     Public/Math/Curves.h
+    Public/Math/PolylinePath.h
     # Thread
     Public/Thread/Atomic.h
     Public/Thread/ConditionVariable.h
