@@ -10,6 +10,7 @@ set(AUDIO_PUBLIC_HEADERS
     Public/Audio/AudioGameModeOwner.h
     Public/Audio/AudioListener.h
     Public/Audio/AudioListenerComponent.h
+    Public/Audio/AudioMixer.h
     Public/Audio/AudioSpatial.h
     Public/Audio/AudioTypes.h
     Public/Audio/IAudioModule.h
@@ -40,6 +41,8 @@ add_library(NorvesAudioDomain STATIC
     Private/Audio/AudioGameModeOwner.cpp
     Private/Audio/AudioDomain.cpp
     Private/Audio/AudioDomain.h
+    Private/Audio/AudioMixerDomain.cpp
+    Private/Audio/AudioMixerDomain.h
     Private/Audio/AudioServiceModule.cpp
     Private/Audio/AudioListenerComponent.cpp
     Private/Audio/AudioListenerResolver.cpp
@@ -96,6 +99,8 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
     Private/Audio/AudioGameModeOwner.cpp
     Private/Audio/AudioDomain.cpp
     Private/Audio/AudioDomain.h
+    Private/Audio/AudioMixerDomain.cpp
+    Private/Audio/AudioMixerDomain.h
     Private/Audio/AudioModule.cpp
     Private/Audio/AudioServiceModule.cpp
     Private/Audio/AudioListenerComponent.cpp
