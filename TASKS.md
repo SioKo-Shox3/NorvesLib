@@ -10942,3 +10942,13 @@ TASK にした理由（判断の根拠）:
 - verify: `build/Tools/AssetCook/Debug/AssetCook.exe --asset-set Assets/AssetSets/FurMaterials.json --runtime-root build/Verify/G6-GR35-WET-CHECK-P1 --source-root . --manifest build/Verify/G6-GR35-WET-CHECK-P1/manifest.json`
 - paths: Assets/Materials/Fur/phantom.furmat.json, Docs/Architecture/FurRendering.md, TASKS.md, PROGRESS.md
 - from: G6-GR35-WET-CHECK
+
+## G14-GR62-DIRECTOR-P1: 前のフレームの HZB の再利用（MegaGeometry と草）を、カメラの CutSerial が同じときだけにする
+- status: todo
+- after: G14-GR62-CUT-SERIAL
+- done-when: (1) `MegaHiZContract`（MegaGeometryPass.h:83）に `uint32_t CutSerial = 0` を足す。HZB を作るとき、MegaGeometryPass.cpp:5425 で `currentContract.SourceCameraId` を写している所の隣で `command.MainCamera.CutSerial` も写す。(2) `EvaluatePreviousHiZ`（MegaGeometryPass.h:140-180）は、`CameraId`・`SourceCameraId` が違うときに加え、`CutSerial` が違うときも `MegaPrevHiZStatus::CameraCut` を返す。(3) 草の HiZ の採用の条件 `bUseHiZ`（GrassPass.cpp:790-796）に `hiZContract.CutSerial == camera->CutSerial` を足す。(4) CutSerial が既定の 0 から変わらない間は、両方の判定の結果が今と変わらない（既定の起動画面とランチャーの各シーンの見た目も変わらない）。(5) Game が Debug でビルドできる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Rendering/MegaGeometryPass.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Private/Rendering/GrassPass.cpp
+- effort: medium
+- from: G14-GR62-DIRECTOR
+- notes: 根拠は計画の文書に 2 つある。ロードマップ（GameFeatureRoadmap.md）4479 行の「CutSerial は、カメラの不連続の唯一の印にする」と、要件 GR62（GameFeatureRequirements.md 6414 行）の「カットの1フレームは前のカメラが無い扱い」。どのタスクもこの 2 か所を扱っていない。G14-GR62-CUT-SERIAL の done-when は RenderingCoordinator・TAA・PT の 3 経路だけで、G14-GR62-DIRECTOR も HiZ に触れない。そのため、前のフレームの HZB を使う 2 か所（MegaGeometry の 2 パス遮蔽の 1 パス目、草の生成の遮蔽）が取り残されている。これは、`blocked/G14-GR62-CUT-SERIAL.md` に評価者が残した残課題と同じ件。同じカメラのままカットすると（Director の Cut や、`MarkCameraCut` を呼ぶテレポートなど）、草はカット前の別のショットの深度へ契約の VP で投影し直して遮蔽を判定する。その結果、カットしたフレームだけ草が欠ける。MegaGeometry は 2 パス目で拾い直すので描画の正しさは保つが、1 パス目の判定は無駄になる。CutSerial は統合ブランチにまだ無い（grep で TASKS.md にしか出てこない。G14-GR62-CUT-SERIAL が人待ち）ので、after に置く。RenderThread の HZB の契約を触るので危険地帯にあたるが、差分は比べる条件を 2 つ足すのと、値を写す 1 行だけ。
