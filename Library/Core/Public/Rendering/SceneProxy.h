@@ -672,6 +672,9 @@ namespace NorvesLib::Core::Rendering
         // データ駆動のポストプロセスの値。既定は bValid=false で描画は従来の設定を使う。
         // FramePacket で値のままコピーする。LUT のパスは静的な寿命の文字列だけを借りる。
         PostProcessSettings PostProcess;
+        // 物理レンズ（焦点距離・撮像面・ゲートフィット・ピント呼吸）、絞り羽根、動きぼけのシャッター角、フレーミングの値。
+        // 既定値では従来と同じ描画になる。露出（Aperture・ShutterSpeed・ISO）の計算には使わない。
+        // 物理レンズの垂直 FOV は ResolveCameraLens が描画の縦横比から確定する。
         CameraCinematicProxy Cinematic;
 
         bool IsValid() const

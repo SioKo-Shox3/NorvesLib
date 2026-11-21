@@ -1610,7 +1610,7 @@ namespace Game
             {
                 if (!TryParseBoundedFloat(shutterAngleValue, 0.0f, 360.0f, s_Rendering3DTestCameraShutterAngleDegrees))
                 {
-                    LOG_ERROR("Rendering3DTest command line parse failed: --camera-shutter-angle は 0〜360 の度で指定する");
+                    LOG_ERROR("Rendering3DTest の起動引数を解釈できない: --camera-shutter-angle は 0〜360 の度で指定する");
                     return false;
                 }
                 continue;
