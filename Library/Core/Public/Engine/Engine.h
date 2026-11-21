@@ -15,6 +15,7 @@
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
 #include "Scene/SurfaceRegistry.h"
+#include "Scene/TerrainSurfaceProvider.h"
 #include "Input/InputSystem.h"
 #include "Input/IInputDevice.h"
 #include "Input/HapticsService.h"
@@ -606,6 +607,9 @@ namespace NorvesLib::Core::Engine
         Scene::SceneQuery m_SceneQuery;
         // 表面の語彙の登録簿（GEngine 配下で実体保持）
         Scene::SurfaceRegistry m_SurfaceRegistry;
+        // 地形の層と草の密度から表面を返す provider（SceneQuery が借りる）。参照する系より後に宣言する。
+        Scene::TerrainSurfaceProvider m_TerrainSurfaceProvider;
+        Scene::VegetationSurfaceProvider m_VegetationSurfaceProvider;
 
         // 入力システム（GEngine配下で実体保持）
         Input::InputSystem m_InputSystem;

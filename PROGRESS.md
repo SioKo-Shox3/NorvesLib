@@ -12758,3 +12758,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U2 HitEffectEmitter の表面の選択で parent をたどる: 着地(直し 0 回)
 - U3 足ごとの接地の表面を持つ GroundContactComponent: 着地(直し 0 回)
 - U4 地形と草の表面の provider と、濡れの 1 か所の関数: 着地(直し 1 回)
+- U5 Engine で provider を持って結び、HitEffect に登録簿を渡し、文書を直す: 着地(直し 0 回)

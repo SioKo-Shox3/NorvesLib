@@ -2,6 +2,7 @@
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
 #include "Application/IApplicationHandler.h"
+#include "Logging/LogMacros.h"
 #include <cmath>
 
 namespace NorvesLib::Core::Engine
@@ -41,12 +42,28 @@ namespace NorvesLib::Core::Engine
     Engine *GEngine = nullptr;
 
     Engine::Engine()
-        : m_InputMapper(m_InputSystem.GetState()),
+        : m_TerrainSurfaceProvider(m_TerrainSystem, m_SurfaceRegistry, m_EnvironmentSystem, m_Vegetation),
+          m_VegetationSurfaceProvider(m_Vegetation, m_SurfaceRegistry, m_TerrainSystem, m_EnvironmentSystem),
+          m_InputMapper(m_InputSystem.GetState()),
           m_InputDebugOverlay(m_InputSystem, m_InputRouter, m_InputMapper),
           m_InputRebindCapture(m_InputSystem, m_InputRouter, m_InputMapper)
     {
         (void)Component::WorldFieldInteractorComponent::StaticClass();
         m_ScatterSystem.SetRenderWorld(&m_RenderWorld);
+        // 地形は照会ごとに TerrainSystem::FindTerrain で探し、地形の外では種別を返さない。
+        // TerrainComponent の登録・解除をまたいで provider を結んでおける。
+        const auto terrainResult = m_SceneQuery.BindSurfaceProvider(m_TerrainSurfaceProvider, Scene::kTerrainSurfaceProviderPriority);
+        if (terrainResult != Scene::EPhysicsSceneQueryResult::Success)
+        {
+            LOG_WARNING("SURFACE_PROVIDER_BIND_FAILED kind=terrain result=%u 表面の provider を結べません", static_cast<unsigned>(terrainResult));
+        }
+        const auto vegetationResult = m_SceneQuery.BindSurfaceProvider(m_VegetationSurfaceProvider, Scene::kVegetationSurfaceProviderPriority);
+        if (vegetationResult != Scene::EPhysicsSceneQueryResult::Success)
+        {
+            LOG_WARNING("SURFACE_PROVIDER_BIND_FAILED kind=vegetation result=%u 表面の provider を結べません", static_cast<unsigned>(vegetationResult));
+        }
+        m_ParticleSystem.GetHitEffects().SetSurfaceRegistry(&m_SurfaceRegistry);
+
         m_InputSystem.SetRouter(&m_InputRouter);
         // 設定/active contextが無ければ入力を消費せず、旧controllerへ透過する。
         m_InputMapper.Attach(m_InputRouter);
@@ -69,6 +86,9 @@ namespace NorvesLib::Core::Engine
 
     Engine::~Engine()
     {
+        (void)m_SceneQuery.UnbindSurfaceProvider(m_VegetationSurfaceProvider);
+        (void)m_SceneQuery.UnbindSurfaceProvider(m_TerrainSurfaceProvider);
+        m_ParticleSystem.GetHitEffects().SetSurfaceRegistry(nullptr);
         // セルの解放が参照する World と描画資源が生きている間に停止する。
         m_StreamingSystem.Shutdown();
         m_ScatterSystem.Clear();
