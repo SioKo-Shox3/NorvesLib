@@ -20,9 +20,9 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief ラスタの被写界深度の薄レンズの値
      *
-     * 焦点距離は撮像面高24 mmとFOVから求め（PTと同じ）、CoCの直径（出力画素）は
+     * 焦点距離はカメラの撮像面の高さ（既定 24 mm）とFOVから求め（PTと同じ）、CoCの直径（出力画素）は
      * CocScale × |z - FocusDistance| / z（zは視線方向の深度）。PTはピントを合わせた像面の倍率で
-     * 画角を1 - f/ピント距離倍に狭めるため、ラスタも同じ倍率で最終画像を拡大する（FilmScale）。
+     * 画角を1 - f/ピント距離倍に狭めるため、ラスタも同じ倍率で最終画像を拡大する（FilmScale）。bFocusBreathing が false なら FilmScale は 1。
      */
     struct DepthOfFieldLens
     {
@@ -42,7 +42,8 @@ namespace NorvesLib::Core::Rendering
     inline DepthOfFieldLens BuildDepthOfFieldLens(const CameraProxy& camera, uint32_t imageHeight)
     {
         DepthOfFieldLens lens;
-        const float focalLength = PathTracingCameraDetail::FocalLength(camera.FieldOfView);
+        const float sensorHeight = CameraSensorHeightMeters(camera);
+        const float focalLength = PathTracingCameraDetail::FocalLength(camera.FieldOfView, sensorHeight);
         if (imageHeight == 0u || camera.Projection != ProjectionType::Perspective ||
             focalLength <= 0.0f || !std::isfinite(camera.FocusDistance) ||
             camera.FocusDistance <= focalLength || !std::isfinite(camera.Aperture) ||
@@ -52,8 +53,7 @@ namespace NorvesLib::Core::Rendering
         }
         const float diameter = focalLength / camera.Aperture;
         const float cocScale = diameter * focalLength / (camera.FocusDistance - focalLength) *
-                               static_cast<float>(imageHeight) /
-                               PathTracingCameraDetail::SensorHeight;
+                               static_cast<float>(imageHeight) / sensorHeight;
         if (!std::isfinite(cocScale) || cocScale <= 0.0f)
         {
             return lens;
@@ -62,7 +62,7 @@ namespace NorvesLib::Core::Rendering
         lens.FocalLength = focalLength;
         lens.FocusDistance = camera.FocusDistance;
         lens.CocScale = cocScale;
-        lens.FilmScale = 1.0f - focalLength / camera.FocusDistance;
+        lens.FilmScale = ComputeFocusBreathingScale(camera, focalLength);
         return lens;
     }
 

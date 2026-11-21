@@ -30,6 +30,7 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/InstanceBufferRing.h"
+#include "Rendering/PathTracingCamera.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
@@ -4982,6 +4983,12 @@ namespace NorvesLib::Core::Rendering
                     mainCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
                 }
 
+                // 物理レンズの垂直 FOV を描画の縦横比で確定してからパケットへ書く。
+                // m_PreviousMainCamera もこのパケットの値を引き継ぐので、前後のカメラに同じ規則が適用される。
+                const float aspect = m_RenderWidth > 0 && m_RenderHeight > 0
+                                         ? static_cast<float>(m_RenderWidth) / static_cast<float>(m_RenderHeight)
+                                         : mainCamera.AspectRatio;
+                ResolveCameraLens(mainCamera, aspect);
                 m_CurrentPacket->Scene.MainCamera = mainCamera;
                 m_CurrentPacket->bHasMainCamera = true;
             }

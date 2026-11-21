@@ -9,7 +9,7 @@
 
 namespace NorvesLib::Core::Rendering
 {
-    /** @brief 24 mmの撮像面高を使うPTカメラの決定論的な1試料。 */
+    /** @brief カメラの撮像面の高さ（既定 24 mm）を使うPTカメラの決定論的な1試料。 */
     struct PathTracingCameraSample
     {
         CameraProxy Camera;
@@ -30,7 +30,7 @@ namespace NorvesLib::Core::Rendering
         bool bEnabled = false;
         /** @brief シャッター区間の基準の長さ（秒）。前後の変換の間隔にあたる。 */
         float FrameDuration = 1.0f / 24.0f;
-        /** @brief シャッター時間（秒）。0は動きぼけなし。負ならカメラのShutterSpeed。 */
+        /** @brief シャッター時間（秒）。0は動きぼけなし。負ならカメラの値（シャッター角が正ならそれ）を使う。 */
         float ShutterDuration = 1.0f / 48.0f;
         /** @brief 絞りのf値。負ならカメラのAperture。 */
         float Aperture = -1.0f;
@@ -68,6 +68,7 @@ namespace NorvesLib::Core::Rendering
         if (settings.ShutterDuration >= 0.0f)
         {
             result.ShutterSpeed = settings.ShutterDuration;
+            result.Cinematic.Shutter.ShutterAngleDegrees = 0.0f;
         }
         return result;
     }
@@ -107,16 +108,93 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        inline float FocalLength(float fieldOfViewDegrees)
+        inline float FocalLength(float fieldOfViewDegrees, float sensorHeightMeters)
         {
-            if (!std::isfinite(fieldOfViewDegrees) ||
+            if (!std::isfinite(sensorHeightMeters) || sensorHeightMeters <= 0.0f ||
+                !std::isfinite(fieldOfViewDegrees) ||
                 fieldOfViewDegrees <= 0.0f || fieldOfViewDegrees >= 179.0f)
             {
                 return 0.0f;
             }
-            return SensorHeight /
+            return sensorHeightMeters /
                    (2.0f * std::tan(fieldOfViewDegrees * Pi / 360.0f));
         }
+
+        inline float FocalLength(float fieldOfViewDegrees)
+        {
+            return FocalLength(fieldOfViewDegrees, SensorHeight);
+        }
+    }
+
+    static_assert(24.0f / 1000.0f == PathTracingCameraDetail::SensorHeight);
+
+    /** @brief 画像の縦に写る撮像面の高さを m で返す。無効な値は既定の 24 mm を使う。 */
+    inline float CameraSensorHeightMeters(const CameraProxy& camera)
+    {
+        const float heightMm = camera.Cinematic.Lens.SensorHeightMm;
+        return std::isfinite(heightMm) && heightMm > 0.0f
+                   ? heightMm / 1000.0f
+                   : PathTracingCameraDetail::SensorHeight;
+    }
+
+    /** @brief ピント距離が焦点距離を超える薄レンズの像面倍率。ピント呼吸が無効なら 1。 */
+    inline float ComputeFocusBreathingScale(const CameraProxy& camera, float focalLength)
+    {
+        return camera.Cinematic.Lens.bFocusBreathing ? 1.0f - focalLength / camera.FocusDistance : 1.0f;
+    }
+
+    /**
+     * @brief 物理レンズの垂直画角を描画の縦横比で確定する。
+     *
+     * 確定後の SensorHeightMm は画像の縦に写る撮像面の高さ。以後はこの高さをそのまま使うため、
+     * 確定済みのカメラに繰り返し適用しても同じ結果になる。
+     */
+    inline void ResolveCameraLens(CameraProxy& camera, float aspect)
+    {
+        auto& lens = camera.Cinematic.Lens;
+        if (camera.Projection != ProjectionType::Perspective ||
+            !std::isfinite(lens.FocalLengthMm) || lens.FocalLengthMm <= 0.0f ||
+            !std::isfinite(lens.SensorWidthMm) || lens.SensorWidthMm <= 0.0f ||
+            !std::isfinite(lens.SensorHeightMm) || lens.SensorHeightMm <= 0.0f)
+        {
+            return;
+        }
+
+        float filmHeightMm = lens.SensorHeightMm;
+        if (lens.GateFit != CameraGateFit::Vertical && std::isfinite(aspect) && aspect > 0.0f)
+        {
+            const float horizontalFitHeight = lens.SensorWidthMm / aspect;
+            filmHeightMm = lens.GateFit == CameraGateFit::Horizontal
+                               ? horizontalFitHeight
+                               : std::min(filmHeightMm, horizontalFitHeight);
+        }
+        const float fieldOfView = static_cast<float>(
+            std::atan(filmHeightMm / (2.0 * lens.FocalLengthMm)) * (360.0 / PathTracingCameraDetail::Pi));
+        if (!std::isfinite(fieldOfView) || fieldOfView <= 0.0f || fieldOfView >= 179.0f)
+        {
+            return;
+        }
+        camera.FieldOfView = fieldOfView;
+        lens.SensorHeightMm = filmHeightMm;
+        lens.GateFit = CameraGateFit::Vertical;
+    }
+
+    /** @brief 動きぼけのシャッター時間（秒）を返す。角度 0 は従来の ShutterSpeed を使う。露出には使わない。 */
+    inline float ResolveShutterSeconds(const CameraProxy& camera, float frameDuration)
+    {
+        const auto& shutter = camera.Cinematic.Shutter;
+        if (!std::isfinite(shutter.ShutterAngleDegrees) || shutter.ShutterAngleDegrees <= 0.0f)
+        {
+            return camera.ShutterSpeed;
+        }
+        const float period = std::isfinite(shutter.VirtualFrameRate) && shutter.VirtualFrameRate > 0.0f
+                                 ? 1.0f / shutter.VirtualFrameRate
+                                 : frameDuration;
+        if (!std::isfinite(period) || period <= 0.0f)
+        {
+            return 0.0f;
+        }
+        return std::min(shutter.ShutterAngleDegrees, 360.0f) / 360.0f * period;
     }
 
     inline PathTracingCameraSample SamplePathTracingCamera(
@@ -126,11 +204,12 @@ namespace NorvesLib::Core::Rendering
         PathTracingCameraSample result;
         result.Camera = current;
         const uint32_t sequenceIndex = sampleIndex + 1u;
+        const float shutterSeconds = ResolveShutterSeconds(current, frameDeltaTime);
         if (std::isfinite(frameDeltaTime) && frameDeltaTime > 0.0f &&
-            std::isfinite(current.ShutterSpeed) && current.ShutterSpeed > 0.0f)
+            std::isfinite(shutterSeconds) && shutterSeconds > 0.0f)
         {
             const float shutterFraction =
-                std::clamp(current.ShutterSpeed / frameDeltaTime, 0.0f, 1.0f);
+                std::clamp(shutterSeconds / frameDeltaTime, 0.0f, 1.0f);
             result.ShutterTime = 1.0f - shutterFraction *
                 (1.0f - PathTracingCameraDetail::Halton(sequenceIndex, 5u));
         }
@@ -173,7 +252,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         const float focalLength = PathTracingCameraDetail::FocalLength(
-            result.Camera.FieldOfView);
+            result.Camera.FieldOfView, CameraSensorHeightMeters(current));
         if (result.Camera.Projection != ProjectionType::Perspective ||
             !std::isfinite(current.FocusDistance) ||
             current.FocusDistance <= focalLength || focalLength <= 0.0f ||
@@ -220,8 +299,8 @@ namespace NorvesLib::Core::Rendering
                                               float objectDistance,
                                               uint32_t imageHeight)
     {
-        const float focalLength = PathTracingCameraDetail::FocalLength(
-            camera.FieldOfView);
+        const float sensorHeight = CameraSensorHeightMeters(camera);
+        const float focalLength = PathTracingCameraDetail::FocalLength(camera.FieldOfView, sensorHeight);
         if (imageHeight == 0u || focalLength <= 0.0f ||
             !std::isfinite(camera.FocusDistance) ||
             camera.FocusDistance <= focalLength ||
@@ -234,8 +313,7 @@ namespace NorvesLib::Core::Rendering
         return diameter * focalLength *
                std::abs(objectDistance - camera.FocusDistance) /
                (objectDistance * (camera.FocusDistance - focalLength)) *
-               static_cast<float>(imageHeight) /
-               PathTracingCameraDetail::SensorHeight;
+               static_cast<float>(imageHeight) / sensorHeight;
     }
 
     /** @brief 線形部分が一致する並進だけを補間し、回転・scale・shear変化を拒否する。 */

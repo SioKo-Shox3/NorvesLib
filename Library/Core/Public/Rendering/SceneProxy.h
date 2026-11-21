@@ -506,6 +506,78 @@ namespace NorvesLib::Core::Rendering
         float Intensity = 1.0f;
     };
 
+    /** @brief 透視カメラの画角の指定方法。既定は垂直画角、Physical は焦点距離で指定する。 */
+    enum class CameraLensMode : uint8_t
+    {
+        FieldOfView,
+        Physical
+    };
+
+    /** @brief 描画の縦横比に合わせて撮像面の横幅・高さのどちらを保つか。既定の Fill は画像を満たす側を使う。 */
+    enum class CameraGateFit : uint8_t
+    {
+        Horizontal,
+        Vertical,
+        Fill
+    };
+
+    /** @brief 透視カメラのレンズと撮像面。既定は垂直画角で指定する。 */
+    struct CameraCinematicLens
+    {
+        /** @brief 焦点距離（mm）。既定の 0 は FieldOfView を使う。 */
+        float FocalLengthMm = 0.0f;
+        /** @brief 撮像面の幅（mm）。 */
+        float SensorWidthMm = 36.0f;
+        /** @brief 撮像面の高さ（mm）。画角の確定後は画像の縦に写る範囲の高さ。 */
+        float SensorHeightMm = 24.0f;
+        /** @brief 物理レンズの画角に使う撮像面の範囲の決め方。 */
+        CameraGateFit GateFit = CameraGateFit::Fill;
+        /** @brief ピントを近くに合わせるほど画角を狭める。既定は有効。 */
+        bool bFocusBreathing = true;
+    };
+
+    /** @brief 絞り羽根の形とぼけの広がり。既定は円形。 */
+    struct CameraCinematicBokeh
+    {
+        /** @brief 絞り羽根の枚数。0 は円板。 */
+        uint32_t BladeCount = 0;
+        /** @brief 絞り羽根の回転角（ラジアン）。 */
+        float BladeRotationRad = 0.0f;
+        /** @brief 画像の高さに対する錯乱円の最大半径の割合。0 は従来の 16 画素。 */
+        float MaxCocRadiusFraction = 0.0f;
+    };
+
+    /** @brief 動きぼけ用のシャッター。露出の計算は独立した ShutterSpeed を使う。 */
+    struct CameraCinematicShutter
+    {
+        /** @brief シャッター角（度）。0 なら PT は ShutterSpeed、ラスタは MotionBlurSettings を使う。 */
+        float ShutterAngleDegrees = 0.0f;
+        /** @brief シャッター角の基準フレームレート（フレーム毎秒）。0 は実フレームの長さを使う。 */
+        float VirtualFrameRate = 0.0f;
+    };
+
+    /** @brief レターボックスとフェードの設定。既定はどちらも無効。 */
+    struct CameraCinematicFraming
+    {
+        /** @brief レターボックス適用後の画像の縦横比（幅 / 高さ）。 */
+        float LetterboxAspect = 2.39f;
+        /** @brief レターボックスの適用量（0〜1）。 */
+        float LetterboxAmount = 0.0f;
+        /** @brief フェード先の色（RGB）。既定は黒。 */
+        float FadeColor[3] = {0.0f, 0.0f, 0.0f};
+        /** @brief フェード先の色の混合割合（0〜1）。 */
+        float FadeAmount = 0.0f;
+    };
+
+    /** @brief フレームごとに描画へ渡すレンズ・絞り羽根・シャッター・フレーミングの値。 */
+    struct CameraCinematicProxy
+    {
+        CameraCinematicLens Lens;
+        CameraCinematicBokeh Bokeh;
+        CameraCinematicShutter Shutter;
+        CameraCinematicFraming Framing;
+    };
+
     /**
      * @brief 描画用カメラプロキシ
      */
@@ -600,6 +672,7 @@ namespace NorvesLib::Core::Rendering
         // データ駆動のポストプロセスの値。既定は bValid=false で描画は従来の設定を使う。
         // FramePacket で値のままコピーする。LUT のパスは静的な寿命の文字列だけを借りる。
         PostProcessSettings PostProcess;
+        CameraCinematicProxy Cinematic;
 
         bool IsValid() const
         {
