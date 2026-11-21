@@ -589,6 +589,12 @@ namespace NorvesLib::Core::Rendering
         CameraProxy LastCamera;
         Container::VariableArray<InstanceState> LastInstances;
 
+        /** @brief 直前に見たパケットのメインカメラの不連続の印（連番でないパケットでも更新し、Reset では消さない） */
+        bool bHasSeenCamera = false;
+        uint64_t SeenSourceCameraId = 0;
+        uint32_t SeenCutSerial = 0;
+
+        /** @brief 連番の持ち越しを消し、次のパケットのカット判定に使うカメラの印は残す */
         void Reset()
         {
             Frame = 0;
@@ -772,20 +778,31 @@ namespace NorvesLib::Core::Rendering
     }
 
     /**
-     * @brief 連番の1フレームの前の値をパケットへ書く（GameThreadでパケットを書き終える直前に呼ぶ）
+     * @brief 連番の1フレームの前の値をパケットへ書く（GameThreadでパケットを書くときとRenderThreadで描くときに呼ぶ）
      *
-     * メインカメラのSequenceFrameが0なら何もせず状態を捨てる。SequenceFrameが変わった最初のパケットで
+     * メインカメラのSequenceFrameが0なら連番の持ち越しを消す。SequenceFrameが変わった最初のパケットで
      * 前の値を決めて覚える。直前に連番のパケットを書いていれば、その現在の状態（直前のフレームの最後の
      * 状態）を前の値にし、なければこのパケットの前の値を使う。同じSequenceFrameの間は、覚えた前の値で
      * パケットの前のカメラ・instance変換を上書きする。instanceは物体ID・メッシュ・部分範囲・描画内の
      * instance番号（同じ鍵は出現順）で対応付け、覚えた値にないinstanceは前の変換なし（動かない）にする。
      * 同じフレームの中で描画の並びが変わっても累積を捨てないよう、snapshotのinstanceを鍵の順へ並べ、
      * customIndexを並びの番号に振り直す。
+     * 直前に見たメインカメラとSourceCameraIdかCutSerialが違えばカットとし、同じSequenceFrameの途中でも
+     * 前の値を決め直して、前のカメラとすべてのinstanceの前の変換を捨てる。
      */
     inline void ApplyPathTracingSequenceCarry(FramePacket& packet, PathTracingSequenceCarry& carry)
     {
         using namespace PathTracingSequenceCarryDetail;
         const CameraProxy& camera = packet.Scene.MainCamera;
+        // カットのパケットを取りこぼしても、直前に見たカメラの識別子と通し番号で不連続を判定できる。
+        const bool bCameraCut = packet.bHasMainCamera && carry.bHasSeenCamera &&
+            (carry.SeenSourceCameraId != camera.SourceCameraId || carry.SeenCutSerial != camera.CutSerial);
+        if (packet.bHasMainCamera)
+        {
+            carry.bHasSeenCamera = true;
+            carry.SeenSourceCameraId = camera.SourceCameraId;
+            carry.SeenCutSerial = camera.CutSerial;
+        }
         if (!packet.bHasMainCamera || camera.SequenceFrame == 0)
         {
             carry.Reset();
@@ -802,12 +819,17 @@ namespace NorvesLib::Core::Rendering
             current[index].bHasTransform = true;
         }
 
-        if (carry.Frame != camera.SequenceFrame)
+        if (carry.Frame != camera.SequenceFrame || bCameraCut)
         {
             const bool bFromLast = carry.LastFrame != 0 &&
                                    carry.LastCamera.CameraId == camera.CameraId;
             carry.Frame = camera.SequenceFrame;
-            if (bFromLast)
+            if (bCameraCut)
+            {
+                carry.bHasPreviousCamera = false;
+                carry.PreviousCamera = CameraProxy{};
+            }
+            else if (bFromLast)
             {
                 carry.bHasPreviousCamera = true;
                 carry.PreviousCamera = carry.LastCamera;
@@ -815,7 +837,9 @@ namespace NorvesLib::Core::Rendering
             else
             {
                 carry.bHasPreviousCamera = packet.bHasPreviousMainCamera &&
-                                           packet.PreviousMainCamera.CameraId == camera.CameraId;
+                                           packet.PreviousMainCamera.CameraId == camera.CameraId &&
+                                           packet.PreviousMainCamera.SourceCameraId == camera.SourceCameraId &&
+                                           packet.PreviousMainCamera.CutSerial == camera.CutSerial;
                 carry.PreviousCamera = carry.bHasPreviousCamera ? packet.PreviousMainCamera
                                                                 : CameraProxy{};
             }
@@ -823,6 +847,11 @@ namespace NorvesLib::Core::Rendering
             for (size_t index = 0; index < current.size(); ++index)
             {
                 PathTracingSequenceCarry::InstanceState& previous = carry.PreviousInstances[index];
+                if (bCameraCut)
+                {
+                    previous.bHasTransform = false;
+                    continue;
+                }
                 const RayTracingSceneInstanceSnapshot& instance =
                     packet.RayTracingScene.Instances[index];
                 const PathTracingSequenceCarry::InstanceState* last =
