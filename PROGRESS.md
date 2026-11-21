@@ -12996,4 +12996,7 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: `GroundContactComponent` を付けた呼び手はまだ無く、どのシーンでも既定の見た目は変わらない。付けた犬では、接地の `RayLength` が短く足が床に届かない場面で水しぶきが出なくなる（共有の接地状態が未接地のため）。
 - Next: 地形の provider の層の選び方が層の境の近くで `TerrainHeightField::SampleSurface`（最寄りの頂点）と食い違う件と、`PuddleDepthM` が常に 0 の件は、今回の完了条件の外として残る。
 - Notes: 判断: Public API の `PhysicsQueryFilter::IgnoreEntity` は構造体の末尾に足し、既定の無効なハンドルでは何も除かないので、既存の呼び手の挙動は変わらない。`bHasEntity` が偽の代理形状（Entity の無い静的なコライダー）には効かない。
+
+## G16-GR73-BUS-MIXER（2026-11-21、run 20261121-213315）
 - U1 バスの SPI・voice の送り先・サービスの口と、XAudio2 と Null のバックエンドの実装: 着地(直し 0 回)
+- Notes(反復 1): 単位の計画は U1〜U6(SPI とバックエンド → ミキサーの中核 → Mixer.json と定義・バンクの欄 → SoundSystem とモジュールの結線 → 文書と最終ビルド)。採った判断: Mixer.json は Game を変えずに当てるため、SoundSystem の最初の LoadBank が同じアセットから `Audio/Mixer.json` を 1 回だけ読む。バスの親の構成はコードに固定(JSON は音量・ポーズの影響・ダッキングだけを上書き)。ポーズ用のゲインは Se・Ambient・Music だけに掛け、Ui と Master には掛けない。ダッキングの既定の規則は 0 個(聴感の値)。試験(`AudioMixerTest`・`AssetCookSoundBankSmoke` のケース・`FakeAudioBackend` の記録)は試験を作らない決まりにより作らない。verify の 3 行目 `Scripts/Test-M9World.ps1 -ContractOnly` は、2026-11-14 の c9226a9b で消えたスクリプトを呼ぶので実装に関係なく失敗する(G16-GR73-VIRTUAL-VOICE と同じ。判断役が行を外す前例あり)。
