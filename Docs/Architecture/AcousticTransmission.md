@@ -16,7 +16,7 @@ AI の聴覚（GR24）と音声モジュール（G16）は、音源から聞き�
 | `Listener` | 聞き手のワールド座標。 |
 | `SoundClass` | 距離・高域・免除の設定を選ぶ分類。既定は `Voice`。 |
 | `SourceLevelDb` | クラスの基準距離での音源レベル。騒音床と同じ尺度で、既定は 60 dB。 |
-| `Filter` | 静的幾何に使う `PhysicsQueryFilter`。評価器はトリガーを常に除外する。 |
+| `Filter` | 静的幾何に使う `PhysicsQueryFilter`。評価器は静的な物体だけを対象とし、トリガーと高さ場を除く。 |
 
 | 出力（`AcousticPathResult`） | 意味 |
 |---|---|
@@ -60,9 +60,13 @@ GR24 は `HearingRadiusToThresholdDb(soundClass, radiusM)` でクラスを指定
 
 ### 静的幾何（Order 100）
 
-`SceneQuery::ExecuteQuery` の `RaycastAll` を音源から聞き手まで 1 回行い、トリガーを除いた最大 8 件の当たりを距離順に調べる。地形の当たりとみなすのは、当たりの水平位置で `SampleGround` が成功して有効な地形サンプルが得られ、地形高と当たりの高さの差が 5 cm 以内で、当たりの法線と地形の法線の内積が 0.98 以上のとき。地形の当たりを飛ばし、残った当たりのうち音源に近いものから最大 4 枚を壁として数える。
+音源から聞き手まで `RaycastAll` を 1 回行う。照会条件は `TriggerPolicy = Exclude`、`MobilityPolicy = StaticOnly`、`bExcludeHeightFields = true`、`MaxHits = 4`。物理側で件数を打ち切る前に絞るため、動く物体、トリガー、地形の高さ場は 4 件の枠を使わない。返った当たりを音源に近い順にすべて壁として数え、5 枚目以降は数えない。地形による遮蔽は地形の寄与源（Order 300）が評価する。
 
-壁ごとに、その表面から親をたどって最初の正の `transmissionLossDb` を加える。見つからなければ 1 枚につき `wallClassFallbackLossDb` を使う。1 枚でも数えれば見通しは遮られる。[表面の語彙と照会の契約](SurfaceContract.md)
+壁ごとに、その表面から親をたどり、`transmissionLossDb` の鍵を持つ最初の表面の値を加える。明示した 0 は 0 dB として扱い、負の値は 0 dB に丸める。どの表面にも鍵がなければ `wallClassFallbackLossDb` を加える。損失が 0 dB でも、壁を 1 枚以上数えれば見通しは遮られる。[表面の語彙と照会の契約](SurfaceContract.md)
+
+`Assets/Data/Surfaces.json` の Default・Dirt_Mud・Rock・Concrete・Metal・Water_Shallow・Wood にあった `transmissionLossDb: 0` は、鍵の意味を決める前の仮の値だった。残すとこれらの壁が音を素通しするため鍵を削除し、従来どおり既定の 12 dB を使う。
+
+Kinematic の扉や動く物体は静的幾何として音を遮らない。扉の寄与は声への適用で扱う。音源や聞き手が自身の静的コライダーの内側にいると、それも壁 1 枚に数える。呼び出し側は `AcousticPathQuery` の `Filter` にある `IgnoreColliders` または `IgnoreBodies` で自身を除く。
 
 ### 草（Order 200）
 

@@ -209,7 +209,7 @@ namespace NorvesLib::Core::Scene
     inline constexpr int32_t kAcousticTerrainOrder = 300;
     inline constexpr int32_t kAcousticMaskingOrder = 1000;
 
-    /// 経路上の地形を除く物理の当たりから、表面ごとの透過損失を求める。
+    /// 高さ場を除く静的な物理の当たりから、表面ごとの透過損失を求める。
     class StaticGeometryAcousticContributor final : public IAcousticMediumContributor
     {
     public:
@@ -220,7 +220,6 @@ namespace NorvesLib::Core::Scene
     private:
         const SceneQuery* m_SceneQuery = nullptr;
         const SurfaceRegistry* m_Surfaces = nullptr;
-        const Rendering::Terrain::TerrainSystem* m_Terrain = nullptr;
         mutable Container::VariableArray<PhysicsQueryHit> m_Hits;
     };
 

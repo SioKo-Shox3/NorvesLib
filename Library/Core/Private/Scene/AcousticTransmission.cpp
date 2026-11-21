@@ -21,8 +21,7 @@ namespace NorvesLib::Core::Scene
     {
         constexpr size_t kMaximumTextBytes = 256 * 1024;
         constexpr double kMaxFloat = std::numeric_limits<float>::max();
-        constexpr uint32_t kAcousticStaticGeometryQueryHits = 8;
-        constexpr size_t kAcousticMaxCountedWalls = 4;
+        constexpr uint32_t kAcousticStaticGeometryQueryHits = 4;
         constexpr const char* kClassNames[] = {"Cue", "Ambient", "Footstep", "Voice", "Rain", "Creature"};
         static_assert(sizeof(kClassNames) / sizeof(kClassNames[0]) == static_cast<size_t>(ESoundClass::Count));
 
@@ -503,7 +502,6 @@ namespace NorvesLib::Core::Scene
     {
         m_SceneQuery = sources.SceneQuery;
         m_Surfaces = sources.Surfaces;
-        m_Terrain = sources.Terrain;
     }
 
     void StaticGeometryAcousticContributor::Contribute(const AcousticContributionContext& context,
@@ -520,6 +518,8 @@ namespace NorvesLib::Core::Scene
         ray.MaxDistance = context.DistanceM;
         ray.Filter = context.Query.Filter;
         ray.Filter.TriggerPolicy = EPhysicsQueryTriggerPolicy::Exclude;
+        ray.Filter.MobilityPolicy = EPhysicsQueryMobilityPolicy::StaticOnly;
+        ray.Filter.bExcludeHeightFields = true;
         ray.MaxHits = kAcousticStaticGeometryQueryHits;
         if (m_SceneQuery->ExecuteQuery(ray, m_Hits) != EPhysicsSceneQueryResult::Success)
         {
@@ -536,29 +536,21 @@ namespace NorvesLib::Core::Scene
         }
         double loss = 0.0;
         const size_t count = std::min<size_t>(ray.MaxHits, m_Hits.size());
-        size_t countedWalls = 0;
-        for (size_t i = 0; i < count && countedWalls < kAcousticMaxCountedWalls; ++i)
+        for (size_t i = 0; i < count; ++i)
         {
             const auto& hit = m_Hits[i];
-            Rendering::Terrain::GroundSample ground;
-            if (m_Terrain && m_Terrain->SampleGround(hit.Point.x, hit.Point.z, ground) && ground.bValid &&
-                std::abs(ground.Height - hit.Point.y) <= 0.05f && Math::Vector3::Dot(hit.Normal, ground.Normal) >= 0.98f)
-            {
-                continue;
-            }
             float wallLoss = context.Settings.WallClassFallbackLossDb;
             if (m_Surfaces)
             {
                 const auto id = m_Surfaces->ResolveFallback(hit.Surface,
-                    [](const SurfaceDesc& desc) { return desc.Audio.TransmissionLossDb > 0.0f; });
-                const float surfaceLoss = m_Surfaces->GetDesc(id).Audio.TransmissionLossDb;
-                if (surfaceLoss > 0.0f)
+                    [](const SurfaceDesc& desc) { return desc.Audio.bHasTransmissionLossDb; });
+                const auto& audio = m_Surfaces->GetDesc(id).Audio;
+                if (audio.bHasTransmissionLossDb)
                 {
-                    wallLoss = surfaceLoss;
+                    wallLoss = std::max(0.0f, audio.TransmissionLossDb);
                 }
             }
             loss += wallLoss;
-            ++countedWalls;
             outContribution.bBlocksLineOfSight = true;
         }
         SetOcclusionLoss(outContribution, loss, context.Settings);
