@@ -211,5 +211,7 @@ namespace NorvesLib::Modules::Audio::Private
          */
         virtual AudioResult DestroyVoice(VoiceHandle handle) = 0;
         virtual void Shutdown() = 0;
+        // ローパスの遮断周波数 (Hz) と 1/Q を設定する。ドメインは Created・Submitted・Playing の声にだけ呼ぶ。
+        virtual AudioResult SetVoiceFilter(VoiceHandle handle, float lowpassCutoffHz, float oneOverQ) = 0;
     };
 } // namespace NorvesLib::Modules::Audio::Private

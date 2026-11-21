@@ -61,6 +61,8 @@ namespace NorvesLib::Modules::Audio::Private
             Core::Asset::AssetBlob PcmPayload;
             Core::Container::TUniquePtr<AudioBackendEventMailbox> Mailbox;
             float MaxFrequencyRatio = 2.0f;
+            float UserVolume = 1.0f;   ///< 呼び手が指定した線形音量。
+            float AcousticGain = 1.0f; ///< 遮蔽による線形利得。
             bool bPaused = false;
             bool bBackendVoiceCreated = false;
             bool bCountedActive = false;
@@ -136,6 +138,8 @@ namespace NorvesLib::Modules::Audio::Private
                 record.Clip = clip;
                 record.PcmPayload = clip->GetPcmBlob();
                 record.State = AudioVoiceState::Created;
+                record.UserVolume = 1.0f;
+                record.AcousticGain = 1.0f;
                 record.MaxFrequencyRatio = std::exp2(desc.MaxPitchSemitones / 12.0f);
                 const VoiceHandle handle{index, record.Generation};
 
@@ -169,7 +173,7 @@ namespace NorvesLib::Modules::Audio::Private
 
             AudioResult SetVoiceVolume(VoiceHandle handle, float volume) override
             {
-                const ActiveVoiceRecord* record = Resolve(handle);
+                ActiveVoiceRecord* record = Resolve(handle);
                 if (record == nullptr)
                 {
                     return AudioResult::StaleHandle;
@@ -178,9 +182,38 @@ namespace NorvesLib::Modules::Audio::Private
                 {
                     return AudioResult::InvalidState;
                 }
-                return m_Backend->SetVoiceVolume(handle, volume) == AudioResult::Success
-                    ? AudioResult::Success
-                    : AudioResult::BackendFailure;
+                if (m_Backend->SetVoiceVolume(handle, volume * record->AcousticGain) != AudioResult::Success)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                record->UserVolume = volume;
+                return AudioResult::Success;
+            }
+
+            AudioResult SetVoiceAcoustics(VoiceHandle handle, const VoiceAcousticParams& params) override
+            {
+                ActiveVoiceRecord* record = Resolve(handle);
+                if (record == nullptr)
+                {
+                    return AudioResult::StaleHandle;
+                }
+                if (!std::isfinite(params.TargetGainDb) || !std::isfinite(params.LowpassCutoffHz) ||
+                    !CanSetVoiceParameters(record->State))
+                {
+                    return AudioResult::InvalidState;
+                }
+
+                const float gainDb = std::clamp(params.TargetGainDb, kVoiceAcousticMinGainDb, 0.0f);
+                const float gain = std::pow(10.0f, gainDb / 20.0f);
+                const float cutoff = std::clamp(params.LowpassCutoffHz, kVoiceAcousticMinCutoffHz, kVoiceAcousticMaxCutoffHz);
+                const AudioResult volumeResult = m_Backend->SetVoiceVolume(handle, record->UserVolume * gain);
+                const AudioResult filterResult = m_Backend->SetVoiceFilter(handle, cutoff, kVoiceLowpassOneOverQ);
+                if (volumeResult != AudioResult::Success || filterResult != AudioResult::Success)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                record->AcousticGain = gain;
+                return AudioResult::Success;
             }
 
             AudioResult SetVoicePitch(VoiceHandle handle, float semitones) override

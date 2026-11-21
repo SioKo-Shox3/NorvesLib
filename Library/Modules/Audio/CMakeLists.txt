@@ -13,6 +13,7 @@ set(AUDIO_PUBLIC_HEADERS
     Public/Audio/AudioSpatial.h
     Public/Audio/AudioTypes.h
     Public/Audio/IAudioModule.h
+    Public/Audio/IAudioOcclusion.h
     Public/Audio/IAudioService.h
     Public/Audio/ISoundSystem.h
     Public/Audio/SoundBankTypes.h

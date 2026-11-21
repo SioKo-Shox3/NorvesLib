@@ -39,6 +39,11 @@ namespace NorvesLib::Modules::Audio::Private
         return AudioResult::Success;
     }
 
+    AudioResult NullAudioBackend::SetVoiceFilter(VoiceHandle, float, float)
+    {
+        return AudioResult::Success;
+    }
+
     AudioResult NullAudioBackend::SetVoiceFrequencyRatio(VoiceHandle, float)
     {
         return AudioResult::Success;

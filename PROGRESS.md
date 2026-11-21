@@ -13097,3 +13097,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done: `AcousticTransmissionEvaluator`(`Engine::Engine` のメンバと `GetAcoustics()`。GameThread 専用)を Core に置いた。寄与源は登録型の `IAcousticMediumContributor` で、既定の 4 つ(静的幾何の `RaycastAll` の透過損失・草の区間ごとの吸収・地形の区間ごとの `RaycastGround` の照会・雨の騒音床による高域の損失)を持つ。距離の減衰は `AcousticDistance.h` を呼ぶ。値は `Assets/Data/Acoustics.json`(仮の値。既定は全クラス免除なし)、設計と地形の精度の仕様は `Docs/Architecture/AcousticTransmission.md`。統合ブランチの取り込みで `Engine.h` の衝突は、評価器と言語ごとの文字列表の両方を残して解いた。`cmake --build build --config Debug --target Game -- /m:1` は EXIT=0。
 - Next: 声への適用(G13-GR116-AUDIO-ACOUSTICS)と聴覚(GR24)からの呼び出し。
 - Notes: CPU から屋根の下かを引く口が無いので `IRainShelterSource` は既定(開けた空)のまま。評価の時間は未計測(案は 32 声・各 10 Hz で 1 フレーム 0.1 ms)。この評価器はまだどの声・AI からも呼ばれないので、ゲーム上の見どころは無い。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
+- U1 バックエンドにローパスの口、サービスに声ごとの遮蔽の口と遮蔽の公開の型を足す: 着地(直し 0 回)
