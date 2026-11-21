@@ -54,21 +54,22 @@ namespace NorvesLib::Modules::AI
 
     Physics::CharacterBodyComponent* AnimalMotor::GetBoundBody(const Core::Entity& owner) const
     {
-        if (!IsBound() || owner.IsPendingDestroy() || owner.GetObjectId() != m_BoundOwnerId)
+        if (!IsBound() || m_BoundBodyRow.IsNull() || owner.IsPendingDestroy() || owner.GetObjectId() != m_BoundOwnerId)
         {
             return nullptr;
         }
         auto* body = owner.GetComponent<Physics::CharacterBodyComponent>();
-        return body && !body->IsPendingDestroy() && body->GetComponentId() == m_BoundBodyId ? body : nullptr;
+        return body && !body->IsPendingDestroy() && body->GetEcsEntity() == m_BoundBodyRow ? body : nullptr;
     }
 
     bool AnimalMotor::EnsureBinding(Core::Entity& owner, SteeringAgentComponent& agent)
     {
         auto* world = owner.GetWorld();
         auto* body = owner.GetComponent<Physics::CharacterBodyComponent>();
-        // プレハブの Initialize では ObjectId が 0 のため、最初の固定歩で操舵の系が接続する。
+        // 所有者の採番や体の行の作成が済むまで購読を保留する。
         if (!world || owner.GetObjectId() == 0 || owner.IsPendingDestroy() || agent.IsPendingDestroy() ||
-            owner.GetComponent<SteeringAgentComponent>() != &agent || !body || body->IsPendingDestroy())
+            owner.GetComponent<SteeringAgentComponent>() != &agent || !body || body->IsPendingDestroy() ||
+            body->GetEcsEntity().IsNull())
         {
             if (IsBound())
             {
@@ -76,8 +77,8 @@ namespace NorvesLib::Modules::AI
             }
             return false;
         }
-        // 所有者・体・操舵 Component の ID はどれも書き換えられるので、どれかが変われば結び直す。
-        if (IsBound() && (m_BoundOwnerId != owner.GetObjectId() || m_BoundBodyId != body->GetComponentId() ||
+        // 体の入れ替わりは ECS の行で見分ける。番号が再利用されても世代が異なる。
+        if (IsBound() && (m_BoundOwnerId != owner.GetObjectId() || m_BoundBodyRow != body->GetEcsEntity() ||
                           m_BoundAgentId != agent.GetComponentId()))
         {
             Detach(&owner);
@@ -99,10 +100,10 @@ namespace NorvesLib::Modules::AI
         static uint64_t s_NextConnectionId = 1;
         m_ConnectionId = s_NextConnectionId++;
         m_BoundOwnerId = owner.GetObjectId();
-        m_BoundBodyId = body->GetComponentId();
+        m_BoundBodyRow = body->GetEcsEntity();
         m_BoundAgentId = agent.GetComponentId();
         m_Before.Bind([world, ownerId = m_BoundOwnerId, agentId = m_BoundAgentId,
-                       bodyId = m_BoundBodyId, connectionId = m_ConnectionId](float dt)
+                       bodyRow = m_BoundBodyRow, connectionId = m_ConnectionId](float dt)
         {
             auto* entity = world->FindEntityByObjectId(ownerId);
             if (!entity || entity->IsPendingDestroy())
@@ -112,7 +113,7 @@ namespace NorvesLib::Modules::AI
             auto* driver = entity->GetComponent<SteeringAgentComponent>();
             auto* current = entity->GetComponent<Physics::CharacterBodyComponent>();
             if (driver && driver->GetComponentId() == agentId &&
-                current && !current->IsPendingDestroy() && current->GetComponentId() == bodyId &&
+                current && !current->IsPendingDestroy() && current->GetEcsEntity() == bodyRow &&
                 driver->m_Motor && driver->m_Motor->m_ConnectionId == connectionId && SteeringSystem::CanSteer(*driver))
             {
                 driver->StepMotor(dt);
@@ -130,7 +131,7 @@ namespace NorvesLib::Modules::AI
         {
             owner = fallbackWorld->ResolveEntityHandle(m_BoundOwnerHandle);
         }
-        // 体の ID が変わっていても、Bind ごとの識別子に一致する購読だけを外す。
+        // 所有者のすべての体から、Bind ごとの識別子に一致する購読だけを外す。
         if (owner && IsBound())
         {
             for (auto* component : owner->GetComponents())
@@ -144,7 +145,7 @@ namespace NorvesLib::Modules::AI
         m_Before.Clear();
         m_BoundOwnerHandle = {};
         m_BoundOwnerId = 0;
-        m_BoundBodyId = 0;
+        m_BoundBodyRow = {};
         m_BoundAgentId = 0;
         m_AnimatorChildId = 0;
         m_State = {};

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Delegate/Delegate.h"
+#include "ECS/EcsTypes.h"
 #include "Locomotion/QuadrupedLocomotionModel.h"
 #include "Object/EntityHandle.h"
 
@@ -42,7 +43,7 @@ namespace NorvesLib::Modules::AI
         uint64_t m_ConnectionId = 0;
         Core::EntityHandle m_BoundOwnerHandle;
         uint64_t m_BoundOwnerId = 0;
-        uint64_t m_BoundBodyId = 0;
+        Core::Ecs::EcsEntity m_BoundBodyRow{};
         uint64_t m_BoundAgentId = 0;
         uint64_t m_AnimatorChildId = 0;
         Core::Locomotion::QuadrupedLocomotionParams m_Params;

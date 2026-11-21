@@ -171,9 +171,9 @@ step  = base + (base * extra) / 128
 
 ## 四足動物の運動と Animator への公開
 
-`AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` を購読する。プレハブやシーンの読み込みでは `Initialize` が所有 Entity の `ObjectId` の採番に先行するため、ID が 0 の間は接続を保留する。ECS 行の作成が予約中で所有 Entity のハンドルを取得できない場合も、購読を保留する。操舵系は各固定歩の開始時に `CanSteer` を満たす個体の接続を確認し、所有者の `ObjectId`、体または操舵 Component の `ComponentId` が変われば結び直す。
+`AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` を購読する。プレハブやシーンの読み込みでは `Initialize` が所有 Entity の `ObjectId` の採番に先行するため、ID が 0 の間は接続を保留する。所有 Entity のハンドルを取得できない場合や、体の ECS 行の作成が予約中の場合も、購読を保留する。操舵系は各固定歩の開始時に `CanSteer` を満たす個体の接続を確認し、所有者の `ObjectId`、操舵 Component の `ComponentId`、体の ECS 行（番号と世代）のいずれかが変われば結び直す。別の体が同じ `ComponentId` を引き継いでも、行ができた最初の固定歩で新しい体を購読する。
 
-モーターは接続ごとに一意の番号を静的な通し番号から割り当てる。コールバックは購読時の `ObjectId` で所有 Entity を引き、操舵 Component と体の `ComponentId`、破棄状態、`CanSteer` に加え、接続時の番号が現在のモーターの番号と一致することを確認する。配信中にコピーされた古い呼び出しも、同じ `ComponentId` を持つ後任には届かない。[AnimalMotor.cpp](../../Library/Modules/AI/Private/AI/Motor/AnimalMotor.cpp)
+モーターは接続ごとに一意の番号を静的な通し番号から割り当てる。コールバックは購読時の `ObjectId` で所有 Entity を引き、操舵 Component の `ComponentId`、体の ECS 行、破棄状態、`CanSteer` に加え、接続時の番号が現在のモーターの番号と一致することを確認する。配信用にコピーされた古い呼び出しは、体が替われば行の違いで、操舵 Component が交代して再接続すれば接続番号の違いで退ける。[AnimalMotor.cpp](../../Library/Modules/AI/Private/AI/Motor/AnimalMotor.cpp)
 
 解除時は所有 Entity の各 `CharacterBodyComponent` から、`Bind` 時の識別子で自分の購読を外す。`RemoveComponent` で所有者が先に外れた場合は、接続時に保存したハンドルを Engine の World で解決する。解決できなければ体にはアクセスしない。World の破棄中は Component の終了処理より先に Entity の行から参照が消えるため、古いハンドルは解決されず、体自身が終了処理で購読を消す。`AIModule::Shutdown` でも、登録中の各モーターの購読を外してから登録簿を空にする。[SteeringSystem.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringSystem.cpp)
 

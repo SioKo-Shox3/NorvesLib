@@ -12816,3 +12816,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 判断: ECS の行の作成が予約中で所有 Entity のハンドルが取れない間は、運動の購読を保留し、ハンドルが取れる次の固定歩で結ぶ。
 - Notes: 人が見ること（設計の選択として残した）: `CanSteer` が偽の相手は速度を零として読むので `Pursue` の予測が外れる。帯の幅が 0 の `KeepDistance` は接近と後退を繰り返す余地がある。先頭の操舵 Component が操舵できなくても 2 個目へは切り替えない。
 - Notes: 要起票: QuadrupedLocomotionComponent を RemoveComponent で外すと GetOwner() が null になり、体の BeforeSimulation に購読が残る（`Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:172-181` の `Detach` が所有者 null のとき `Remove` を飛ばす。`RemoveInner` が `Finalize` より先に Outer を消すため）。
+- U20 運動の結び付きを体の ECS の行（番号と世代）で照合し、同じ ComponentId の別の体へ替わっても結び直す（最後。タスクの verify）: 着地(直し 0 回)
