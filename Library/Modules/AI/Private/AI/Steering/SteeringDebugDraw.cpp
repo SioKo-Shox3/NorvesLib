@@ -38,7 +38,7 @@ namespace NorvesLib::Modules::AI
         }
     }
 
-    void SubmitSteeringDebug(const SteeringSystem& system, const Vector3& cameraCenter,
+    void SubmitSteeringDebug(SteeringSystem& system, const Core::World& world, const Vector3& cameraCenter,
                              const SteeringDebugDrawSettings& settings, DebugDrawQueue& queue)
     {
         if (!Steering::IsFiniteVector(cameraCenter) || !std::isfinite(settings.Radius) || settings.Radius < 0.0f ||
@@ -55,13 +55,13 @@ namespace NorvesLib::Modules::AI
             {
                 return;
             }
-            const auto& record = system.GetDebugRecord(i);
-            const auto& agent = *record.Agent;
-            if (!SteeringSystem::CanSteer(agent))
+            const auto* agent = system.ResolveAgent(i, world);
+            if (!agent || !SteeringSystem::CanSteer(*agent))
             {
                 continue;
             }
-            const Vector3 position = agent.GetOwner()->GetWorldTransform().position;
+            const auto& record = system.GetDebugRecord(i);
+            const Vector3 position = agent->GetOwner()->GetWorldTransform().position;
             const double dx = static_cast<double>(position.x) - cameraCenter.x;
             const double dz = static_cast<double>(position.z) - cameraCenter.z;
             if (!Steering::IsFiniteVector(position) || dx * dx + dz * dz > radiusSquared)
@@ -70,11 +70,11 @@ namespace NorvesLib::Modules::AI
             }
 
             const Vector3 origin = position + offset;
-            queue.AddLine(origin, origin + agent.GetSteeringVelocity(), {0.0f, 1.0f, 0.0f, 1.0f});
+            queue.AddLine(origin, origin + agent->GetSteeringVelocity(), {0.0f, 1.0f, 0.0f, 1.0f});
             queue.AddLine(origin, origin + record.DesiredVelocity, {1.0f, 1.0f, 0.0f, 1.0f});
 
             // 固定ステップ後に要求が変わった場合、古い目標や経路に新しい要求の設定を重ねない。
-            const auto& request = agent.GetRequest();
+            const auto& request = agent->GetRequest();
             if (record.Revision != request.Revision)
             {
                 continue;

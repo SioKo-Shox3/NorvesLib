@@ -12774,3 +12774,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュを共用する）。
 - Notes: 判断: 可変駆動の CharacterBody は固定ステップより前に要求するので、直近の固定歩の操舵の速度を使う（同じ歩で消費するのは固定駆動のとき）。足元のナビのタイルが未読み込み・通行不能なら、ナビ由来の危険は使わず近傍の危険だけを使う。Wolf.json の歩様の上限（1.8・4.5・9・15 m/s）と操舵の既定値（最高速度 6 m/s・加速度 8 m/s²・旋回率 6/4/3/2 rad/s）は未調整の仮の値。
 - U10 KeepDistance を要求の帯どおりに判定し、重なった 2 個体を Separation が安定した ID で引き離す: 着地(直し 0 回)
+- U11 操舵の登録を EntityHandle と ID にし、活動の条件・部分経路の終点・GR24 の近傍の個体の解決を直す: 着地(直し 0 回)

@@ -73,53 +73,80 @@ namespace NorvesLib::Modules::AI
     bool SteeringSystem::CanSteer(const SteeringAgentComponent& agent)
     {
         const auto* owner = agent.GetOwner();
-        return owner && owner->IsActive() && !owner->IsPendingDestroy() &&
-               agent.IsActive() && !agent.IsPendingDestroy();
+        return owner && owner->IsActiveInHierarchy() && owner->IsTickEnabled() &&
+               agent.IsActive() && agent.IsTickEnabled() && !agent.IsPendingDestroy();
     }
 
     void SteeringSystem::RegisterAgent(SteeringAgentComponent& agent)
     {
-        if (!agent.m_bRegistered)
+        const auto* owner = agent.GetOwner();
+        if (!owner)
         {
-            // ビューの容量を先に確保し、記録の追加後は割り当てなしでポインタを追加する。
-            if (m_Agents.size() == m_Agents.capacity())
-            {
-                m_Agents.reserve(m_Agents.size() * 2 + 1);
-            }
-            m_Records.emplace_back().Agent = &agent;
-            m_Agents.push_back(&agent);
-            agent.m_bRegistered = true;
+            return;
         }
+        const auto componentId = agent.GetComponentId();
+        for (const auto& record : m_Records)
+        {
+            if (record.ComponentId == componentId)
+            {
+                return;
+            }
+        }
+        auto& record = m_Records.emplace_back();
+        record.ComponentId = componentId;
+        record.OwnerObjectId = owner->GetObjectId();
+        record.Owner = owner->GetEntityHandle();
+        agent.m_bRegistered = true;
     }
 
     void SteeringSystem::UnregisterAgent(SteeringAgentComponent& agent, INavigationService& nav)
     {
-        const auto it = std::find(m_Agents.begin(), m_Agents.end(), &agent);
-        if (it != m_Agents.end())
+        const auto componentId = agent.GetComponentId();
+        const auto it = std::find_if(m_Records.begin(), m_Records.end(), [componentId](const AgentRecord& record)
         {
-            const auto record = m_Records.begin() + (it - m_Agents.begin());
-            if (record->Path.IsValid())
+            return record.ComponentId == componentId;
+        });
+        if (it != m_Records.end())
+        {
+            if (it->Path.IsValid())
             {
-                nav.ReleasePath(record->Path);
+                nav.ReleasePath(it->Path);
             }
-            m_Records.erase(record);
-            m_Agents.erase(it);
-            agent.m_bRegistered = false;
+            m_Records.erase(it);
         }
+        agent.m_bRegistered = false;
     }
 
-    void SteeringSystem::Reset(INavigationService& nav)
+    SteeringAgentComponent* SteeringSystem::ResolveAgent(size_t index, const Core::World& world)
     {
-        for (auto& record : m_Records)
+        auto& record = m_Records[index];
+        auto* owner = record.Owner.IsValid() ? world.ResolveEntityHandle(record.Owner) : nullptr;
+        if (!owner || owner->GetObjectId() != record.OwnerObjectId)
         {
-            if (record.Path.IsValid())
+            owner = world.FindEntityByObjectId(record.OwnerObjectId);
+            record.Owner = owner ? owner->GetEntityHandle() : Core::EntityHandle{};
+        }
+        auto* agent = owner ? owner->GetComponent<SteeringAgentComponent>() : nullptr;
+        return agent && agent->GetComponentId() == record.ComponentId ? agent : nullptr;
+    }
+
+    void SteeringSystem::Reset(INavigationService& nav, const Core::World* world)
+    {
+        for (size_t i = 0; i < m_Records.size(); ++i)
+        {
+            const auto path = m_Records[i].Path;
+            if (path.IsValid())
             {
-                nav.ReleasePath(record.Path);
+                nav.ReleasePath(path);
             }
-            record.Agent->m_bRegistered = false;
+            if (auto* agent = world ? ResolveAgent(i, *world) : nullptr)
+            {
+                agent->m_bRegistered = false;
+            }
         }
         m_Records.clear();
-        m_Agents.clear();
+        m_NeighborEntities.clear();
+        m_NeighborObjectIds.clear();
         m_Inputs.clear();
         m_Positions.Clear();
         m_Velocities.Clear();
@@ -127,18 +154,22 @@ namespace NorvesLib::Modules::AI
         m_NeighborHash.Clear();
     }
 
-    void SteeringSystem::BeginStep(INavigationService& nav)
+    SteeringSystem::StepAgents SteeringSystem::BeginStep(INavigationService& nav, const Core::World& world)
     {
         const NavAgentProfile fallback{};
-        for (auto& record : m_Records)
+        StepAgents stepAgents;
+        stepAgents.reserve(m_Records.size());
+        for (size_t i = 0; i < m_Records.size(); ++i)
         {
-            auto& agent = *record.Agent;
-            if (!CanSteer(agent))
+            auto* agent = ResolveAgent(i, world);
+            stepAgents.push_back(agent);
+            if (!agent || !CanSteer(*agent))
             {
                 continue;
             }
-            agent.EnsureMotorBinding();
-            const auto& request = agent.GetRequest();
+            agent->EnsureMotorBinding();
+            auto& record = m_Records[i];
+            const auto& request = agent->GetRequest();
             if (record.Revision == request.Revision && !record.bRepath)
             {
                 continue;
@@ -148,19 +179,19 @@ namespace NorvesLib::Modules::AI
                 nav.CancelPath(record.Path);
                 nav.ReleasePath(record.Path);
             }
-            record = AgentRecord{};
-            record.Agent = &agent;
-            record.Revision = request.Revision;
+            record = AgentRecord{.ComponentId = record.ComponentId, .OwnerObjectId = record.OwnerObjectId,
+                                 .Owner = record.Owner, .Revision = request.Revision};
             if (request.Kind == ESteeringRequest::Wander)
             {
-                InitializeWander(record.Wander, agent.WanderSeed.Get());
+                InitializeWander(record.Wander, agent->WanderSeed.Get());
             }
             if (request.Kind == ESteeringRequest::MoveTo)
             {
-                const auto start = agent.GetOwner()->GetWorldTransform().position;
-                record.Path = nav.RequestPath(start, request.TargetPosition, FindSteeringProfile(nav, agent, fallback));
+                const auto start = agent->GetOwner()->GetWorldTransform().position;
+                record.Path = nav.RequestPath(start, request.TargetPosition, FindSteeringProfile(nav, *agent, fallback));
             }
         }
+        return stepAgents;
     }
 
     void SteeringSystem::VectorColumns::Clear()
@@ -177,24 +208,33 @@ namespace NorvesLib::Modules::AI
         Z.push_back(value.z);
     }
 
-    void SteeringSystem::Gather()
+    void SteeringSystem::Gather(const StepAgents& stepAgents)
     {
         m_Inputs.clear();
         m_Positions.Clear();
         m_Velocities.Clear();
-        for (size_t i = 0; i < m_Records.size(); ++i)
+        m_NeighborEntities.clear();
+        m_NeighborObjectIds.clear();
+        for (size_t i = 0; i < stepAgents.size(); ++i)
         {
-            const auto& agent = *m_Records[i].Agent;
-            if (!CanSteer(agent))
+            auto* agent = stepAgents[i];
+            if (!agent)
             {
                 continue;
             }
-            const auto& owner = *agent.GetOwner();
+            if (!CanSteer(*agent))
+            {
+                agent->SetSteeringVelocity(Math::Vector3{});
+                continue;
+            }
+            const auto& owner = *agent->GetOwner();
+            m_NeighborEntities.push_back(m_Records[i].Owner);
+            m_NeighborObjectIds.push_back(m_Records[i].OwnerObjectId);
             m_Positions.Append(owner.GetWorldTransform().position);
-            m_Velocities.Append(agent.GetSteeringVelocity());
+            m_Velocities.Append(agent->GetSteeringVelocity());
             auto& input = m_Inputs.emplace_back();
             input.RecordIndex = i;
-            input.bHasTarget = ReadTarget(owner, agent.GetRequest().TargetEntity, input.Target);
+            input.bHasTarget = ReadTarget(owner, agent->GetRequest().TargetEntity, input.Target);
         }
     }
 
@@ -210,7 +250,7 @@ namespace NorvesLib::Modules::AI
 
     Math::Vector3 SteeringSystem::FollowPath(AgentRecord& record, const SteeringRequest& request,
                                              const SteeringKinematics& self, const SteeringLimits& limits,
-                                             SteeringPlane plane, const INavigationService& nav)
+                                             SteeringPlane plane, const INavigationService& nav, const NavAgentProfile& profile)
     {
         const auto status = nav.GetPathStatus(record.Path);
         if (status != ENavPathStatus::Succeeded && status != ENavPathStatus::Partial)
@@ -241,15 +281,25 @@ namespace NorvesLib::Modules::AI
             {
                 return velocity;
             }
+
+            const auto& end = record.Polyline.GetPoints().back();
+            record.PathEndTarget = end;
+            if (status == ENavPathStatus::Succeeded &&
+                (std::hypot(end.x - request.TargetPosition.x, end.z - request.TargetPosition.z) <= 1e-3f ||
+                 !nav.NavRaycast(end, request.TargetPosition, profile).bHit))
+            {
+                record.PathEndTarget = request.TargetPosition;
+            }
         }
-        return Arrive(self, request.TargetPosition, limits, params.Arrive, plane);
+        record.LastTarget = record.PathEndTarget;
+        return Arrive(self, record.PathEndTarget, limits, params.Arrive, plane);
     }
 
-    Math::Vector3 SteeringSystem::SolveRequest(AgentRecord& record, const StepInput& input,
+    Math::Vector3 SteeringSystem::SolveRequest(AgentRecord& record, const SteeringRequest& request, const StepInput& input,
                                                const SteeringKinematics& self, const SteeringLimits& limits,
-                                               SteeringPlane plane, float dt, const INavigationService& nav)
+                                               SteeringPlane plane, float dt, const INavigationService& nav,
+                                               const NavAgentProfile& profile)
     {
-        const auto& request = record.Agent->GetRequest();
         const bool hasDestination = request.Kind == ESteeringRequest::Arrive || request.Kind == ESteeringRequest::MoveTo;
         record.bHasLastTarget = hasDestination || input.bHasTarget;
         record.LastTarget = hasDestination ? request.TargetPosition : input.Target.Position;
@@ -265,7 +315,7 @@ namespace NorvesLib::Modules::AI
         case ESteeringRequest::Arrive:
             return Arrive(self, request.TargetPosition, limits, {.StopRadius = request.StopRadius}, plane);
         case ESteeringRequest::MoveTo:
-            return FollowPath(record, request, self, limits, plane, nav);
+            return FollowPath(record, request, self, limits, plane, nav, profile);
         case ESteeringRequest::Pursue:
             return Pursue(self, input.Target, limits, {}, {}, plane);
         case ESteeringRequest::Flee:
@@ -282,19 +332,19 @@ namespace NorvesLib::Modules::AI
         return {};
     }
 
-    Math::Vector3 SteeringSystem::Solve(uint32_t index, float dt, const INavigationService& nav, NeighborScratch& scratch)
+    Math::Vector3 SteeringSystem::Solve(uint32_t index, float dt, const INavigationService& nav,
+                                        const SteeringAgentComponent& agent, NeighborScratch& scratch)
     {
         const auto& input = m_Inputs[index];
         auto& record = m_Records[input.RecordIndex];
-        const auto& agent = *record.Agent;
         const auto plane = agent.Dimension.Get() == ESteeringDimension::Flight ? SteeringPlane::Flight : SteeringPlane::Ground;
         const auto& rates = agent.TurnRateBySpeed.Get();
         const auto limits = SanitizeLimits({agent.MaxSpeed.Get(), agent.MaxAcceleration.Get(),
                                             {rates.x, rates.y, rates.z, rates.w}});
         const SteeringKinematics self{m_Positions.Get(index), m_Velocities.Get(index)};
-        const auto primary = SolveRequest(record, input, self, limits, plane, dt, nav);
         const NavAgentProfile fallback{};
         const auto& profile = FindSteeringProfile(nav, agent, fallback);
+        const auto primary = SolveRequest(record, agent.GetRequest(), input, self, limits, plane, dt, nav, profile);
         const float radius = (std::max)(1.0f, 2.0f * profile.Radius);
         GatherNeighbors(index, radius, scratch);
         const WeightedVelocity items[] = {{primary, 1.0f},
@@ -314,23 +364,23 @@ namespace NorvesLib::Modules::AI
         return ApplySteeringLimits(self.Velocity, desired, limits, dt, plane);
     }
 
-    void SteeringSystem::Compute(float dt, const INavigationService& nav)
+    void SteeringSystem::Compute(float dt, const INavigationService& nav, const StepAgents& stepAgents)
     {
         if (!std::isfinite(dt) || dt <= 0.0f)
         {
             return;
         }
-        Gather();
+        Gather(stepAgents);
         m_NeighborHash.Build(m_Positions.X, m_Positions.Z);
         m_Results.resize(m_Inputs.size());
         NeighborScratch scratch;
         for (uint32_t i = 0; i < m_Inputs.size(); ++i)
         {
-            m_Results[i] = Solve(i, dt, nav, scratch);
+            m_Results[i] = Solve(i, dt, nav, *stepAgents[m_Inputs[i].RecordIndex], scratch);
         }
         for (size_t i = 0; i < m_Inputs.size(); ++i)
         {
-            m_Records[m_Inputs[i].RecordIndex].Agent->SetSteeringVelocity(m_Results[i]);
+            stepAgents[m_Inputs[i].RecordIndex]->SetSteeringVelocity(m_Results[i]);
         }
     }
 }

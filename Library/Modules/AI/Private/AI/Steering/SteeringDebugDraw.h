@@ -7,6 +7,11 @@
 #include "Math/Vector3.h"
 #include <cstdint>
 
+namespace NorvesLib::Core
+{
+    class World;
+}
+
 namespace NorvesLib::Core::Rendering
 {
     class DebugDrawQueue;
@@ -24,7 +29,7 @@ namespace NorvesLib::Modules::AI
     };
 
     /// カメラの XZ 半径内にいる個体の速度・目標・距離帯・経路を描く。
-    void SubmitSteeringDebug(const SteeringSystem& system, const Math::Vector3& cameraCenter,
+    void SubmitSteeringDebug(SteeringSystem& system, const Core::World& world, const Math::Vector3& cameraCenter,
                              const SteeringDebugDrawSettings& settings, Core::Rendering::DebugDrawQueue& queue);
 }
 #endif

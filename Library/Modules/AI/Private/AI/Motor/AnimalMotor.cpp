@@ -1,6 +1,7 @@
 ﻿#include "AI/Motor/AnimalMotor.h"
 
 #include "AI/Steering/SteeringAgentComponent.h"
+#include "AI/Steering/SteeringSystem.h"
 #include "Component/AnimatorComponent.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
@@ -92,9 +93,9 @@ namespace NorvesLib::Modules::AI
             }
             auto* driver = entity->GetComponent<SteeringAgentComponent>();
             auto* current = entity->GetComponent<Physics::CharacterBodyComponent>();
-            if (driver && !driver->IsPendingDestroy() && driver->GetComponentId() == agentId &&
+            if (driver && driver->GetComponentId() == agentId &&
                 current && !current->IsPendingDestroy() && current->GetComponentId() == bodyId &&
-                driver->m_Motor && driver->m_Motor->m_BindingGeneration == generation && driver->IsActive())
+                driver->m_Motor && driver->m_Motor->m_BindingGeneration == generation && SteeringSystem::CanSteer(*driver))
             {
                 driver->StepMotor(dt);
             }

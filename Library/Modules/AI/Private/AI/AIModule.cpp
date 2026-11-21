@@ -2,13 +2,13 @@
 
 #include "AI/Steering/SteeringAgentComponent.h"
 #include "Asset/AssetFileReader.h"
+#include "Engine/Engine.h"
 #include "Logging/LogMacros.h"
 #include "Object/IClass.h"
 
 #if NORVES_ENABLE_DEBUG_OUTPUT
 #include "AI/Navigation/NavDebugDraw.h"
 #include "AI/Steering/SteeringDebugDraw.h"
-#include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
@@ -74,13 +74,13 @@ namespace NorvesLib::Modules::AI
         return IsOwnerThread() ? m_Steering.GetAgentCount() : 0u;
     }
 
-    Core::Container::Span<SteeringAgentComponent* const> AIModule::GetAgents() const
+    Core::Container::Span<const Core::EntityHandle> AIModule::GetNeighborEntities() const
     {
         if (!IsOwnerThread())
         {
             return {};
         }
-        return m_Steering.GetAgents();
+        return m_Steering.GetNeighborEntities();
     }
 
     Core::Locomotion::QuadrupedLocomotionParams AIModule::GetLocomotionProfile(Core::Container::AnsiStringView path)
@@ -126,9 +126,9 @@ namespace NorvesLib::Modules::AI
     {
         if (IsOwnerThread() && m_bInitialized)
         {
-            m_Steering.BeginStep(m_Navigation);
+            const auto stepAgents = m_Steering.BeginStep(m_Navigation, m_Engine->GetWorld());
             m_Navigation.RunBudget();
-            m_Steering.Compute(dt, m_Navigation);
+            m_Steering.Compute(dt, m_Navigation, stepAgents);
         }
     }
 
@@ -180,9 +180,11 @@ namespace NorvesLib::Modules::AI
         {
             return;
         }
-        for (auto* agent : m_Steering.GetAgents())
+        const auto& world = m_Engine->GetWorld();
+        for (uint32_t i = 0; i < m_Steering.GetAgentCount(); ++i)
         {
-            if (SteeringSystem::CanSteer(*agent))
+            auto* agent = m_Steering.ResolveAgent(i, world);
+            if (agent && SteeringSystem::CanSteer(*agent))
             {
                 agent->PublishMotorVisual();
             }
@@ -214,7 +216,7 @@ namespace NorvesLib::Modules::AI
         }
         if (m_bSteeringDebugDrawEnabled)
         {
-            SubmitSteeringDebug(m_Steering, center, {}, queue);
+            SubmitSteeringDebug(m_Steering, world, center, {}, queue);
         }
 #endif
     }
@@ -223,7 +225,7 @@ namespace NorvesLib::Modules::AI
     {
         if (IsOwnerThread())
         {
-            m_Steering.Reset(m_Navigation);
+            m_Steering.Reset(m_Navigation, m_Engine ? &m_Engine->GetWorld() : nullptr);
             m_LocomotionProfiles.Clear();
             m_Navigation.Reset();
             m_bInitialized = false;

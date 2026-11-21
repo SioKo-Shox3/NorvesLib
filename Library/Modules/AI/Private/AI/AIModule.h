@@ -38,9 +38,10 @@ namespace NorvesLib::Modules::AI
         void UnregisterAgent(SteeringAgentComponent& agent);
         uint32_t GetAgentCount() const;
         Core::Locomotion::QuadrupedLocomotionParams GetLocomotionProfile(Core::Container::AnsiStringView path);
-        // 登録順に参照する。登録・解除・終了処理でビューは無効になる。
-        Core::Container::Span<SteeringAgentComponent* const> GetAgents() const;
         const Spatial::UniformGridHash& GetNeighborHash() const { return m_Steering.GetNeighborHash(); }
+        /// GetNeighborHash() の添字 i の個体は GetNeighborEntities()[i] で参照する。
+        /// 直近の固定歩の収集にだけ対応し、ハンドルが取れていない個体は無効のハンドルになる。
+        Core::Container::Span<const Core::EntityHandle> GetNeighborEntities() const;
 
     private:
         bool IsOwnerThread() const;

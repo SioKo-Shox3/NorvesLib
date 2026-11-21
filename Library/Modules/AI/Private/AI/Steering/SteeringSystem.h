@@ -4,6 +4,12 @@
 #include "AI/Spatial/UniformGridHash.h"
 #include "AI/Steering/SteeringBehaviors.h"
 #include "Debug/DebugConfig.h"
+#include "Object/EntityHandle.h"
+
+namespace NorvesLib::Core
+{
+    class World;
+}
 
 namespace NorvesLib::Modules::AI
 {
@@ -14,26 +20,33 @@ namespace NorvesLib::Modules::AI
     class SteeringSystem
     {
     public:
+        using StepAgents = Core::Container::VariableArray<SteeringAgentComponent*>;
+
         void RegisterAgent(SteeringAgentComponent& agent);
         void UnregisterAgent(SteeringAgentComponent& agent, INavigationService& nav);
-        void Reset(INavigationService& nav);
+        void Reset(INavigationService& nav, const Core::World* world);
         uint32_t GetAgentCount() const { return static_cast<uint32_t>(m_Records.size()); }
-        Core::Container::Span<SteeringAgentComponent* const> GetAgents() const { return m_Agents; }
+        SteeringAgentComponent* ResolveAgent(size_t index, const Core::World& world);
         static bool CanSteer(const SteeringAgentComponent& agent);
 #if NORVES_ENABLE_DEBUG_OUTPUT
         // 登録順の記録を描画中だけ借りる。
         const auto& GetDebugRecord(uint32_t index) const { return m_Records[index]; }
 #endif
 
-        void BeginStep(INavigationService& nav);
-        void Compute(float dt, const INavigationService& nav);
-        // 添字は直近の収集時に有効だった個体の登録順。
+        StepAgents BeginStep(INavigationService& nav, const Core::World& world);
+        void Compute(float dt, const INavigationService& nav, const StepAgents& stepAgents);
+        // 直近の固定歩で収集したハッシュの添字 i は GetNeighborEntities()[i] に対応する。
+        // ハンドルを取得できていない個体の要素は無効なハンドルになる。
         const Spatial::UniformGridHash& GetNeighborHash() const { return m_NeighborHash; }
+        Core::Container::Span<const Core::EntityHandle> GetNeighborEntities() const { return m_NeighborEntities; }
+        Core::Container::Span<const uint64_t> GetNeighborObjectIds() const { return m_NeighborObjectIds; }
 
     private:
         struct AgentRecord
         {
-            SteeringAgentComponent* Agent = nullptr;
+            uint64_t ComponentId = 0;
+            uint64_t OwnerObjectId = 0;
+            Core::EntityHandle Owner;
             uint32_t Revision = 0;
             Steering::KeepDistanceState KeepDistance;
             Steering::WanderState Wander;
@@ -43,6 +56,7 @@ namespace NorvesLib::Modules::AI
             Math::PolylinePath Polyline;
             bool bPolylinePrepared = false;
             bool bPathFinished = false;
+            Math::Vector3 PathEndTarget;
             bool bRepath = false;
             Math::Vector3 LastTarget;
             bool bHasLastTarget = false;
@@ -70,19 +84,21 @@ namespace NorvesLib::Modules::AI
             Core::Container::VariableArray<Math::Vector3> Positions;
         };
 
-        void Gather();
+        void Gather(const StepAgents& stepAgents);
         void GatherNeighbors(uint32_t index, float radius, NeighborScratch& scratch) const;
-        Math::Vector3 Solve(uint32_t index, float dt, const INavigationService& nav, NeighborScratch& scratch);
-        static Math::Vector3 SolveRequest(AgentRecord& record, const StepInput& input,
+        Math::Vector3 Solve(uint32_t index, float dt, const INavigationService& nav, const SteeringAgentComponent& agent,
+                            NeighborScratch& scratch);
+        static Math::Vector3 SolveRequest(AgentRecord& record, const SteeringRequest& request, const StepInput& input,
                                           const Steering::SteeringKinematics& self, const Steering::SteeringLimits& limits,
-                                          Steering::SteeringPlane plane, float dt, const INavigationService& nav);
+                                          Steering::SteeringPlane plane, float dt, const INavigationService& nav,
+                                          const NavAgentProfile& profile);
         static Math::Vector3 FollowPath(AgentRecord& record, const SteeringRequest& request,
                                         const Steering::SteeringKinematics& self, const Steering::SteeringLimits& limits,
-                                        Steering::SteeringPlane plane, const INavigationService& nav);
+                                        Steering::SteeringPlane plane, const INavigationService& nav, const NavAgentProfile& profile);
 
         Core::Container::VariableArray<AgentRecord> m_Records;
-        // GetAgents の連続ビューを登録・解除の間は有効に保つ。
-        Core::Container::VariableArray<SteeringAgentComponent*> m_Agents;
+        Core::Container::VariableArray<Core::EntityHandle> m_NeighborEntities;
+        Core::Container::VariableArray<uint64_t> m_NeighborObjectIds;
         VectorColumns m_Positions, m_Velocities;
         Core::Container::VariableArray<StepInput> m_Inputs;
         Core::Container::VariableArray<Math::Vector3> m_Results;
