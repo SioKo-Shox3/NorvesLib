@@ -95,6 +95,17 @@ public:
      */
     virtual Core::Platform::NativeWindowHandle GetNativeHandle() const = 0;
 
+    /**
+     * @brief クライアント領域の幅と高さを物理 px で返す。最小化中は最後の寸法を返す。
+     * @return ウィンドウが無い場合や寸法が 0 の場合は false を返し、引数は変更しない。
+     */
+    virtual bool GetClientSize(int& width, int& height) const
+    {
+        (void)width;
+        (void)height;
+        return false;
+    }
+
 protected:
     void NotifyInputFocusChanged(bool focused) { m_InputFocusChanged.Broadcast(focused); }
 

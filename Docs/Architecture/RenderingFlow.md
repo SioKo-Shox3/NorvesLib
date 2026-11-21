@@ -93,6 +93,20 @@ G11 の GR54 が雲量によって IBL を GPU で混ぜるときは、E_avg も
 `ShadowMapPass` は CSM の各カスケードで、MegaGeometry に加え、スキンと通常のメッシュの影を落とす描画を絞り込む。スキンの境界は `BuildSkinnedShadowCasterWorldBounds`、通常のメッシュは `MeshProxy` の境界球から求める。インスタンシングでは、同じメッシュの影を落とす proxy の境界球を包む球を使う。`SelectCascadedShadowCasterDraws` は `CascadedShadowCascadeMayContainCaster` を使い、影の地図の XY にかからないカスケードには描画を出さない。境界を求められない描画はすべての有効なカスケードに残す。ログ有効時は描画数か候補数が変わったときに `CSM_CASTER_CULL c0=<描いた>/<候補> …` を出す。
 
 `RenderWorld::SetSunShadowParameters` は `SunShadowParameters` の `MaxDistance` と `SplitLambda` を設定し、`SceneProxy::SunShadow` と `FramePacket` を経由して `ShadowMapPass` に渡す。`MaxDistance` は CSM と VSM の影の範囲、`SplitLambda` は CSM の分割に効く。`SanitizeSunShadowParameters` は非有限値と 0 以下を「設定のまま」を表す 0 にし、`SplitLambda` の上限を 1 にする。既定は 80 m と λ 0.5。旧 `SetSunShadowMaxDistance` も残り、新しい設定口へ転送する。
+
+### トーンマップとグレーディング
+
+- `CameraProxy::PostProcess.bValid == true` のとき、`ToneMappingPass` は `CameraProxy::PostProcess`（`Library/Core/Public/Rendering/PostProcessProfile.h`）の値だけでポストプロセス定数を作る。`GradingContrast`、`GradingOverride`、`LookLut` と、View のグレーディング・ビネット・グレイン設定は読まない。
+- 既定の `bValid == false` では従来の経路を通り、同じ設定で同じ色を出力する。
+- `Assets/Shaders/tonemapping.frag` の入力 `SceneColor` は、照明の段で `PreExposure` を掛けたシーンリニアの色である。トーンマップのパスでは露出を掛け直さない。`ContrastPivot` の既定値 0.18 は露出後の 18% グレー、すなわちこの入力の 0.18 を指す。
+- `gradingMode == 2` のときだけ、トーンマップ演算子の前にシーンリニアで Grade を掛ける。順序は露出バイアス → ホワイトバランス → 暗部の持ち上げ → log2 空間のコントラスト（`出力 = pivot × (c / pivot)^contrast`）→ 彩度 → ハイライトの肩 → スプリットトーン。彩度の調整では、有効な保護色相の彩度を残す。Grade の各値が中立なら入力色をそのまま返す。
+- トーンマップ演算子の後、`gradingMode` が 0・1 なら従来の display-linear グレーディングと 1 枚のルック LUT を掛ける。ACES 2.0 SDR LUT 演算子では、この二つを省く。
+- `gradingMode == 2` の Look は、ACES 2.0 SDR LUT を含む全演算子の出力に掛ける。`LutA` と `LutB` の結果を `Blend` で混ぜ、`Intensity` で元の色への適用率を決める。
+- 仕上げの順序はビネット → フィルムグレイン → ディザ。`Lens.Grain` は sRGB 符号化値でのフィルムグレインの標準偏差を表す。ディザは sRGB 符号化値に三角分布のノイズを加え、強さが 0 なら省く。
+- `bValid == true` のビネットは `ToneMappingPass` が掛ける。`VignettePass` は `PostProcess.Lens` の色収差だけを掛け、`BloomPass` は同じ `PostProcess.Lens` からレンズダートの強さを読む。
+
+コントラストの調整箇所は三つある。新しい調整はシーンリニアの Grade（`PostProcess.Grade.Contrast`）で行う。display-linear の `CameraProxy::GradingContrast` と `GradingOverride` は既存シーンの見た目を保つ互換経路とし、表示段の利得（GR120 の `ContrastGain`）は Grade の上に掛ける。`ToneMappingPassGpuTypes.h` の `GPUToneMappingParams` を広げるときは欄を末尾に足し、ブロックの大きさと各欄のオフセットの `static_assert`、`tonemapping.frag` の GLSL ブロック `ToneMappingParams` を同じ変更で更新する。GR120 の欄は GR61 の欄（80 バイトから 192 バイトまで）の後ろに足す。
+
 ## 材質ごとの GBuffer プログラム
 
 GameThread は `RenderWorld::RegisterGBufferProgram(GBufferProgramDesc)` に名前とシェーダーのファイル名を渡す。初期化の窓では即時に登録され、窓が閉じた後の登録・解除は保留されて RenderThread の `SceneView::Render` 冒頭で反映される。頂点シェーダーの名前が空なら標準を使う。材質は `MaterialCreateData::Program` で名前を指定し、空なら標準を使う。未登録、シェーダーを読めない、またはパイプラインを作れない場合は標準へ落ちる。
@@ -143,6 +157,15 @@ RenderGraph 対応済み view では pass chain を登録して graph 経路を�
 - Resize は `RenderWorld::Resize()` で保留し、次の `BeginFrame()` で `WaitForRender()` 後に適用する。
 - Shutdown は RenderThread を先に停止し、その後 RenderResources、RenderingCoordinator、RHI 参照を解放する。
 - SwapChain 依存リソースは Resize/dirty presentation のタイミングで再作成する。
+
+## Canvas(画面空間の UI)と画面の寸法
+
+- **起動**　Canvas は既定では作らない。`BootConfig::bEnableCanvasView` または `--enable-canvas-view` で有効にする。Game は初期化前の `ConfigureFromArguments` で、`--game-flow`、`--scene=ui-gallery`、`--capture-ui` のいずれかがあるときだけこの設定を有効にする。
+- **寸法**　シーンの描画寸法には `RenderScale` を適用する。Canvas とそのカメラの正射影は、`RenderScale` にかかわらず画面の幅と高さに合わせる。
+- **合成と表示**　Canvas があるとき、`CompositePass` は `Composite.Color` を Canvas の寸法で作り、寸法の異なるシーンと Canvas のテクスチャを同じ UV で読んで重ねる。Canvas がなければシーンをそのまま通す。表示時は、その出力を UV で読み、出力先のビューポート全体に描く。
+- **撮影**　`--capture-png` は Canvas を無効にして最終出力を写す。`--capture-ui` を併用すると Canvas を残し、製品の UI も写す。ImGui のオーバーレイは撮影時には既定で描かず、ランチャーなどが明示的に撮影を有効にした場合だけ描く。
+- **入力**　製品の UI の標準順位は `InputRouter::PriorityUI`（500）。ゲーム入力（0）より先に受け取り、オーバーレイ（1000）とデバッグオーバーレイによる入力の遮断（999）がそれに優先する。
+- **DPI**　`WinMain` の冒頭でプロセスを Per-Monitor V2 に設定する。`BootConfig::WindowWidth` と `WindowHeight` は起動時のクライアント領域の物理 px 数で、`AdjustWindowRectExForDpi` がその寸法に必要な外枠を求める。`WM_DPICHANGED` を受けると OS が提案した矩形にウィンドウを移す。`WM_SIZE` がクライアント領域の幅と高さを物理 px で保持し、`ApplicationProcessor::ProcessPlatformMessages` がメッセージ処理の直後にメインウィンドウの `IWindow::GetClientSize` でその寸法を読み、`RenderWorld::Resize` へ渡す。`RenderWorld` は寸法が変わったときだけ変更を保留し、次の `BeginFrame` で描画の完了を待つ。その後、`RenderingCoordinator::Resize` がスワップチェーンを再作成し、RenderScale の寸法を更新して Canvas とキャンバスのカメラ、各 View を新しい寸法に合わせて作り直す。スワップチェーンの `OutOfDate` による再作成経路も残る。
 
 ## 描画の拡張の段（GR25）
 

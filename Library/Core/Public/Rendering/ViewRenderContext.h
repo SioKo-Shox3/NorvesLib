@@ -975,8 +975,11 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy *GetPreviousCamera() const
         {
             const CameraProxy *activeCamera = GetActiveCamera();
+            // カメラの切り替えやカットをまたいで前のカメラを返さない（Docs/Architecture/CameraDiscontinuity.md）。
             return activeCamera && PreviousMainCamera &&
-                           activeCamera->CameraId == PreviousMainCamera->CameraId
+                           activeCamera->CameraId == PreviousMainCamera->CameraId &&
+                           activeCamera->SourceCameraId == PreviousMainCamera->SourceCameraId &&
+                           activeCamera->CutSerial == PreviousMainCamera->CutSerial
                        ? PreviousMainCamera
                        : nullptr;
         }
