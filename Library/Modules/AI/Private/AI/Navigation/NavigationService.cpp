@@ -239,15 +239,57 @@ namespace NorvesLib::Modules::AI
         slot.Cells.assign(cells.begin(), cells.end());
         if (slot.Points.size() > 1)
         {
-            if (!NavGridQueries::Raycast(m_Grid, slot.Start, slot.Points[1], radius, &m_Overlay).bHit)
+            enum class EndpointAction { KeepCenter, ReplaceCenter, KeepBoth };
+            const bool bCheckCost = !m_Overlay.IsEmpty();
+            const auto chooseEndpointAction = [&](const Math::Vector3& oldFrom, const Math::Vector3& oldTo,
+                                                  const Math::Vector3& newFrom, const Math::Vector3& newTo)
+            {
+                uint64_t newExtra = 0;
+                const auto ray = bCheckCost
+                    ? NavGridQueries::Raycast(m_Grid, newFrom, newTo, radius, m_Overlay, newExtra)
+                    : NavGridQueries::Raycast(m_Grid, newFrom, newTo, radius, &m_Overlay);
+                if (ray.bHit)
+                {
+                    return EndpointAction::KeepCenter;
+                }
+                // 差し替え後の線分で動的な割増が増えるなら、平滑化で選んだセル中心を経由する。
+                if (bCheckCost)
+                {
+                    uint64_t oldExtra = 0;
+                    NavGridQueries::Raycast(m_Grid, oldFrom, oldTo, radius, m_Overlay, oldExtra);
+                    if (newExtra > oldExtra)
+                    {
+                        return EndpointAction::KeepBoth;
+                    }
+                }
+                return EndpointAction::ReplaceCenter;
+            };
+
+            const auto startAction = chooseEndpointAction(slot.Points.front(), slot.Points[1], slot.Start, slot.Points[1]);
+            if (startAction == EndpointAction::ReplaceCenter)
             {
                 slot.Points.front() = slot.Start;
             }
-            const auto& previous = slot.Points[slot.Points.size() - 2];
-            if (state == ENavSearchState::Succeeded
-                && !NavGridQueries::Raycast(m_Grid, previous, slot.Goal, radius, &m_Overlay).bHit)
+            else if (startAction == EndpointAction::KeepBoth
+                     && !NavGridQueries::Raycast(m_Grid, slot.Start, slot.Points.front(), radius, &m_Overlay).bHit)
             {
-                slot.Points.back() = slot.Goal;
+                slot.Points.insert(slot.Points.begin(), slot.Start);
+            }
+
+            if (state == ENavSearchState::Succeeded)
+            {
+                const auto& previous = slot.Points[slot.Points.size() - 2];
+                const auto& last = slot.Points.back();
+                const auto goalAction = chooseEndpointAction(previous, last, previous, slot.Goal);
+                if (goalAction == EndpointAction::ReplaceCenter)
+                {
+                    slot.Points.back() = slot.Goal;
+                }
+                else if (goalAction == EndpointAction::KeepBoth
+                         && !NavGridQueries::Raycast(m_Grid, last, slot.Goal, radius, &m_Overlay).bHit)
+                {
+                    slot.Points.push_back(slot.Goal);
+                }
             }
         }
 
