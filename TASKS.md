@@ -8485,7 +8485,7 @@
 - notes: 設計は要件 `#### GR22` の P3（カラスを採る場合のみ）とロードマップ 2813 行（飛行は 3D＋高度帯＋バンク）。カラスを採るかは企画で未定だが、作者の決定（企画で保留の要件もエンジンの機能として採る）に従い作る。多層ナビと 3D の経路探索は非ゴール（ロードマップ 2818 行）なので、飛行はステアリングだけ。試験の数値（0.8 倍・0.3 m・20 s・0.2 m）は要件の案の値で根拠は無い。試験を足す理由: 反証する契約は「群れがぶつからず散らばらず、飛ぶ物が帯と上限を守る」こと。外れると群れがすり抜ける・地面に潜るのが一瞬だけ起き、撮影では気づきにくい。やらないこと: 翼のアニメーション（見た目の資産が無い）。
 
 ## G13-GR24-SENSE-MODELS: 視覚（草と地形の遮蔽）・聴覚・嗅覚（風下の煙状の分布）・気づきの積分の純関数とポートを作る
-- status: done
+- status: blocked
 - after: G13-GR21-AI-MODULE-NAV, G13-GR116-ACOUSTIC-EVALUATOR, G5-GR38-HEIGHTFIELD-QUERY, G5-GR38-PHYSICS-HEIGHTFIELD, G5-GR42-GRASS-FIELD-CORE, G5-GR42-GRASS-FIELD-ASSET, G12-GR45-DRYNESS-CPU, G12-GR45-DRYNESS-FIELD, G12-GR45-GRASS-DRYNESS, G12-GR45-WITHER-GAMEPLAY, G5-GR46-WIND-FIELD, G5-GR46-VERTEX-ANIM, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES
 - gr: GR24
 - needs-gr: GR38, GR42, GR45, GR46, GR49
