@@ -1,4 +1,5 @@
-﻿// 点の可視度は「草の透過率の累乗 × 地形が通れば 1、遮れば 0 の係数 × 視野の重み × 距離の重み」。
+﻿// 点の可視度は「草の透過率 × 地形が通れば 1、遮れば 0 の係数 × 視野の重み × 距離の重み」。
+// 草の透過率は目が線分上の草の先端の最大高さ以上なら 1、それ以外は exp(−光学的厚さ × 倍率)。
 // 草の枯れ度はポートの実装（GrassField）が描画と同じ式で含めるため、ここで二重に掛けない。
 // 固体の遮蔽は知覚処理側で物理のレイを撃って判定する。
 #pragma once
@@ -38,7 +39,7 @@ namespace NorvesLib::Modules::AI::Perception
     struct VisionPointResult
     {
         float Visibility = 0.0f;
-        float GrassTransmittance = 1.0f; ///< 光学的厚さの倍率を適用した透過率。
+        float GrassTransmittance = 1.0f; ///< 倍率を光学的厚さに掛けた透過率。目が草の先端の最大高さ以上なら 1。
         bool bTerrainBlocked = false;
         float AngleWeight = 0.0f;
         float DistanceWeight = 0.0f;

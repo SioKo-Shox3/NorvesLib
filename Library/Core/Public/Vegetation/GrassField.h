@@ -90,6 +90,13 @@ namespace NorvesLib::Core::Vegetation
          */
         float QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
                              const DrynessMap* pDryness = nullptr) const;
+        /**
+         * @brief 区間の草の光学的厚さ τ（0 以上）を返す。QueryOcclusion は同じ刻み・枯れ度・積分回数の上限で exp(-τ) を返す。
+         * pOutMaxTopHeight には草のある積分点での、地面の高さと枯れ度を反映した草丈の和の最大値（m）を書く。
+         * 草のある積分点がない場合や区間が不正な場合は負の無限大を書く。
+         */
+        float QueryOpticalDepth(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
+                                const DrynessMap* pDryness = nullptr, float* pOutMaxTopHeight = nullptr) const;
         GrassSurface QuerySurface(float x, float z) const;
         float GetCameraClearance(const Math::Vector3& position) const;
         Container::TSharedPtr<const Rendering::GrassFieldRenderData> BuildRenderData() const;

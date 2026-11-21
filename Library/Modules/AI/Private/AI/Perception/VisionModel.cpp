@@ -31,18 +31,21 @@ namespace NorvesLib::Modules::AI::Perception
             return static_cast<float>(t * t * (3.0 - 2.0 * t));
         }
 
-        float ScaleTransmittance(float transmittance, float scale)
+        float GrassTransmittance(const GrassPathSample& sample, float eyeHeight, float scale)
         {
-            if (!std::isfinite(transmittance))
+            if (eyeHeight >= sample.MaxTopHeight || scale == 0.0f)
+            {
+                return 1.0f;
+            }
+            if (std::isnan(sample.OpticalDepth))
             {
                 return 0.0f;
             }
-            const float clamped = std::clamp(transmittance, 0.0f, 1.0f);
-            if (clamped == 0.0f || clamped == 1.0f)
+            if (!std::isfinite(scale) || scale < 0.0f)
             {
-                return clamped;
+                scale = 1.0f;
             }
-            return std::isfinite(scale) && scale >= 0.0f ? std::pow(clamped, scale) : clamped;
+            return std::exp(-std::max(0.0f, sample.OpticalDepth) * scale);
         }
     }
 
@@ -54,6 +57,7 @@ namespace NorvesLib::Modules::AI::Perception
         if (!IsFinite(eye) || !IsFinite(target) || !IsFinite(forward) ||
             !std::isfinite(tuning.FieldOfViewDegrees) || !std::isfinite(tuning.FieldOfViewEdgeDegrees) ||
             !std::isfinite(tuning.FadeStartMeters) || !std::isfinite(tuning.MaxDistanceMeters) ||
+            tuning.FieldOfViewEdgeDegrees <= 0.0f || tuning.FadeStartMeters >= tuning.MaxDistanceMeters ||
             !std::isfinite(tuning.GrassStepMeters) || !std::isfinite(tuning.TerrainClearanceMeters))
         {
             return result;
@@ -106,8 +110,8 @@ namespace NorvesLib::Modules::AI::Perception
 
         if (grass)
         {
-            const float transmittance = grass->QueryTransmittance(eye, target, tuning.GrassStepMeters);
-            result.GrassTransmittance = ScaleTransmittance(transmittance, tuning.GrassOpacityScale);
+            const GrassPathSample sample = grass->QueryGrassPath(eye, target, tuning.GrassStepMeters);
+            result.GrassTransmittance = GrassTransmittance(sample, eye.y, tuning.GrassOpacityScale);
         }
         result.Visibility = result.GrassTransmittance * result.AngleWeight * result.DistanceWeight;
         return result;

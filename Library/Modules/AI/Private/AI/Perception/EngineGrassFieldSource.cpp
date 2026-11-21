@@ -1,4 +1,4 @@
-﻿// 草の透過率に描画と共通の枯れ度マップを適用する。
+﻿// 描画と共通の枯れ度マップを使い、視線上の草を照会する。
 #include "AI/Perception/EngineGrassFieldSource.h"
 
 #include "Vegetation/GrassField.h"
@@ -16,13 +16,17 @@ namespace NorvesLib::Modules::AI::Perception
         m_pVegetation = vegetation;
     }
 
-    float EngineGrassFieldSource::QueryTransmittance(const Math::Vector3& a, const Math::Vector3& b, float stepMeters) const
+    GrassPathSample EngineGrassFieldSource::QueryGrassPath(const Math::Vector3& eye, const Math::Vector3& target,
+                                                           float stepMeters) const
     {
         const auto* field = m_pVegetation ? m_pVegetation->GetGrassField() : nullptr;
         if (!field)
         {
-            return 1.0f;
+            return {};
         }
-        return field->QueryOcclusion(a, b, stepMeters, &m_pVegetation->GetDrynessMap());
+        GrassPathSample sample;
+        sample.OpticalDepth = field->QueryOpticalDepth(eye, target, stepMeters, &m_pVegetation->GetDrynessMap(),
+                                                      &sample.MaxTopHeight);
+        return sample;
     }
 }

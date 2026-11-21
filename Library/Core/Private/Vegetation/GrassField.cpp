@@ -329,16 +329,26 @@ namespace NorvesLib::Core::Vegetation
     float GrassField::QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
                                     const DrynessMap* pDryness) const
     {
+        return std::exp(-QueryOpticalDepth(a, b, stepMeters, pDryness));
+    }
+
+    float GrassField::QueryOpticalDepth(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
+                                        const DrynessMap* pDryness, float* pOutMaxTopHeight) const
+    {
+        if (pOutMaxTopHeight)
+        {
+            *pOutMaxTopHeight = -std::numeric_limits<float>::infinity();
+        }
         if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(a.z) ||
             !std::isfinite(b.x) || !std::isfinite(b.y) || !std::isfinite(b.z))
         {
-            return 1.0f;
+            return 0.0f;
         }
         const Math::Vector3 delta = b - a;
         const float length = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
         if (!std::isfinite(length) || length == 0.0f)
         {
-            return 1.0f;
+            return 0.0f;
         }
         if (!std::isfinite(stepMeters) || stepMeters <= 0.0f)
         {
@@ -371,14 +381,19 @@ namespace NorvesLib::Core::Vegetation
                     height *= Rendering::GrassLerp(1.0f, pSpecies->Dryness.HeightScale, dryness);
                 }
             }
-            const float above = point.y - GetGroundHeight(point.x, point.z);
+            const float groundHeight = GetGroundHeight(point.x, point.z);
+            const float above = point.y - groundHeight;
             if (height > 0.0f && pSpecies != nullptr)
             {
                 const float sigma = density * pSpecies->Opacity * Saturate((height - above) / height);
                 tau += sigma * stepLength;
+                if (pOutMaxTopHeight && density > 0.0f)
+                {
+                    *pOutMaxTopHeight = std::max(*pOutMaxTopHeight, groundHeight + height);
+                }
             }
         }
-        return std::exp(-tau);
+        return tau;
     }
 
     GrassSurface GrassField::QuerySurface(float x, float z) const
