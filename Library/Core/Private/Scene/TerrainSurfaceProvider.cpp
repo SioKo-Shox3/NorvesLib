@@ -57,41 +57,32 @@ namespace NorvesLib::Core::Scene
             return false;
         }
 
-        LayerSurfaceBinding* slot = nullptr;
-        auto* oldest = &m_Bindings[0];
-        uint64_t firstBoundRevision = m_BindingRevision + 1;
-        for (auto& binding : m_Bindings)
+        const auto expired = std::remove_if(m_Bindings.begin(), m_Bindings.end(), [](const LayerSurfaceBinding& entry)
         {
-            if (binding.Field.expired())
-            {
-                slot = &binding;
-            }
-            else if (binding.Raw == field.get())
-            {
-                slot = &binding;
-                firstBoundRevision = binding.FirstBoundRevision;
-                break;
-            }
-            else if (binding.FirstBoundRevision < oldest->FirstBoundRevision)
-            {
-                oldest = &binding;
-            }
-        }
-        if (!slot)
-        {
-            slot = oldest;
-        }
+            return entry.Field.expired();
+        });
+        m_Bindings.erase(expired, m_Bindings.end());
 
         LayerSurfaceBinding updated;
         updated.Field = field;
         updated.Raw = field.get();
-        updated.FirstBoundRevision = firstBoundRevision;
         updated.LayerCount = desc.Layers.size();
         for (size_t layer = 0; layer < updated.LayerCount; ++layer)
         {
             updated.Names[layer] = desc.Layers[layer].SurfaceName;
         }
-        *slot = std::move(updated);
+        const auto binding = std::find_if(m_Bindings.begin(), m_Bindings.end(), [&](const LayerSurfaceBinding& entry)
+        {
+            return entry.Raw == field.get() && !entry.Field.expired();
+        });
+        if (binding != m_Bindings.end())
+        {
+            *binding = std::move(updated);
+        }
+        else
+        {
+            m_Bindings.push_back(std::move(updated));
+        }
         ++m_BindingRevision;
         return true;
     }

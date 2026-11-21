@@ -4,6 +4,7 @@
 #include "Container/FixedArray.h"
 #include "Container/PointerTypes.h"
 #include "Container/String.h"
+#include "Container/VariableArray.h"
 #include "Scene/SceneQuery.h"
 
 namespace NorvesLib::Core::Environment
@@ -63,7 +64,6 @@ namespace NorvesLib::Core::Scene
         {
             Container::TWeakPtr<const Rendering::Terrain::TerrainHeightField> Field;
             const Rendering::Terrain::TerrainHeightField* Raw = nullptr;
-            uint64_t FirstBoundRevision = 0;
             size_t LayerCount = 0;
             Container::FixedArray<Container::AnsiString, kMaxLayers> Names;
         };
@@ -76,8 +76,9 @@ namespace NorvesLib::Core::Scene
         const Vegetation::Vegetation& m_Vegetation;
         // 照会は GameThread 専用。高さ場の寿命を延ばさず、弱参照の期限で同じアドレスの別の高さ場を区別する。
         mutable Container::FixedArray<CachedLayers, 8> m_Cache;
-        // 登録解除後の高さ場は FindTerrain が返さない。Engine の破棄時に EndPlay からここに触れずに済むよう、弱参照だけを持つ。
-        Container::FixedArray<LayerSurfaceBinding, 16> m_Bindings;
+        // 登録中の高さ場は件数によらず保持し、新しく結ぶときに期限切れの項目だけを取り除く。
+        // Engine の破棄時に EndPlay から登録を外さずに済むよう、高さ場は弱参照で持つ。
+        Container::VariableArray<LayerSurfaceBinding> m_Bindings;
         uint64_t m_BindingRevision = 0;
     };
 
