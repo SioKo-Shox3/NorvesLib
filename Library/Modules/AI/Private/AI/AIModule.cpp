@@ -7,6 +7,7 @@
 
 #if NORVES_ENABLE_DEBUG_OUTPUT
 #include "AI/Navigation/NavDebugDraw.h"
+#include "AI/Steering/SteeringDebugDraw.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "Rendering/RenderWorld.h"
@@ -152,29 +153,68 @@ namespace NorvesLib::Modules::AI
 #endif
     }
 
-    void AIModule::LateTick(float)
+    void AIModule::SetSteeringDebugDrawEnabled(bool bEnabled)
     {
 #if NORVES_ENABLE_DEBUG_OUTPUT
-        if (!IsNavDebugDrawEnabled() || !m_bInitialized)
+        if (IsOwnerThread())
+        {
+            m_bSteeringDebugDrawEnabled = bEnabled;
+        }
+#else
+        (void)bEnabled;
+#endif
+    }
+
+    bool AIModule::IsSteeringDebugDrawEnabled() const
+    {
+#if NORVES_ENABLE_DEBUG_OUTPUT
+        return IsOwnerThread() && m_bSteeringDebugDrawEnabled;
+#else
+        return false;
+#endif
+    }
+
+    void AIModule::LateTick(float)
+    {
+        if (!IsOwnerThread() || !m_bInitialized)
+        {
+            return;
+        }
+        for (auto* agent : m_Steering.GetAgents())
+        {
+            if (SteeringSystem::CanSteer(*agent))
+            {
+                agent->PublishMotorVisual();
+            }
+        }
+
+#if NORVES_ENABLE_DEBUG_OUTPUT
+        if (!m_bNavDebugDrawEnabled && !m_bSteeringDebugDrawEnabled)
         {
             return;
         }
         const auto& camera = m_Engine->GetRenderWorld().GetRenderingCoordinator().GetMainCamera();
         const Math::Vector3 center(camera.PositionX, camera.PositionY, camera.PositionZ);
         auto& queue = Core::GEngine.GetDebugDraw();
-        const NavDebugDrawSettings settings{};
-        SubmitNavGridDebug(m_Navigation.GetGrid(), center, settings, queue);
-
-        const Math::Vector4 green(0.0f, 1.0f, 0.0f, 1.0f);
-        const Math::Vector4 yellow(1.0f, 1.0f, 0.0f, 1.0f);
-        for (uint32_t i = 0; i < m_Navigation.GetPathSlotCount(); ++i)
+        if (m_bNavDebugDrawEnabled)
         {
-            const auto status = m_Navigation.GetSlotStatus(i);
-            if (status == ENavPathStatus::Succeeded || status == ENavPathStatus::Partial)
+            const NavDebugDrawSettings settings{};
+            SubmitNavGridDebug(m_Navigation.GetGrid(), center, settings, queue);
+            const Math::Vector4 green(0.0f, 1.0f, 0.0f, 1.0f);
+            const Math::Vector4 yellow(1.0f, 1.0f, 0.0f, 1.0f);
+            for (uint32_t i = 0; i < m_Navigation.GetPathSlotCount(); ++i)
             {
-                SubmitNavPathDebug(m_Navigation.GetSlotPath(i), center, settings,
-                                   status == ENavPathStatus::Partial ? yellow : green, queue);
+                const auto status = m_Navigation.GetSlotStatus(i);
+                if (status == ENavPathStatus::Succeeded || status == ENavPathStatus::Partial)
+                {
+                    SubmitNavPathDebug(m_Navigation.GetSlotPath(i), center, settings,
+                                       status == ENavPathStatus::Partial ? yellow : green, queue);
+                }
             }
+        }
+        if (m_bSteeringDebugDrawEnabled)
+        {
+            SubmitSteeringDebug(m_Steering, center, {}, queue);
         }
 #endif
     }

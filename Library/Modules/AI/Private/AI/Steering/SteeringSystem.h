@@ -3,6 +3,7 @@
 #include "AI/Navigation/NavTypes.h"
 #include "AI/Spatial/UniformGridHash.h"
 #include "AI/Steering/SteeringBehaviors.h"
+#include "Debug/DebugConfig.h"
 
 namespace NorvesLib::Modules::AI
 {
@@ -18,6 +19,11 @@ namespace NorvesLib::Modules::AI
         void Reset(INavigationService& nav);
         uint32_t GetAgentCount() const { return static_cast<uint32_t>(m_Records.size()); }
         Core::Container::Span<SteeringAgentComponent* const> GetAgents() const { return m_Agents; }
+        static bool CanSteer(const SteeringAgentComponent& agent);
+#if NORVES_ENABLE_DEBUG_OUTPUT
+        // 登録順の記録を描画中だけ借りる。
+        const auto& GetDebugRecord(uint32_t index) const { return m_Records[index]; }
+#endif
 
         void BeginStep(INavigationService& nav);
         void Compute(float dt, const INavigationService& nav);

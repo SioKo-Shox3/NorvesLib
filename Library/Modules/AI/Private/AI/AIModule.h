@@ -31,6 +31,8 @@ namespace NorvesLib::Modules::AI
         const INavigationService& GetNavigation() const override { return m_Navigation; }
         void SetNavDebugDrawEnabled(bool bEnabled) override;
         bool IsNavDebugDrawEnabled() const override;
+        void SetSteeringDebugDrawEnabled(bool bEnabled) override;
+        bool IsSteeringDebugDrawEnabled() const override;
 
         void RegisterAgent(SteeringAgentComponent& agent);
         void UnregisterAgent(SteeringAgentComponent& agent);
@@ -51,6 +53,7 @@ namespace NorvesLib::Modules::AI
         bool m_bInitialized = false;
 #if NORVES_ENABLE_DEBUG_OUTPUT
         bool m_bNavDebugDrawEnabled = false;
+        bool m_bSteeringDebugDrawEnabled = false;
 #endif
     };
 } // namespace NorvesLib::Modules::AI

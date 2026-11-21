@@ -15,13 +15,6 @@ namespace NorvesLib::Modules::AI
 
     namespace
     {
-        bool CanSteer(const SteeringAgentComponent& agent)
-        {
-            const auto* owner = agent.GetOwner();
-            return owner && owner->IsActive() && !owner->IsPendingDestroy() &&
-                   agent.IsActive() && !agent.IsPendingDestroy();
-        }
-
         const NavAgentProfile& FindSteeringProfile(const INavigationService& nav, const SteeringAgentComponent& agent,
                                                    const NavAgentProfile& fallback)
         {
@@ -75,6 +68,13 @@ namespace NorvesLib::Modules::AI
             }
             AddDangerFromClearance(maps, clearance, lookDistance);
         }
+    }
+
+    bool SteeringSystem::CanSteer(const SteeringAgentComponent& agent)
+    {
+        const auto* owner = agent.GetOwner();
+        return owner && owner->IsActive() && !owner->IsPendingDestroy() &&
+               agent.IsActive() && !agent.IsPendingDestroy();
     }
 
     void SteeringSystem::RegisterAgent(SteeringAgentComponent& agent)
