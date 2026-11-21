@@ -145,7 +145,39 @@ namespace NorvesLib::Core::Component
          * @return 有限で0以上ならtrue。
          */
         bool SetFocusDistance(float focusDistance);
-        float GetFocusDistance() const { return m_FocusDistance; }
+        float GetFocusDistance() const { return FocusDistance; }
+
+        /** @brief FieldOfView は設定済みの垂直画角を使い、Physical は焦点距離・撮像面・ゲートフィットから描画時に垂直画角を求めます。 */
+        void SetLensMode(Rendering::CameraLensMode lensMode);
+        /** @brief 垂直画角の指定方式を返します。 */
+        Rendering::CameraLensMode GetLensMode() const { return LensMode; }
+
+        /** @brief 焦点距離（mm）を設定します。有限の正の値以外は false を返します。 */
+        bool SetFocalLengthMm(float focalLengthMm);
+        /** @brief 物理レンズの焦点距離（mm）を返します。 */
+        float GetFocalLengthMm() const { return FocalLengthMm; }
+
+        /** @brief 撮像面の幅と高さ（mm）を設定します。どちらかが有限の正の値でなければ、両方の値を保ち false を返します。 */
+        bool SetSensorSizeMm(float widthMm, float heightMm);
+        /** @brief 撮像面の幅（mm）を返します。 */
+        float GetSensorWidthMm() const { return SensorWidthMm; }
+        /** @brief 撮像面の高さ（mm）を返します。 */
+        float GetSensorHeightMm() const { return SensorHeightMm; }
+
+        /** @brief 撮像面を描画の縦横比に合わせる方式（Horizontal、Vertical、Fill）を設定します。 */
+        void SetGateFit(Rendering::CameraGateFit gateFit);
+        /** @brief 撮像面のゲートフィット方式を返します。 */
+        Rendering::CameraGateFit GetGateFit() const { return GateFit; }
+
+        /** @brief 露出とは独立に動きぼけのシャッター角（度）を設定します。0 は従来の動きぼけを使い、有限の 0〜360 度以外は false を返します。 */
+        bool SetShutterAngleDegrees(float shutterAngleDegrees);
+        /** @brief 動きぼけのシャッター角（度）を返します。 */
+        float GetShutterAngleDegrees() const { return ShutterAngleDegrees; }
+
+        /** @brief 絞り羽根の枚数を設定します。0 は円板を表し、0 または 3〜16 枚以外は false を返します。 */
+        bool SetBokehBladeCount(uint32_t bladeCount);
+        /** @brief 絞り羽根の枚数を返します。0 は円板を表します。 */
+        uint32_t GetBokehBladeCount() const { return BokehBladeCount; }
 
         /**
          * @brief カメラの不連続（カット）を印します。次の BuildCameraProxy から CutSerial が 1 増えます。
@@ -182,9 +214,16 @@ namespace NorvesLib::Core::Component
         PROPERTY(float, ShutterSpeed)
         PROPERTY(float, ISO)
         PROPERTY(float, ExposureCompensation)
+        PROPERTY(float, FocusDistance)
+        PROPERTY(Rendering::CameraLensMode, LensMode)
+        PROPERTY(float, FocalLengthMm)
+        PROPERTY(float, SensorWidthMm)
+        PROPERTY(float, SensorHeightMm)
+        PROPERTY(Rendering::CameraGateFit, GateFit)
+        PROPERTY(float, ShutterAngleDegrees)
+        PROPERTY(uint32_t, BokehBladeCount)
 
         Rendering::ViewportRect m_Viewport{};
-        float m_FocusDistance = 0.0f;
         Rendering::CameraExposureMode m_ExposureMode = Rendering::CameraExposureMode::Manual;
         Rendering::CameraAntiAliasingMode m_AntiAliasingMode = Rendering::CameraAntiAliasingMode::FXAA;
         float m_GradingContrast = -1.0f;
