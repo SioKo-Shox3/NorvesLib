@@ -12936,3 +12936,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 ポーズ中の呼び先の候補を印と着脱のときだけ更新し、通常の更新と同じ順で呼ぶ: 着地(直し 0 回)
 - U7 ポーズ中の印の付いたものへ上限で丸める前の実経過秒を渡す: 着地(直し 0 回)
 - U8 TickStages.md を直しに合わせ、UiSystem の行を足し、全体をビルドで確かめる: 着地(直し 0 回)
+
+## G15-GR119-PAUSE-GATE 差し戻しの直し（2026-11-22）
+- Done: (1) `SimulationPauseState` は `OnChanged` の通知の中で `Push`・`Pop`・`Reset` が呼ばれて状態が変わっても、要求数とビットはその場で変え、通知は発生順に積んで、今の通知を全購読者へ配り終えてから次を配る（モジュール A の通知の中の `Pop(Menu)` で、後ろのモジュール B に `0` の後に古い `Menu` が届くことは無い）。(2) World はポーズ中に呼ぶ候補を「自分か持ち主の Entity の印が効いている Component」の集合で持ち、印の変更・Component の着脱・解除（`UnbindPausedTickComponent` は印の有無に関係なく外す）のときだけ更新する。印の付いた Entity の子 Entity を毎フレーム型判定する走査を無くした。(3) `World::TickWhenPaused` は通常の `World::Tick` と同じく、付け直しが要れば `SyncOrderedTicks` してから、各候補の順序付きの呼び先の記録（`m_OrderedTicks`）の群・本体・優先度・深さ優先の番号を使い、群ごとに優先度→番号の順で呼ぶ（ポーズに入っても同じ群の呼び順が変わらない）。(4) ゲーム内ポーズ中の印の付いたものへは `ClampVariableDeltaTime` の 100 ms の上限で丸める前の実経過秒（`rawDeltaNanoseconds` を秒にした値。0 以下なら 0）を渡す。GameMode・`TimeSystem`・固定ステップの秒は変えていない。(5) `Docs/Architecture/TickStages.md` に (1)〜(4) を書き、分類表に `UiSystem`（ゲート外・実装予定。`G15-GR68-UI-CORE` が足し、足すときに場所を書く）の行を足した。
+- 証拠: `.harness/runs/20261121-184522/verify-G15-GR119-PAUSE-GATE-U8.txt`（全部の直しを入れた先頭で `cmake --build build --config Debug --target Game -- /m:1` が `ExitCode=0`・エラー 0 で `Game.vcxproj -> ...Game.exe`。変えた `World.cpp`・`Entity.cpp`・`Component.cpp`・`ApplicationProcessor.cpp`・`Engine.cpp` が再コンパイルされている。各単位の `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致）。
+- 試験: done-when (6) の試験と verify の ctest の行は、人の決まり（試験を作らない・回さない）により作らず回していない。
+- 人が見るときの見どころ: ポーズの理由を Push する呼び手がまだ無いので、ランチャーと各シーンの動き・見た目は変わらない。ランチャーから各シーンへ入って戻る流れと、Bridge の Paused/Stopped で全部止まることが従来どおりかを見る。
+- Next: ランナーの評価者の反証（危険地帯）。ポーズを使う側（G15-GR119-WINDOW-EVENTS のフォーカス・最小化、G15-GR119-GAME-FLOW のメニュー）。
+- Notes: 採った判断: ポーズ中の秒は丸めないので、デバッガの停止の後などには長い秒が 1 回渡る（印の付いたものは実時間で進む契約に合わせた）。`World::GetTickWhenPausedEntryCount()` は名前を変えず、候補の Component の数を返す（ほかに使う所は無い）。Running になった後に登録されたモジュールが、その時点のポーズの理由を受け取らないのは前のまま。
