@@ -621,31 +621,40 @@ namespace NorvesLib::Core::Scene
             sampleDepth(PathMidpoint(context.Query, i, count));
         }
 
-        // 中点の間を横切る尾根は、経路の両側から地表との交点を求めて深さを拾う。
-        const float margin = std::min(0.05f, context.DistanceM / 4.0f);
-        const float rayLength = context.DistanceM - 2.0f * margin;
-        if (rayLength > 0.0f)
+        // 離れた尾根の入口と出口を別々に拾うため、照会は草と同じ区間ごとに行う。
+        const float distance = context.DistanceM;
+        const float margin = std::min(0.05f, distance / 4.0f);
+        for (int i = 0; i < count; ++i)
         {
-            const auto offset = context.Direction * margin;
-            const Math::Ray forward(context.Query.Source + offset, context.Direction);
-            Rendering::Terrain::GroundHit hit;
-            if (m_Terrain->RaycastGround(forward, rayLength, hit) && hit.bValid)
+            const float segStart = std::max(margin, distance * i / count);
+            const float segEnd = std::min(distance - margin, distance * (i + 1) / count);
+            const float segLength = segEnd - segStart;
+            if (segLength <= 0.0f)
             {
-                const float tIn = margin + hit.Distance;
-                float tOut = context.DistanceM - margin;
-                const Math::Ray backward(context.Query.Listener - offset, context.Direction * -1.0f);
-                if (m_Terrain->RaycastGround(backward, rayLength, hit) && hit.bValid)
+                continue;
+            }
+
+            const Math::Ray forward(context.Query.Source + context.Direction * segStart, context.Direction);
+            Rendering::Terrain::GroundHit hit;
+            if (!m_Terrain->RaycastGround(forward, segLength, hit) || !hit.bValid)
+            {
+                continue;
+            }
+            const float tIn = segStart + hit.Distance;
+            float tOut = segEnd;
+            const Math::Ray backward(context.Query.Source + context.Direction * segEnd, context.Direction * -1.0f);
+            if (m_Terrain->RaycastGround(backward, segLength, hit) && hit.bValid)
+            {
+                tOut -= hit.Distance;
+            }
+            if (tIn < tOut)
+            {
+                // 1 区間に複数の尾根が入る場合や、細い尾根の頂が 9 点の間にある場合は取りこぼし得る。
+                constexpr int kDepthIntervals = 8;
+                for (int k = 0; k <= kDepthIntervals; ++k)
                 {
-                    tOut -= hit.Distance;
-                }
-                if (tIn < tOut)
-                {
-                    constexpr int kDepthIntervals = 8;
-                    for (int i = 0; i <= kDepthIntervals; ++i)
-                    {
-                        const float t = std::lerp(tIn, tOut, static_cast<float>(i) / kDepthIntervals);
-                        sampleDepth(context.Query.Source + context.Direction * t);
-                    }
+                    const float t = std::lerp(tIn, tOut, static_cast<float>(k) / kDepthIntervals);
+                    sampleDepth(context.Query.Source + context.Direction * t);
                 }
             }
         }

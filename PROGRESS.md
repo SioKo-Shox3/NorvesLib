@@ -12831,3 +12831,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 5): `.harness/runs/20261121-132223/verify-U8-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が build exit code = 0 で Game.exe まで。`AcousticTransmission.cpp` をコンパイルし `Core.lib` を作り直している。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。試験は作らない・回さない決まりなので、verify の ctest の行と done-when (3) の `AcousticTransmissionTest` は作っていない・回していない。
 - Next(反復 5): ランナーの評価者の反証(危険地帯: Public API の `Engine`・`PhysicsQueryTypes.h`・`SurfaceTypes.h`)。声への適用は G13-GR116-AUDIO-ACOUSTICS、AI の聴覚は GR24 がこの評価器を呼ぶ。
 - Notes(反復 5): 既知の限界: 静的幾何を静的な代理だけにしたので、Kinematic の扉や動く物体は音を遮らない(扉の寄与は G13-GR116-AUDIO-ACOUSTICS で足す)。音源や聞き手が自分の静的コライダーの内側にいると壁 1 枚に数えるので、呼び出し側が `Filter` の `IgnoreColliders`・`IgnoreBodies` で自分を除く。
+- U9 地形の遮蔽を草と同じ刻みの区間ごとの照会に直し、設計の文書に精度の仕様と評価時間の未計測を書く(最後。タスクの verify): 着地(直し 0 回)
