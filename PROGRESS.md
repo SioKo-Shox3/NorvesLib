@@ -13123,3 +13123,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: 物理レンズ（GateFit が Vertical 以外）を全画面でないビューポートで使うと、前のカメラはパケットで描画先全体の縦横比から確定するので、velocity・TAA・動きぼけの前後の画角がずれる。ピッキングもカメラの Viewport の矩形を使う。今は `Viewport::SetRect` の呼び出しが無く、起きない（前と今のカメラの画角の一致は、メインのビューポートが全画面の構成に限った）。分割画面など全画面でないビューポートを入れるときは、下の要起票を先に済ませる。
 - 要起票: 前のカメラの履歴をビューポートごとに確定済みで持ち、全画面でないビューポートでも物理レンズの前後の画角を揃え、ピッキングにもビューの矩形を渡す（今の前のカメラは `RenderingCoordinator.cpp` でパケットの `Scene.MainCamera` を描画先全体の縦横比で確定した値、`CameraPicking.cpp` はカメラの `Viewport` の矩形を使う）。
 - U8 明示したシャッター時間の倍率の上限も MotionBlurMaxStretch にする(差し戻しの直し 3): 着地(直し 0 回)
+## G14-GR62-LENS-SHUTTER 差し戻しの直しの仕上げ（2026-11-22）
+- Done: `MotionBlurSettings::ShutterDuration` を明示した経路の倍率の上限を 1 から `MotionBlurMaxStretch`（2）にし、カメラのシャッター角の経路と揃えた（`MotionBlurPass.h` の 1 引数の `ComputeMotionBlurShutterFraction`）。doc コメントと `MotionBlur.frag`・`MotionBlurTileMax.frag` の `imageSizeAndShutter.z` のコメントを両方の経路に当てはまる文にした。今のシーンで `MotionBlurPass::SetSettings` を呼ぶ所は無いので、見た目は変わらない。
+- 証拠: `.harness/runs/20261122-011236/verify-G14-GR62-LENS-SHUTTER-U8.txt`（Core を再コンパイルして `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`exit_code=0` で `Game.vcxproj -> ...Game.exe`。警告は LNK4099・C4996・C4244 だけ）。
+- 試験: 試験は作らず回していない（人の決まり）。
+- Next: ランナーの評価者の反証（危険地帯）。
