@@ -9,7 +9,7 @@ file(GLOB_RECURSE AI_SOURCES CONFIGURE_DEPENDS
 
 add_library(${MODULE_NAME} STATIC ${AI_SOURCES})
 
-target_link_libraries(${MODULE_NAME} PRIVATE Core)
+target_link_libraries(${MODULE_NAME} PRIVATE Core NorvesModule_Physics)
 
 target_include_directories(${MODULE_NAME}
     PUBLIC

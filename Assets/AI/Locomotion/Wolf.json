@@ -1,0 +1,88 @@
+{
+  "schema": "locomotion.v1",
+  "gaits": [
+    {
+      "speedMin": 0,
+      "speedMax": 1.8,
+      "upThreshold": 1.9,
+      "downThreshold": 0,
+      "minDwell": 0.18,
+      "accel": 5.5,
+      "decel": 7,
+      "brake": 13,
+      "turnRateCap": 4.8,
+      "lateralAccel": 8.5,
+      "strideLength": 0.85
+    },
+    {
+      "speedMin": 1.4,
+      "speedMax": 4.5,
+      "upThreshold": 4.7,
+      "downThreshold": 1.55,
+      "minDwell": 0.22,
+      "accel": 7,
+      "decel": 8.5,
+      "brake": 15,
+      "turnRateCap": 3.6,
+      "lateralAccel": 10,
+      "strideLength": 1.6
+    },
+    {
+      "speedMin": 3.8,
+      "speedMax": 9,
+      "upThreshold": 9.3,
+      "downThreshold": 4.0,
+      "minDwell": 0.26,
+      "accel": 8.5,
+      "decel": 10,
+      "brake": 18,
+      "turnRateCap": 2.6,
+      "lateralAccel": 12,
+      "strideLength": 2.5
+    },
+    {
+      "speedMin": 7.8,
+      "speedMax": 15,
+      "upThreshold": 15,
+      "downThreshold": 8.1,
+      "minDwell": 0.3,
+      "accel": 10,
+      "decel": 12,
+      "brake": 21,
+      "turnRateCap": 1.9,
+      "lateralAccel": 14,
+      "strideLength": 3.5
+    }
+  ],
+  "pivot": {
+    "speed": 0.5,
+    "enterAngle": 1.2,
+    "exitAngle": 0.25,
+    "rate": 4
+  },
+  "slope": {
+    "limit": 0.872664626,
+    "uphillK": 0.7,
+    "downhillBoost": 0.1,
+    "minScale": 0.2
+  },
+  "lean": {
+    "gain": 1,
+    "maxBank": 0.45,
+    "halfLife": 0.1
+  },
+  "jump": {
+    "heightMin": 0.6,
+    "heightMax": 1.2,
+    "coyote": 0.1,
+    "buffer": 0.12,
+    "airControl": 0.25,
+    "airTurnRate": 1.5,
+    "landingSpeedLoss": 0.15,
+    "landingRecovery": 0.12
+  },
+  "smoothing": {
+    "targetHalfLife": 0.1
+  },
+  "turnSlowdown": 0.15
+}

@@ -30,6 +30,7 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/InstanceBufferRing.h"
+#include "Rendering/PathTracingCamera.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
@@ -830,6 +831,9 @@ namespace NorvesLib::Core::Rendering
                 camera.AspectRatio = static_cast<float>(pixelWidth) / static_cast<float>(pixelHeight);
             }
 
+            // パケットの MainCamera と同じ規則で、ビューポートの縦横比から物理レンズの垂直 FOV を確定する。
+            // 確定済みのカメラに再適用しても値は変わらない。
+            ResolveCameraLens(camera, camera.AspectRatio);
             plan.Camera = camera;
             plan.bHasCamera = camera.IsValid();
 
@@ -4982,6 +4986,13 @@ namespace NorvesLib::Core::Rendering
                     mainCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
                 }
 
+                // 物理レンズの垂直 FOV を描画の縦横比で確定してからパケットへ書く。
+                // m_PreviousMainCamera はパケットの値を引き継ぎ、BuildViewportRenderPlan も同じ規則で確定する。
+                // 全画面のメインビューポートでは、現在・前フレーム・描画計画のカメラの投影が揃う。
+                const float aspect = m_RenderWidth > 0 && m_RenderHeight > 0
+                                         ? static_cast<float>(m_RenderWidth) / static_cast<float>(m_RenderHeight)
+                                         : mainCamera.AspectRatio;
+                ResolveCameraLens(mainCamera, aspect);
                 m_CurrentPacket->Scene.MainCamera = mainCamera;
                 m_CurrentPacket->bHasMainCamera = true;
             }

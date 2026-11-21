@@ -83,6 +83,8 @@ namespace NorvesLib::Core::Scene
         float NoiseLevelDb = 0.0f;
         // 遮蔽の損失（GR116）。
         float TransmissionLossDb = 0.0f;
+        // audio に transmissionLossDb の鍵があれば true。false のときは親の表面か音の評価器の既定の壁の損失を使う（GR116）。
+        bool bHasTransmissionLossDb = false;
     };
 
     struct SurfaceVisualDesc

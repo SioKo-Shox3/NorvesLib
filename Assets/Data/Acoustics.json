@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "vegetationAbsorptionDbPerMeter": 0.5,
+  "wallClassFallbackLossDb": 12,
+  "occlusionHighFrequencyRatio": 0.5,
+  "terrainOcclusion": {"baseLossDb": 6, "lossPerMeterDb": 3, "maxLossDb": 24, "minDepthM": 0.1},
+  "hfLossToCutoff": {"minHz": 800, "maxHz": 20000, "maxLossDb": 30},
+  "rainNoiseFloor": {"curve": [[0, -120], [0.1, 30], [0.5, 45], [1, 55]], "shelteredReductionDb": 12},
+  "windNoiseFloor": {"curve": [[0, -120], [5, 25], [20, 45]]},
+  "maskingCoefficient": 0.5,
+  "updateHz": 10,
+  "voiceBudgetPerFrame": 32,
+  "classes": {
+    "Cue": {"referenceDistanceM": 1, "highFrequencyLevelOffsetDb": -6, "exemptFromOcclusion": false, "exemptFromMasking": false},
+    "Ambient": {"referenceDistanceM": 1, "highFrequencyLevelOffsetDb": -10, "exemptFromOcclusion": false, "exemptFromMasking": false},
+    "Footstep": {"referenceDistanceM": 1, "highFrequencyLevelOffsetDb": -3, "exemptFromOcclusion": false, "exemptFromMasking": false},
+    "Voice": {"referenceDistanceM": 1, "highFrequencyLevelOffsetDb": -8, "exemptFromOcclusion": false, "exemptFromMasking": false},
+    "Rain": {"referenceDistanceM": 1, "highFrequencyLevelOffsetDb": 0, "exemptFromOcclusion": false, "exemptFromMasking": false},
+    "Creature": {"referenceDistanceM": 1, "highFrequencyLevelOffsetDb": -6, "exemptFromOcclusion": false, "exemptFromMasking": false}
+  }
+}

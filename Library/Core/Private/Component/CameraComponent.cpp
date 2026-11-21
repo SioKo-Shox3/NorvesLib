@@ -154,9 +154,85 @@ namespace NorvesLib::Core::Component
         {
             return false;
         }
-        if (m_FocusDistance != focusDistance)
+        if (FocusDistance.Get() != focusDistance)
         {
-            m_FocusDistance = focusDistance;
+            FocusDistance = focusDistance;
+            MarkRenderStateDirty();
+        }
+        return true;
+    }
+
+    void CameraComponent::SetLensMode(Rendering::CameraLensMode lensMode)
+    {
+        if (LensMode.Get() != lensMode)
+        {
+            LensMode = lensMode;
+            MarkRenderStateDirty();
+        }
+    }
+
+    bool CameraComponent::SetFocalLengthMm(float focalLengthMm)
+    {
+        if (!std::isfinite(focalLengthMm) || focalLengthMm <= 0.0f)
+        {
+            return false;
+        }
+        if (FocalLengthMm.Get() != focalLengthMm)
+        {
+            FocalLengthMm = focalLengthMm;
+            MarkRenderStateDirty();
+        }
+        return true;
+    }
+
+    bool CameraComponent::SetSensorSizeMm(float widthMm, float heightMm)
+    {
+        if (!std::isfinite(widthMm) || widthMm <= 0.0f ||
+            !std::isfinite(heightMm) || heightMm <= 0.0f)
+        {
+            return false;
+        }
+        if (SensorWidthMm.Get() != widthMm || SensorHeightMm.Get() != heightMm)
+        {
+            SensorWidthMm = widthMm;
+            SensorHeightMm = heightMm;
+            MarkRenderStateDirty();
+        }
+        return true;
+    }
+
+    void CameraComponent::SetGateFit(Rendering::CameraGateFit gateFit)
+    {
+        if (GateFit.Get() != gateFit)
+        {
+            GateFit = gateFit;
+            MarkRenderStateDirty();
+        }
+    }
+
+    bool CameraComponent::SetShutterAngleDegrees(float shutterAngleDegrees)
+    {
+        if (!std::isfinite(shutterAngleDegrees) || shutterAngleDegrees < 0.0f || shutterAngleDegrees > 360.0f)
+        {
+            return false;
+        }
+        if (ShutterAngleDegrees.Get() != shutterAngleDegrees)
+        {
+            ShutterAngleDegrees = shutterAngleDegrees;
+            MarkRenderStateDirty();
+        }
+        return true;
+    }
+
+    bool CameraComponent::SetBokehBladeCount(uint32_t bladeCount)
+    {
+        if (bladeCount != 0 && (bladeCount < 3 || bladeCount > 16))
+        {
+            return false;
+        }
+        if (BokehBladeCount.Get() != bladeCount)
+        {
+            BokehBladeCount = bladeCount;
             MarkRenderStateDirty();
         }
         return true;
@@ -296,7 +372,13 @@ namespace NorvesLib::Core::Component
         snapshot.Viewport = m_Viewport;
         snapshot.CullingMask = CullingMaskProp;
         snapshot.RenderOrder = RenderOrder;
-        snapshot.FocusDistance = m_FocusDistance;
+        snapshot.FocusDistance = FocusDistance;
+        snapshot.Cinematic.Lens.FocalLengthMm = (LensMode.Get() == Rendering::CameraLensMode::Physical) ? FocalLengthMm.Get() : 0.0f;
+        snapshot.Cinematic.Lens.SensorWidthMm = SensorWidthMm;
+        snapshot.Cinematic.Lens.SensorHeightMm = SensorHeightMm;
+        snapshot.Cinematic.Lens.GateFit = GateFit;
+        snapshot.Cinematic.Shutter.ShutterAngleDegrees = ShutterAngleDegrees;
+        snapshot.Cinematic.Bokeh.BladeCount = BokehBladeCount;
         snapshot.ExposureMode = m_ExposureMode;
         snapshot.AntiAliasing = m_AntiAliasingMode;
         snapshot.GradingContrast = m_GradingContrast;
@@ -337,5 +419,13 @@ namespace NorvesLib::Core::Component
         ShutterSpeed = 1.0f / 60.0f;
         ISO = 100.0f;
         ExposureCompensation = 0.0f;
+        FocusDistance = 0.0f;
+        LensMode = Rendering::CameraLensMode::FieldOfView;
+        FocalLengthMm = 35.0f;
+        SensorWidthMm = 36.0f;
+        SensorHeightMm = 24.0f;
+        GateFit = Rendering::CameraGateFit::Fill;
+        ShutterAngleDegrees = 0.0f;
+        BokehBladeCount = 0;
     }
 } // namespace NorvesLib::Core::Component
