@@ -353,19 +353,34 @@ namespace NorvesLib::Core::Rendering
             if (activeCamera)
             {
                 m_FrameSceneColorDisplay.bNeutralLinear = activeCamera->ToneMapCurve == CameraToneMapCurve::NeutralLinear;
-                const CameraGradingOverride& grading = activeCamera->GradingOverride;
-                m_FrameSceneColorDisplay.bGradingOverride = grading.bEnabled;
-                m_FrameSceneColorDisplay.Contrast = grading.Contrast;
-                m_FrameSceneColorDisplay.ContrastPivot = grading.ContrastPivot;
-                m_FrameSceneColorDisplay.Saturation = grading.Saturation;
-                m_FrameSceneColorDisplay.Temperature = grading.Temperature;
-                m_FrameSceneColorDisplay.VignetteIntensity = grading.VignetteIntensity;
-                m_FrameSceneColorDisplay.VignetteRadius = grading.VignetteRadius;
-                m_FrameSceneColorDisplay.VignetteSoftness = grading.VignetteSoftness;
-                m_FrameSceneColorDisplay.bLookLut =
-                    activeCamera->LookLut.AssetPath != nullptr && activeCamera->LookLut.Intensity > 0.0f;
-                m_FrameSceneColorDisplay.ChromaticAberrationPixels = activeCamera->LensEffects.ChromaticAberrationPixels;
-                m_FrameSceneColorDisplay.LensDirtIntensity = activeCamera->LensEffects.LensDirtIntensity;
+                if (activeCamera->PostProcess.bValid)
+                {
+                    PostProcessSettings profile = activeCamera->PostProcess;
+                    profile.Sanitize();
+                    m_FrameSceneColorDisplay.bGradingOverride = false;
+                    const PostProcessLook& look = profile.Look;
+                    m_FrameSceneColorDisplay.bLookLut = look.Intensity > 0.0f &&
+                        ((look.LutA != nullptr && look.LutA[0] != '\0') || (look.LutB != nullptr && look.LutB[0] != '\0'));
+                    const PostProcessLens& lens = profile.Lens;
+                    m_FrameSceneColorDisplay.ChromaticAberrationPixels = lens.ChromaticAberrationPixels;
+                    m_FrameSceneColorDisplay.LensDirtIntensity = lens.LensDirtIntensity;
+                }
+                else
+                {
+                    const CameraGradingOverride& grading = activeCamera->GradingOverride;
+                    m_FrameSceneColorDisplay.bGradingOverride = grading.bEnabled;
+                    m_FrameSceneColorDisplay.Contrast = grading.Contrast;
+                    m_FrameSceneColorDisplay.ContrastPivot = grading.ContrastPivot;
+                    m_FrameSceneColorDisplay.Saturation = grading.Saturation;
+                    m_FrameSceneColorDisplay.Temperature = grading.Temperature;
+                    m_FrameSceneColorDisplay.VignetteIntensity = grading.VignetteIntensity;
+                    m_FrameSceneColorDisplay.VignetteRadius = grading.VignetteRadius;
+                    m_FrameSceneColorDisplay.VignetteSoftness = grading.VignetteSoftness;
+                    m_FrameSceneColorDisplay.bLookLut =
+                        activeCamera->LookLut.AssetPath != nullptr && activeCamera->LookLut.Intensity > 0.0f;
+                    m_FrameSceneColorDisplay.ChromaticAberrationPixels = activeCamera->LensEffects.ChromaticAberrationPixels;
+                    m_FrameSceneColorDisplay.LensDirtIntensity = activeCamera->LensEffects.LensDirtIntensity;
+                }
             }
             // ポストのパスがこのフレームで実際に使った表示変換の値（RenderGraph の実行は終わっている）
             if (m_PostProcessStack)

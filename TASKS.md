@@ -8519,7 +8519,7 @@
 - notes: 選定課題 G13-S3（行動の記述方式と GR17 の状態機械との共用。ロードマップ 4559 行）は推奨 (A) を採る: C++ で書いた状態＋JSON で書いた遷移・パラメータの階層状態機械。土台は G8 が Core の `GameMode/` にヘッダだけで置く `TStateMachine<TContext, TStateId>`（`G8-GR17-HEALTH-PROGRESSION` の done-when (2) と、notes の G8-S5「AI が Gameplay へリンクせずに同じ土台を使える」）。`TStateMachine` は 1 段で階層を持たないので、親の状態ごとに子の `TStateMachine` を持つ 2 段にし、状態の名前は読み込みで `TStateId`（uint16）へ解決する。遷移は「要求 → 安全点で適用」の規律をそのまま使う。理由: 再コンパイルなしで調整でき、`IBehavior` の境界の後ろへビヘイビアツリーやスクリプト（GR98、G18）を後から差せ、ついてくる・距離を保つ・逃げる・待つ程度の行動に過剰にならない。AngelScript で書く (C) は公開面が Vector3 と EntityRef だけで成立しない（4559 行）。「心を開いたように見える」の質は数値でなく視線・距離・間の問題で、実機の調整が大きい（ロードマップ 2837 行）ので、値は全部 JSON で替えられる形にし、試験の数値（2 m・20%・[10, 16] m・[2, 4] m・3 s）は要件の案の値で根拠は無い。危険地帯（新しい Public API）なので評価者を通す。試験を足す理由: 反証する契約は「遷移が決まった順で起き、再読込で状態が壊れず、信頼に対して距離が単調に縮む」こと。外れると動物の振る舞いが少しずつおかしいだけで、撮影では気づきにくく黙って起きる。やらないこと: AngelScript からの行動（GR98、G18）、ライブ調整の画面（GR99、G18。JSON の再読込で代える）。
 
 ## G14-GR61-GRADE-PASS: トーンマップにシーンリニアの Grade・見た目の LUT 2 枚の混ぜ・ディザを足し、カメラのプロファイルの値で描く
-- status: todo
+- status: done
 - after: G14-GR61-PROFILE-DATA
 - gr: GR61
 - done-when: (1) `Assets/Shaders/tonemapping.frag`: gradingMode 2(プロファイル)を、すべての演算子(ACES 2.0 LUT を含む)に掛ける。

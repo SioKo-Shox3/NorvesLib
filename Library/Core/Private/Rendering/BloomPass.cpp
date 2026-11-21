@@ -677,12 +677,23 @@ namespace NorvesLib::Core::Rendering
         params.radius = m_Settings.Radius;
         params.thresholdMode = m_Settings.Threshold > 0.0f ? 1.0f : 0.0f;
         params.inverseMipCount = 1.0f / static_cast<float>(m_MipLevels.size());
-        // レンズダートはカメラのレンズ効果の値が正ならそれを、無ければ View の設定を使う（有限でない値・負は0）。
-        float lensDirtIntensity = m_Settings.LensDirtIntensity;
+        // プロファイルが有効なら強度 0 も採用する。従来のカメラではレンズ効果が正のときだけ View の設定を差し替える。
         const CameraProxy *activeCamera = context.GetActiveCamera();
-        if (activeCamera != nullptr && activeCamera->LensEffects.LensDirtIntensity > 0.0f)
+        const bool bUseProfile = activeCamera != nullptr && activeCamera->PostProcess.bValid;
+        float lensDirtIntensity;
+        if (bUseProfile)
+        {
+            PostProcessSettings profile = activeCamera->PostProcess;
+            profile.Sanitize();
+            lensDirtIntensity = profile.Lens.LensDirtIntensity;
+        }
+        else if (activeCamera != nullptr && activeCamera->LensEffects.LensDirtIntensity > 0.0f)
         {
             lensDirtIntensity = activeCamera->LensEffects.LensDirtIntensity;
+        }
+        else
+        {
+            lensDirtIntensity = m_Settings.LensDirtIntensity;
         }
         params.lensDirtIntensity =
             (bDebugPostProcessBypass || !std::isfinite(lensDirtIntensity)) ? 0.0f : std::max(lensDirtIntensity, 0.0f);
