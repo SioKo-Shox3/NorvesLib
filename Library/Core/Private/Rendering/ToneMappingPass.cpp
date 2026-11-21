@@ -198,6 +198,12 @@ namespace NorvesLib::Core::Rendering
             lookLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             lookLutBinding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(lookLutBinding);
+
+            RHI::DescriptorBinding lookLutBindingB;
+            lookLutBindingB.binding = 4;
+            lookLutBindingB.type = RHI::ResourceBindType::CombinedImageSampler;
+            lookLutBindingB.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(lookLutBindingB);
             return dsDesc;
         }
     } // namespace
@@ -908,6 +914,8 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindSampler(2, m_ColorLutSampler);
         descriptorSet->BindTexture(3, lookLut);
         descriptorSet->BindSampler(3, m_ColorLutSampler);
+        descriptorSet->BindTexture(4, m_ColorLutFallbackTexture);
+        descriptorSet->BindSampler(4, m_ColorLutSampler);
         descriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();

@@ -16,7 +16,7 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
     float vignetteRadius;     // 内側半径 ~0.8
     float vignetteSoftness;   // フォールオフの柔らかさ ~0.5
     float filmGrainStrength;  // フィルムグレインの強さ（sRGBの符号化値での標準偏差。0でオフ）
-    uint gradingMode;         // 0: View の設定の式、1: カメラの差し替えの式（知覚的なS字コントラスト・輝度を保つ色温度）
+    uint gradingMode;         // 0: View の設定の式、1: カメラの差し替えの式（知覚的なS字コントラスト・輝度を保つ色温度）、2: カメラのポストプロセスのプロファイル（Grade・Look 2 枚・ディザ）
     // Color Grading パラメータ
     vec4 colorFilter;         // カラーフィルター (rgb * intensity in w)
     float contrast;           // コントラスト (1.0 = default)
@@ -27,6 +27,25 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
     float lookLutIntensity;   // 見た目の3D LUTの混ぜ具合（0で掛けない）
     float _pad4;
     float _pad5;
+    float gradeExposureScale;             // 露出倍率（2^ExposureBias）
+    float gradeContrast;                  // log2 空間のコントラスト（1 で変えない）
+    float gradeContrastPivot;             // 露出後のシーンリニアの支点（既定 0.18）
+    float gradeSaturation;                // 彩度（1 で変えない）
+    vec4 gradeWhiteBalanceGain;           // rgb は CPU が求めたホワイトバランスの倍率。w は未使用
+    vec4 gradeShadowTint;                 // rgb は暗部に掛ける色。w は未使用
+    vec4 gradeHighlightTint;              // rgb は明部に掛ける色。w は未使用
+    float gradeShadowLiftFloor;           // 黒の持ち上げ先（CPU が Amount · Pivot · 2^-RangeEV を入れる。0 で無効）
+    float gradeHighlightRolloffStart;     // ハイライトの肩が始まるシーンリニアの輝度
+    float gradeHighlightRolloffStrength;  // ハイライトの肩の強さ（0 で無効）
+    float gradeProtectedHueKeep;          // 色相の保護率（無効のときは CPU が 0 を入れる）
+    float gradeProtectedHueCenterDeg;     // 保護する色相の中心角（0 度以上 360 度未満）
+    float gradeProtectedHueHalfWidthDeg;  // 保護する色相の半幅（度。0 以下で無効）
+    float lookLutWeightA;                 // binding 3 の LUT の重み
+    float lookLutWeightB;                 // binding 4 の LUT の重み
+    float ditherStrength;                 // sRGB の符号化値でのディザの振幅（0 で無効）
+    uint ditherSeed;                      // フレームごとのディザのシード
+    float _pad6;                          // 末尾の詰め物（未使用）
+    float _pad7;                          // 末尾の詰め物（未使用）
 } params;
 
 // ACES 2.0 SDR 100 nit Rec.709 のベイク3D LUT（display-linear。x=R, y=G, z=B）
@@ -35,12 +54,16 @@ layout(set = 0, binding = 2) uniform sampler3D colorLut;
 // グレーディング用の見た目の3D LUT（sRGBの符号化値で引き、格子点の座標からの符号化値の差分を返す。x=R, y=G, z=B）
 layout(set = 0, binding = 3) uniform sampler3D lookLut;
 
+// プロファイルの見た目を混ぜる 2 枚目の差分 LUT（binding 3 が 1 枚目）
+layout(set = 0, binding = 4) uniform sampler3D lookLutB;
+
 layout(location = 0) out vec4 outColor;
 
 // LUTの shaper（Scripts/BakeAcesOutputLut.py と同じ固定値）
 // u = log2(x / 2^-8 + 1) / log2(2^8 / 2^-8 + 1)、x は [0, 256] へ飽和
 const uint ACES20_LUT_OPERATOR = 4u;
 const uint NEUTRAL_LINEAR_OPERATOR = 5u;
+const uint GRADING_MODE_PROFILE = 2u;
 const float ACES20_LUT_SHAPER_OFFSET = 0.00390625;
 const float ACES20_LUT_SHAPER_MAX = 256.0;
 const float ACES20_LUT_SHAPER_SPAN = log2(ACES20_LUT_SHAPER_MAX / ACES20_LUT_SHAPER_OFFSET + 1.0);
@@ -183,6 +206,93 @@ vec3 ApplyWhiteBalance(vec3 color, float temp)
     return clamp(color * gain, 0.0, 1.0);
 }
 
+// HSV の色相と中心角の円周上の距離で、彩度の補正を弱める。
+float ProtectedHueWeight(vec3 color)
+{
+    float peak = max(color.r, max(color.g, color.b));
+    float chroma = peak - min(color.r, min(color.g, color.b));
+    if (peak <= 0.0 || chroma <= peak * 1e-6)
+    {
+        return 0.0;
+    }
+
+    float hue;
+    if (peak == color.r)
+    {
+        hue = (color.g - color.b) / chroma;
+    }
+    else if (peak == color.g)
+    {
+        hue = (color.b - color.r) / chroma + 2.0;
+    }
+    else
+    {
+        hue = (color.r - color.g) / chroma + 4.0;
+    }
+    float distanceDeg = abs(mod(hue * 60.0 - params.gradeProtectedHueCenterDeg + 180.0, 360.0) - 180.0);
+    return params.gradeProtectedHueKeep * clamp(1.0 - distanceDeg / params.gradeProtectedHueHalfWidthDeg, 0.0, 1.0);
+}
+
+// 底が 0 の成分はべき乗を評価せず、黒のままにする。
+float GradeContrastChannel(float value, float pivot, float contrast)
+{
+    float base = max(value, 0.0) / pivot;
+    return base > 0.0 ? pivot * pow(base, contrast) : 0.0;
+}
+
+// 表示変換より前のシーンリニア値に、カメラの色補正を掛ける。
+vec3 ApplyGrade(vec3 c)
+{
+    const vec3 luma = vec3(0.2126, 0.7152, 0.0722);
+    c *= params.gradeExposureScale;
+    c *= params.gradeWhiteBalanceGain.rgb;
+
+    float floorValue = params.gradeShadowLiftFloor;
+    if (floorValue > 0.0)
+    {
+        float y = dot(max(c, vec3(0.0)), luma);
+        c += vec3(sqrt(y * y + floorValue * floorValue) - y);
+    }
+
+    float pivot = max(params.gradeContrastPivot, 1e-4);
+    float contrast = params.gradeContrast;
+    if (contrast != 1.0)
+    {
+        c = vec3(GradeContrastChannel(c.r, pivot, contrast),
+                 GradeContrastChannel(c.g, pivot, contrast),
+                 GradeContrastChannel(c.b, pivot, contrast));
+    }
+
+    float saturation = params.gradeSaturation;
+    if (saturation != 1.0)
+    {
+        if (params.gradeProtectedHueKeep > 0.0 && params.gradeProtectedHueHalfWidthDeg > 0.0)
+        {
+            saturation = mix(saturation, 1.0, ProtectedHueWeight(max(c, vec3(0.0))));
+        }
+        float y = dot(c, luma);
+        c = max(vec3(y) + (c - vec3(y)) * saturation, vec3(0.0));
+    }
+
+    float strength = params.gradeHighlightRolloffStrength;
+    if (strength > 0.0)
+    {
+        float y = dot(c, luma);
+        float start = max(params.gradeHighlightRolloffStart, 1e-4);
+        if (y > start)
+        {
+            float excess = y - start;
+            float compressed = start + excess / (1.0 + strength * excess / start);
+            c *= compressed / y;
+        }
+    }
+
+    float y = dot(max(c, vec3(0.0)), luma);
+    float t = smoothstep(-2.0, 2.0, log2(max(y, 1e-6) / pivot));
+    vec3 tint = params.gradeShadowTint.rgb + (params.gradeHighlightTint.rgb - params.gradeShadowTint.rgb) * t;
+    return c * tint;
+}
+
 // フィルムグレイン: 画素・フレームごとのseedから決まる、平均0・分散1の三角分布の雑音（PCGのhash）。
 uint FilmGrainHash(uint value)
 {
@@ -240,6 +350,40 @@ vec3 ApplyLookLut(vec3 displayLinear, float intensity)
     return displayLinear + intensity * delta;
 }
 
+// nullptr の側は CPU が重み 0 を入れ、恒等の LUT として扱う。
+vec3 ApplyLookLutBlend(vec3 displayLinear, float intensity, float weightA, float weightB)
+{
+    vec3 encoded = clamp(EncodeSrgb(clamp(displayLinear, vec3(0.0), vec3(1.0))), vec3(0.0), vec3(1.0));
+    float sizeA = float(textureSize(lookLut, 0).x);
+    float sizeB = float(textureSize(lookLutB, 0).x);
+    vec3 coordA = (encoded * (sizeA - 1.0) + 0.5) / sizeA;
+    vec3 coordB = (encoded * (sizeB - 1.0) + 0.5) / sizeB;
+    vec3 offset = textureLod(lookLut, coordA, 0.0).rgb * weightA + textureLod(lookLutB, coordB, 0.0).rgb * weightB;
+    precise vec3 looked = DecodeSrgb(clamp(encoded + offset, vec3(0.0), vec3(1.0)));
+    precise vec3 original = DecodeSrgb(encoded);
+    precise vec3 delta = looked - original;
+    return displayLinear + intensity * delta;
+}
+
+float DitherNoise(uvec2 pixel, uint seed)
+{
+    uint first = FilmGrainHash(pixel.x ^ FilmGrainHash(pixel.y ^ seed));
+    uint second = FilmGrainHash(first);
+    float u0 = float(first >> 8u) * (1.0 / 16777216.0);
+    float u1 = float(second >> 8u) * (1.0 / 16777216.0);
+    return u0 + u1 - 1.0;
+}
+
+// 量子化の段を崩すための雑音。表示の符号化の上で平均を変えない。
+vec3 ApplyDither(vec3 displayLinear, uvec2 pixel, uint seed, float strength)
+{
+    vec3 noise = vec3(DitherNoise(pixel, seed ^ 0x9e3779b9u),
+                      DitherNoise(pixel, seed ^ 0x85ebca6bu),
+                      DitherNoise(pixel, seed ^ 0xc2b2ae35u)) * strength;
+    vec3 encoded = EncodeSrgb(clamp(displayLinear, vec3(0.0), vec3(1.0)));
+    return DecodeSrgb(clamp(encoded + noise, vec3(0.0), vec3(1.0)));
+}
+
 void main()
 {
     if (params.bBypass != 0u)
@@ -250,6 +394,10 @@ void main()
 
     // HDRシーンカラーをサンプリング
     vec3 hdrColor = texture(sceneColor, fragUV).rgb;
+    if (params.gradingMode == GRADING_MODE_PROFILE)
+    {
+        hdrColor = ApplyGrade(hdrColor);
+    }
 
     // トーンマッピング適用
     vec3 mapped;
@@ -285,7 +433,14 @@ void main()
     // Color Grading（display-linear Rec.709空間で適用）
     // ACES 2.0 SDR LUT は表示変換そのものなので、既定のグレーディングを掛けない
     // ========================================
-    if (params.operatorType != ACES20_LUT_OPERATOR)
+    if (params.gradingMode == GRADING_MODE_PROFILE)
+    {
+        if (params.lookLutIntensity > 0.0 && (params.lookLutWeightA + params.lookLutWeightB) > 0.0)
+        {
+            result = ApplyLookLutBlend(result, params.lookLutIntensity, params.lookLutWeightA, params.lookLutWeightB);
+        }
+    }
+    else if (params.operatorType != ACES20_LUT_OPERATOR)
     {
         // カラーフィルター
         result *= params.colorFilter.rgb * params.colorFilter.w;
@@ -331,6 +486,11 @@ void main()
     if (params.filmGrainStrength > 0.0)
     {
         result = ApplyFilmGrain(result, uvec2(gl_FragCoord.xy), params.filmGrainSeed, params.filmGrainStrength);
+    }
+
+    if (params.ditherStrength > 0.0)
+    {
+        result = ApplyDither(result, uvec2(gl_FragCoord.xy), params.ditherSeed, params.ditherStrength);
     }
 
     outColor = vec4(result, 1.0);
