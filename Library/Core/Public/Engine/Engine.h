@@ -471,6 +471,22 @@ namespace NorvesLib::Core::Engine
             return m_SurfaceRegistry;
         }
 
+        /**
+         * @brief 地形の表面の provider を取得
+         */
+        Scene::TerrainSurfaceProvider &GetTerrainSurfaceProvider()
+        {
+            return m_TerrainSurfaceProvider;
+        }
+
+        /**
+         * @brief 地形の表面の provider を取得（const版）
+         */
+        const Scene::TerrainSurfaceProvider &GetTerrainSurfaceProvider() const
+        {
+            return m_TerrainSurfaceProvider;
+        }
+
         // ========== 入力システム ==========
 
         /**

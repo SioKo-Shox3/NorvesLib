@@ -48,6 +48,54 @@ namespace NorvesLib::Core::Scene
     {
     }
 
+    bool TerrainSurfaceProvider::SetLayerSurfaceNames(
+        const Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField>& field,
+        const Rendering::Terrain::TerrainMaterialDesc& desc)
+    {
+        if (!field || desc.Layers.size() > kMaxLayers)
+        {
+            return false;
+        }
+
+        LayerSurfaceBinding* slot = nullptr;
+        auto* oldest = &m_Bindings[0];
+        uint64_t firstBoundRevision = m_BindingRevision + 1;
+        for (auto& binding : m_Bindings)
+        {
+            if (binding.Field.expired())
+            {
+                slot = &binding;
+            }
+            else if (binding.Raw == field.get())
+            {
+                slot = &binding;
+                firstBoundRevision = binding.FirstBoundRevision;
+                break;
+            }
+            else if (binding.FirstBoundRevision < oldest->FirstBoundRevision)
+            {
+                oldest = &binding;
+            }
+        }
+        if (!slot)
+        {
+            slot = oldest;
+        }
+
+        LayerSurfaceBinding updated;
+        updated.Field = field;
+        updated.Raw = field.get();
+        updated.FirstBoundRevision = firstBoundRevision;
+        updated.LayerCount = desc.Layers.size();
+        for (size_t layer = 0; layer < updated.LayerCount; ++layer)
+        {
+            updated.Names[layer] = desc.Layers[layer].SurfaceName;
+        }
+        *slot = std::move(updated);
+        ++m_BindingRevision;
+        return true;
+    }
+
     const TerrainSurfaceProvider::LayerIds& TerrainSurfaceProvider::GetLayerIds(
         const Container::TSharedPtr<const Rendering::Terrain::TerrainHeightField>& field) const
     {
@@ -63,20 +111,37 @@ namespace NorvesLib::Core::Scene
             }
             else if (cached.Raw == field.get())
             {
-                if (cached.Revision == revision)
+                if (cached.RegistryRevision == revision && cached.BindingRevision == m_BindingRevision)
                 {
                     return cached.Ids;
                 }
                 break;
             }
         }
-        const auto material = Rendering::Terrain::MakeProvisionalTerrainMaterialDesc(*field);
-        LayerIds ids;
-        const size_t count = std::min(material.Layers.size(), ids.size());
-        for (size_t layer = 0; layer < count; ++layer)
+        const auto binding = std::find_if(m_Bindings.begin(), m_Bindings.end(), [&](const LayerSurfaceBinding& entry)
         {
-            const auto& name = material.Layers[layer].SurfaceName;
-            ids[layer] = m_Registry.FindByName(Container::StringView(name.data(), name.size()));
+            return entry.Raw == field.get() && !entry.Field.expired();
+        });
+        const auto resolve = [this](const Container::AnsiString& name)
+        {
+            return m_Registry.FindByName(Container::StringView(name.data(), name.size()));
+        };
+        LayerIds ids;
+        if (binding != m_Bindings.end())
+        {
+            for (size_t layer = 0; layer < binding->LayerCount; ++layer)
+            {
+                ids[layer] = resolve(binding->Names[layer]);
+            }
+        }
+        else
+        {
+            const auto material = Rendering::Terrain::MakeProvisionalTerrainMaterialDesc(*field);
+            const size_t count = std::min(material.Layers.size(), ids.size());
+            for (size_t layer = 0; layer < count; ++layer)
+            {
+                ids[layer] = resolve(material.Layers[layer].SurfaceName);
+            }
         }
         if (index == m_Cache.size())
         {
@@ -91,7 +156,8 @@ namespace NorvesLib::Core::Scene
         entry.Ids = ids;
         entry.Field = field;
         entry.Raw = field.get();
-        entry.Revision = revision;
+        entry.RegistryRevision = revision;
+        entry.BindingRevision = m_BindingRevision;
         return entry.Ids;
     }
 
