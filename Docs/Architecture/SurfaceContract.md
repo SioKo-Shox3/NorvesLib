@@ -84,7 +84,7 @@ provider が返す 2 層の重みは、負または非有限の値を 0 とし�
 
 `Engine::Engine` は `Scene/TerrainSurfaceProvider.h` の 2 つの provider をメンバとして持ち、コンストラクタで `SceneQuery` に結ぶ。デストラクタで両方の登録を解除する。
 
-- `TerrainSurfaceProvider`（優先度 200）は照会のたびに `TerrainSystem::FindTerrain` で高さ場を探す。照会位置を囲む 4 頂点で層ごとの重みを双線形補間し、上位 2 層を返す。`TerrainComponent` が `LayerTablePath` の表を読めた場合は、`TerrainSurfaceProvider::SetLayerSurfaceNames` で各層の `surface` 名を主の高さ場と、それと層数が合う外周の帯に結ぶ。provider は高さ場を弱参照で持ち、その寿命を延ばさない。表を結んだ高さ場では表の名前を、それ以外では仮の地形材質の記述（`MakeProvisionalTerrainMaterialDesc`）の名前を登録簿で解決する。地形の外では濡れの状態だけを返す。
+- `TerrainSurfaceProvider`（優先度 200）は照会のたびに `TerrainSystem::FindTerrain` で高さ場を探す。照会位置を囲む 4 頂点で層ごとの重みを双線形補間し、上位 2 層を返す。`TerrainComponent` が `LayerTablePath` の表を読めた場合は、`TerrainSurfaceProvider::SetLayerSurfaceNames` で各層の `surface` 名を主の高さ場と、それと層数が合う外周の帯に結ぶ。provider は高さ場を弱参照で持ち、その寿命を延ばさない。表を結べる高さ場の数に上限はない。表を結ぶときに、弱参照の期限が切れた項目だけを取り除く。17 件以上の地形に表を結んでも、登録中の各地形は表の表面名を保つ。表を結んだ高さ場では表の名前を、それ以外では仮の地形材質の記述（`MakeProvisionalTerrainMaterialDesc`）の名前を登録簿で解決する。地形の外では濡れの状態だけを返す。
 - `VegetationSurfaceProvider`（優先度 100）は有効な草の標本の密度を `VegetationDensity01` に返す。`Grass_Tall` が登録され、密度がその `vegetationDensityThreshold` を超えたときに種別も返す。明示タグと地形の層がともに種別を返さない場所では `Grass_Tall` が選ばれる。地形の上の濃い草は、地形の種別を保ったまま密度で読める。
 
 両方の provider は `ComputeGroundWetness01` で `Wetness01` を求める。環境が有効なら環境の濡れ、無効なら地形の濡れを基に、草の水気の偏りを反映する。草の標本がなければ偏りは中立の 0.5。CPU から水深を取得する手段がないため、両方とも `PuddleDepthM` は 0 を返す。
@@ -109,9 +109,9 @@ Entity を持たない静的コライダーでは、物理モジュールが `St
 
 `Component/GroundContactComponent.h` の `GroundContactState` は、最大 4 本の足の結果 `Foot[4]`、体の結果 `Body`、足の数 `FootCount`、公開済みの物理スナップショットの番号 `StepSerial` を持つ。`FindFootIndex` で関節名から足の番号を引ける。`Engine::Engine` が `GroundContactComponent` の型を登録するため、シーンの記述から名前で作れる。
 
-`GroundContactComponent` は PostPhysics 群の優先度 -1 で、同じ群の優先度 0 の消費者より先に状態を更新する。スナップショットの番号を取得できなければ状態を空にし、`StepSerial` を 0 に戻す。新しい番号を読んだときだけ、体と各足から下向きに `RaycastClosest` を行い、当たった位置・法線・コライダーで `QuerySurface` を呼ぶ。足 IK はレイの結果を公開していないため、各足に専用のレイを使う。`SetIgnoredColliders` と `SetIgnoredBodies` で除外対象を指定できる。各標本で自分の Entity に当たるたびに、そのコライダーを除外対象に覚えてレイを撃ち直す。一度覚えれば、以後は通常、足ごとに 1 本で済む。学習の枠が満ちたら、生きていないハンドルの枠を空ける。
+`GroundContactComponent` は PostPhysics 群の優先度 -1 で、同じ群の優先度 0 の消費者より先に状態を更新する。スナップショットの番号を取得できなければ状態を空にし、`StepSerial` を 0 に戻す。新しい番号を読んだときだけ、体と各足から下向きに `RaycastClosest` を行い、当たった位置・法線・コライダーで `QuerySurface` を呼ぶ。足 IK はレイの結果を公開していないため、各足に専用のレイを使う。レイのフィルタの `PhysicsQueryFilter::IgnoreEntity` に持ち主の Entity を設定し、物理側でその Entity のコライダーを候補から除く。レイは体と各足に 1 本ずつ使う。`SetIgnoredColliders`（最大 4 個）と `SetIgnoredBodies` で、持ち主以外に除く対象を指定する。
 
-足音（再生は GR75）・足跡・草の踏み倒し（GR44）の消費者は、実装時にこの状態を読む。犬の足の水しぶき（`FootSplashComponent`）は着地通知を処理するとき、所有者の有効な `GroundContactComponent` に更新済みの状態があり、脚の `FallbackJoint` と同じ関節の足が当たっていれば、その足の `Point` と `Normal` を使う。それ以外は `QueryGround` で照会し、当たらなければ地形の `SampleGround` で高さと法線を求める。放出量はどの経路でも従来どおり、環境の生の濡れ（無効なら地形の濡れ）、地形の `SamplePuddlePotential` による凹み度、足の速度から求める。
+足音（再生は GR75）・足跡・草の踏み倒し（GR44）の消費者は、実装時にこの状態を読む。犬の足の水しぶき（`FootSplashComponent`）は着地通知を処理するとき、所有者の有効な `GroundContactComponent` から `FindFootIndex(leg.FallbackJoint)` で対応する足を探す。`SceneQuery::GetPublishedSnapshotSequence` で取得した公開番号が 0 以外で `StepSerial` と一致すれば、その足の結果を採る。接地していればその足の `Point` と `Normal` を使い、未接地ならその着地では放出しない。有効なコンポーネントや対応する足がない場合、または公開番号を取得できない、0 である、もしくは `StepSerial` と一致しない場合だけ、`QueryGround` で照会し、当たらなければ地形の `SampleGround` で高さと法線を求める。放出量はどの経路でも従来どおり、環境の生の濡れ（無効なら地形の濡れ）、地形の `SamplePuddlePotential` による凹み度、足の速度から求める。
 
 ## 後の段階
 
