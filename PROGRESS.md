@@ -12923,3 +12923,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 物理レンズの値・FOV の確定・共有のシャッターの計算を足し、PT・DOF・パケットへ通す: 着地(直し 0 回)
 - U2 ラスタの動きぼけをカメラのシャッター角で掛け、長さの上限 64 と可変の標本数にする: 着地(直し 0 回)
 - U3 CameraComponent に物理レンズ・シャッター角・絞り羽根の PROPERTY を足し、ピント距離も保存する: 着地(直し 0 回)
+- U4 開発ビルドの起動引数 --camera-shutter-angle を Rendering3DTest のカメラへ掛ける(仕上げ): 着地(直し 0 回)
