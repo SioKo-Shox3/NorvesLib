@@ -12964,3 +12964,9 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 1): `.harness/runs/20261121-180853/verify-G16-GR73-VIRTUAL-VOICE-iter1-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が cmake exit code 0 で Game.exe まで。`AudioDomain.cpp`・`SoundSystem.cpp`・`XAudio2Backend.cpp` を再コンパイル。エラーは 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。
 - Next(反復 1): ランナーの評価者の反証(前回の指摘 1 件への対応の差分)。人が聴くときの見どころは反復 2 の Next のとおり。
 - Notes(反復 1): 採った判断: 上限の定数は `AudioDomain.h` に置き、XAudio2 のバックエンドがそれを include して static_assert で照らす。サービスの共通の検査なので、Null のバックエンドでも同じ上限で拒む。範囲の外に残したもの: 2D の音の奪取と検査の順、ロードし直しでの形式の変化の検出、復帰の失敗を毎 Update 試し直すこと(文書に書いた既知の限界)。done-when (3) の試験は判断役の決定で外れた。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
+
+## G13-GR116-ACOUSTIC-EVALUATOR(2026-11-21)
+
+- Done: `AcousticTransmissionEvaluator`(`Engine::Engine` のメンバと `GetAcoustics()`。GameThread 専用)を Core に置いた。寄与源は登録型の `IAcousticMediumContributor` で、既定の 4 つ(静的幾何の `RaycastAll` の透過損失・草の区間ごとの吸収・地形の区間ごとの `RaycastGround` の照会・雨の騒音床による高域の損失)を持つ。距離の減衰は `AcousticDistance.h` を呼ぶ。値は `Assets/Data/Acoustics.json`(仮の値。既定は全クラス免除なし)、設計と地形の精度の仕様は `Docs/Architecture/AcousticTransmission.md`。統合ブランチの取り込みで `Engine.h` の衝突は、評価器と言語ごとの文字列表の両方を残して解いた。`cmake --build build --config Debug --target Game -- /m:1` は EXIT=0。
+- Next: 声への適用(G13-GR116-AUDIO-ACOUSTICS)と聴覚(GR24)からの呼び出し。
+- Notes: CPU から屋根の下かを引く口が無いので `IRainShelterSource` は既定(開けた空)のまま。評価の時間は未計測(案は 32 声・各 10 Hz で 1 フレーム 0.1 ms)。この評価器はまだどの声・AI からも呼ばれないので、ゲーム上の見どころは無い。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
