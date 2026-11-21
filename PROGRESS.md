@@ -12818,3 +12818,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 InputRouter に UI の優先度 PriorityUI = 500 を足す: 着地(直し 0 回)
 - U2 BootConfig に bEnableCanvasView と引数で整える関数を足し、--capture-ui で撮影に Canvas を残し、Game が UI の起動のときだけ Canvas を作る: 着地(直し 0 回)
 - U3 CompositePass の出力をキャンバスの寸法にして、シーンとキャンバスを別の大きさのまま UV で合成する: 着地(直し 0 回)
+- U4 プロセスの最初に Per-Monitor V2 の DPI awareness を有効にし、WM_DPICHANGED で OS の提案の矩形へ動かす: 着地(直し 0 回)

@@ -91,10 +91,11 @@ namespace NorvesLib
                  * @brief ウィンドウサイズを調整
                  * @param style ウィンドウスタイル
                  * @param exStyle 拡張ウィンドウスタイル
+                 * @param dpi 外枠の計算に使う DPI
                  * @param width ウィンドウ幅（調整される）
                  * @param height ウィンドウ高さ（調整される）
                  */
-                static void AdjustWindowSize(DWORD style, DWORD exStyle, int &width, int &height);
+                static void AdjustWindowSize(DWORD style, DWORD exStyle, UINT dpi, int &width, int &height);
 
             private:
                 static bool s_classRegistered; // ウィンドウクラス登録フラグ
@@ -111,8 +112,8 @@ namespace NorvesLib
                 RECT m_LastCursorClip{};
                 bool m_isActive;               // アクティブ状態フラグ
                 Container::String m_title;     // ウィンドウタイトル
-                int m_width;                   // ウィンドウ幅
-                int m_height;                  // ウィンドウ高さ
+                int m_width;                   // クライアント領域の幅(物理 px)
+                int m_height;                  // クライアント領域の高さ(物理 px)
             };
 
         } // namespace Platform

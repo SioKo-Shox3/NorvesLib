@@ -111,9 +111,23 @@ namespace NorvesLib
                         SetCursor(nullptr);return TRUE;
                     }
                     break;
-                case WM_MOVE:
-                case WM_SIZE:
                 case WM_DPICHANGED:
+                {
+                    // 提案の矩形へ動かすとクライアント領域の物理 px が変わり、スワップチェーンの再作成の経路で描画へ伝わる。
+                    const RECT &rect = *reinterpret_cast<const RECT *>(lParam);
+                    SetWindowPos(hWnd, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                                 SWP_NOZORDER | SWP_NOACTIVATE);
+                    if (pThis) (void)pThis->ApplyCursorMode(true);
+                    return 0;
+                }
+                case WM_SIZE:
+                    if (pThis && wParam != SIZE_MINIMIZED)
+                    {
+                        pThis->m_width = LOWORD(lParam);
+                        pThis->m_height = HIWORD(lParam);
+                    }
+                    [[fallthrough]];
+                case WM_MOVE:
                 case WM_DISPLAYCHANGE:
                     if(pThis) (void)pThis->ApplyCursorMode(true);
                     break;
@@ -489,11 +503,11 @@ namespace NorvesLib
                 return true;
             }
 
-            void WindowsWindow::AdjustWindowSize(DWORD style, DWORD exStyle, int &width, int &height)
+            void WindowsWindow::AdjustWindowSize(DWORD style, DWORD exStyle, UINT dpi, int &width, int &height)
             {
                 // クライアント領域が指定されたサイズになるようにウィンドウサイズを調整
                 RECT rect = {0, 0, width, height};
-                AdjustWindowRectEx(&rect, style, FALSE, exStyle);
+                AdjustWindowRectExForDpi(&rect, style, FALSE, exStyle, dpi);
                 width = rect.right - rect.left;
                 height = rect.bottom - rect.top;
             }
@@ -518,7 +532,8 @@ namespace NorvesLib
                 // ウィンドウサイズの調整
                 int windowWidth = width;
                 int windowHeight = height;
-                AdjustWindowSize(style, exStyle, windowWidth, windowHeight);
+                const UINT systemDpi = GetDpiForSystem();
+                AdjustWindowSize(style, exStyle, systemDpi, windowWidth, windowHeight);
 
                 // ウィンドウの中央配置のための座標計算
                 int screenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -548,6 +563,23 @@ namespace NorvesLib
                     return false;
                 }
 
+                const UINT windowDpi = GetDpiForWindow(m_hWnd);
+                if (windowDpi != systemDpi)
+                {
+                    windowWidth = width;
+                    windowHeight = height;
+                    AdjustWindowSize(style, exStyle, windowDpi, windowWidth, windowHeight);
+                    SetWindowPos(m_hWnd, nullptr, 0, 0, windowWidth, windowHeight,
+                                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+
+                RECT clientRect{};
+                if (GetClientRect(m_hWnd, &clientRect))
+                {
+                    m_width = clientRect.right - clientRect.left;
+                    m_height = clientRect.bottom - clientRect.top;
+                    LOG_INFO("WindowsWindow dpi=%u client=%dx%d", windowDpi, m_width, m_height);
+                }
                 return true;
             }
 
@@ -617,7 +649,7 @@ namespace NorvesLib
                     // ウィンドウサイズの調整
                     int windowWidth = width;
                     int windowHeight = height;
-                    AdjustWindowSize(style, exStyle, windowWidth, windowHeight);
+                    AdjustWindowSize(style, exStyle, GetDpiForWindow(m_hWnd), windowWidth, windowHeight);
 
                     // ウィンドウサイズの変更
                     SetWindowPos(
