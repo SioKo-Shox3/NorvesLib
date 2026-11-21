@@ -36,14 +36,18 @@ namespace NorvesLib::Core::Scene
         {
             return 0.0f;
         }
-        const double min = std::isfinite(params.MinDistance) ? std::max(params.MinDistance, 0.01f) : 1.0f;
+        const double min = std::isfinite(params.MinDistance) ? std::max(params.MinDistance, kAcousticMinDistanceFloor) : 1.0f;
         const double max = params.MaxDistance;
         const double d = std::max(distance, 0.0f);
+        if (std::isfinite(max) && d >= max)
+        {
+            return 0.0f;
+        }
         if (d <= min)
         {
             return 1.0f;
         }
-        if (!std::isfinite(max) || d >= max)
+        if (!std::isfinite(max))
         {
             return 0.0f;
         }

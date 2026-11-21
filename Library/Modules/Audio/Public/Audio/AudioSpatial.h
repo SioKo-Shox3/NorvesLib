@@ -61,15 +61,17 @@ namespace NorvesLib::Modules::Audio
         float DopplerRatio = 1.0f;
     };
 
-    /** Min、Max、DopplerScale が有限で、0 ≤ Min < Max かつ DopplerScale ≥ 0 なら有効。 */
+    /** Min、Max、DopplerScale が有限で、Min ≥ 0、Max > max(Min, kAcousticMinDistanceFloor)、DopplerScale ≥ 0 なら有効。 */
     [[nodiscard]] bool IsValidEmitterSpatialSettings(const AudioEmitterSpatialSettings& settings) noexcept;
 
-    /** p = clamp(pan, −1, 1)（NaN は 0）、θ = (p + 1)π/4 として左右に (cos θ, sin θ) を返す。 */
+    /** p = clamp(pan, −1, 1)（NaN は 0）、左右の利得は cos((1 + p)π/4)、cos((1 − p)π/4) を [0, 1] に収めた値。 */
     [[nodiscard]] AudioStereoGains ComputeEqualPowerPan(float pan) noexcept;
 
     /**
      * 音源からリスナーへの単位方向に投影した速度に dopplerScale を掛け、音源を vs、リスナーを vl とする。
-     * (c − vl)/(c − vs) を [0.5, 2] に収める。c − vs ≤ 0.001 なら 2、距離が 0.0001 m 未満なら 1。
+     * (c − vl)/(c − vs) が正なら [0.5, 2] に収める。分子・分母がともに 0 なら 1。
+     * 分母が 0 または比が 0 以下の残りの場合は、分子が正なら 2、それ以外は 0.5。
+     * 入力が非有限、音速または dopplerScale が 0 以下、もしくは距離が 0.0001 m 未満なら 1。
      */
     [[nodiscard]] float ComputeDopplerRatio(const Math::Vector3& listenerPosition, const Math::Vector3& listenerVelocity,
                                             const Math::Vector3& emitterPosition, const Math::Vector3& emitterVelocity,
@@ -77,7 +79,8 @@ namespace NorvesLib::Modules::Audio
 
     /**
      * リスナーから音源への単位方向 n と s = clamp(d/Min, 0, 1)（Min が 0 なら 1）から定位を求める。
-     * パンは s·clamp(n·Right, −1, 1)、左右利得は距離利得と等パワーパンの積。距離が 0.0001 m 未満なら無指向とする。
+     * 水平投影の長さ h = hypot(n·Right, n·Forward) が 1e−6 未満ならパンは 0、それ以外は s·clamp((n·Right)/h, −1, 1)。
+     * 左右利得は距離利得と等パワーパンの積。距離が 0.0001 m 未満なら無指向とする。
      * 背後の度合い r = s·max(0, −n·Forward) に対し音量は 10^(−6r/20)、高域の係数は 1 − 0.5r。
      * 周波数比は ComputeDopplerRatio で求める。無効な入力では左右を無音、背後の係数と周波数比を 1 とする。
      */

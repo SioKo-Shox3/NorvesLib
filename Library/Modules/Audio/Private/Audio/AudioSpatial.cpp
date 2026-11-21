@@ -15,6 +15,13 @@ namespace NorvesLib::Modules::Audio
             return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
         }
 
+        double DotDouble(const Math::Vector3& a, const Math::Vector3& b) noexcept
+        {
+            return static_cast<double>(a.x) * static_cast<double>(b.x) +
+                   static_cast<double>(a.y) * static_cast<double>(b.y) +
+                   static_cast<double>(a.z) * static_cast<double>(b.z);
+        }
+
         struct DirectionAndDistance
         {
             Math::Vector3 Direction;
@@ -43,22 +50,24 @@ namespace NorvesLib::Modules::Audio
     bool IsValidEmitterSpatialSettings(const AudioEmitterSpatialSettings& settings) noexcept
     {
         return std::isfinite(settings.MinDistance) && settings.MinDistance >= 0.0f &&
-               std::isfinite(settings.MaxDistance) && settings.MaxDistance > settings.MinDistance &&
+               std::isfinite(settings.MaxDistance) &&
+               settings.MaxDistance > std::max(settings.MinDistance, Core::Scene::kAcousticMinDistanceFloor) &&
                std::isfinite(settings.DopplerScale) && settings.DopplerScale >= 0.0f;
     }
 
     AudioStereoGains ComputeEqualPowerPan(float pan) noexcept
     {
         const float p = std::isnan(pan) ? 0.0f : std::clamp(pan, -1.0f, 1.0f);
-        const float angle = (p + 1.0f) * Math::Constants::PI / 4.0f;
-        return {std::cos(angle), std::sin(angle)};
+        constexpr float quarterPi = Math::Constants::PI / 4.0f;
+        return {std::clamp(std::cos((1.0f + p) * quarterPi), 0.0f, 1.0f),
+                std::clamp(std::cos((1.0f - p) * quarterPi), 0.0f, 1.0f)};
     }
 
     float ComputeDopplerRatio(const Math::Vector3& listenerPosition, const Math::Vector3& listenerVelocity,
                               const Math::Vector3& emitterPosition, const Math::Vector3& emitterVelocity,
                               float dopplerScale, float speedOfSound) noexcept
     {
-        if (!std::isfinite(dopplerScale) || dopplerScale <= 0.0f || !std::isfinite(speedOfSound) ||
+        if (!std::isfinite(dopplerScale) || dopplerScale <= 0.0f || !std::isfinite(speedOfSound) || speedOfSound <= 0.0f ||
             !IsFinite(listenerPosition) || !IsFinite(listenerVelocity) || !IsFinite(emitterPosition) || !IsFinite(emitterVelocity))
         {
             return 1.0f;
@@ -69,15 +78,24 @@ namespace NorvesLib::Modules::Audio
             return 1.0f;
         }
         const double scale = dopplerScale;
-        const double sourceSpeed = scale * Math::Vector3::Dot(emitterVelocity, direction);
-        const double listenerSpeed = scale * Math::Vector3::Dot(listenerVelocity, direction);
+        const double sourceSpeed = scale * DotDouble(emitterVelocity, direction);
+        const double listenerSpeed = scale * DotDouble(listenerVelocity, direction);
+        const double numerator = speedOfSound - listenerSpeed;
         const double denominator = speedOfSound - sourceSpeed;
-        if (denominator <= 1.0e-3)
+        if (denominator != 0.0)
         {
-            return kAudioMaxDopplerRatio;
+            const double ratio = numerator / denominator;
+            if (std::isfinite(ratio) && ratio > 0.0)
+            {
+                return static_cast<float>(std::clamp(ratio, static_cast<double>(kAudioMinDopplerRatio),
+                                                     static_cast<double>(kAudioMaxDopplerRatio)));
+            }
         }
-        const double ratio = (speedOfSound - listenerSpeed) / denominator;
-        return std::isfinite(ratio) ? std::clamp(static_cast<float>(ratio), kAudioMinDopplerRatio, kAudioMaxDopplerRatio) : 1.0f;
+        else if (numerator == 0.0)
+        {
+            return 1.0f;
+        }
+        return numerator > 0.0 ? kAudioMaxDopplerRatio : kAudioMinDopplerRatio;
     }
 
     AudioSpatialResult ComputeAudioSpatial(const AudioListenerState& listener,
@@ -102,7 +120,10 @@ namespace NorvesLib::Modules::Audio
             {settings.MinDistance, settings.MaxDistance, settings.Rolloff}, distance);
 
         const float spread = settings.MinDistance > 0.0f ? std::clamp(distance / settings.MinDistance, 0.0f, 1.0f) : 1.0f;
-        result.Pan = std::clamp(Math::Vector3::Dot(direction, listener.Right), -1.0f, 1.0f) * spread;
+        const double right = DotDouble(direction, listener.Right);
+        const double forward = DotDouble(direction, listener.Forward);
+        const double horizontal = std::hypot(right, forward);
+        result.Pan = horizontal < 1.0e-6 ? 0.0f : static_cast<float>(std::clamp(right / horizontal, -1.0, 1.0) * spread);
         const AudioStereoGains stereo = ComputeEqualPowerPan(result.Pan);
         result.LeftGain = result.DistanceGain * stereo.Left;
         result.RightGain = result.DistanceGain * stereo.Right;

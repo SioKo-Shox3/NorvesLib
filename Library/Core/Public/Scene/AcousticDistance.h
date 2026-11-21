@@ -5,6 +5,8 @@
 
 namespace NorvesLib::Core::Scene
 {
+    inline constexpr float kAcousticMinDistanceFloor = 0.01f; // 距離減衰の開始距離の下限 (m)。
+
     enum class AcousticRolloff : uint8_t
     {
         InverseClamped,
@@ -29,8 +31,9 @@ namespace NorvesLib::Core::Scene
     };
 
     /**
-     * 距離 d における振幅利得を返す。Min = max(MinDistance, 0.01) とし、非有限の MinDistance は 1 とする。
-     * 負の距離は 0 とし、NaN と正の無限大の利得は 0。d ≤ Min の利得は 1、それ以遠で Max が無効か d ≥ Max なら 0。
+     * 距離 d における振幅利得を返す。Min = max(MinDistance, kAcousticMinDistanceFloor) とし、非有限の MinDistance は 1 とする。
+     * 負の距離は 0 とし、距離が NaN なら利得は 0。Max が有限で d ≥ Max なら、Min にかかわらず利得は 0。
+     * 残りの距離では d ≤ Min なら利得は 1。d > Min で Max が非有限なら利得は 0。
      * 区間内は t = (d − Min)/(Max − Min) として、次の利得を [0, 1] に収める。
      * InverseClamped は (Min/d − Min/Max)/(1 − Min/Max)、Linear は 1 − t。
      * LogDb は r = clamp(LogDbRange, 1, 120)、f = 10^(−r/20) として (10^(−r·t/20) − f)/(1 − f)。
