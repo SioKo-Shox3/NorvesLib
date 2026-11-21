@@ -12712,3 +12712,11 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 パストレーサーの持ち越しで、連番でないパケットのカットと RenderThread が後から足す instance にもカットの判定を当てる: 着地(直し 0 回)
 - U7 メインカメラの登録枠の更新を m_MainCamera へ写し、GetPreviousCamera と BuildCameraProxy でカメラの生成元をそろえる: 着地(直し 0 回)
 - U8 規約の文書へ直しを反映し、全体の Game のビルドで確かめる: 着地(直し 0 回)
+
+## G14-GR62-CUT-SERIAL 差し戻しの直し（2026-11-21）
+- Done: (1) パストレーサーの持ち越し `ApplyPathTracingSequenceCarry` は、連番でないパケット（`SequenceFrame == 0`）でもカットなら `RayTracingScene` の全 instance の前の変換と前のカメラを捨てる。GameThread の判定を `FramePacket::bPathTracingPreviousCut`（連番では `PathTracingSequenceCarry::bPreviousCut` でそのフレームの全パケットへ）で RenderThread へ渡し、RenderThread は自分のカメラ照合と合わせて、差分の同期で後から足す MegaGeometry の instance にも当てる。RenderThread が最初に描くパケットがカットの直後でも、カット前の変換は復活しない。(2) `RenderingCoordinator::UpdateCamera` がメインカメラの登録枠を更新したら `m_MainCamera` にも写す。`ViewRenderContext::GetPreviousCamera()` は登録 ID・`SourceCameraId`・`CutSerial` がすべて描くカメラと同じときだけ前のカメラを返す。(3) `CameraComponent::BuildCameraProxy` は `SourceCameraId` にも `GetComponentId()` を書く（別のカメラの `GetMainCamera()` の写しを使い回しても生成元が残らない）。規約の文書 `Docs/Architecture/CameraDiscontinuity.md` へ反映した。
+- 証拠: `.harness/runs/20261121-065959/verify-G14-GR62-CUT-SERIAL-U8.txt`（全部の直しを入れた先頭で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`cmake exit code: 0` で `Game.vcxproj -> ...Game.exe`。文書の `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致、UTF-8 BOM・CRLF）。
+- 試験: done-when (6) の試験と verify の ctest の行は、人の決まり（試験を作らない・回さない）により作らず回していない。
+- 人が見るときの見どころ: パストレーシングで見るシーンで、別のカメラへ切り替えた直後の 1 枚に動く物体のシャッターの筋（カット前の位置からの補間）が出ないこと。普段の同じカメラの連番の累積は前のとおり。
+- Next: ランナーの評価者の反証（危険地帯）。
+- Notes: 採った判断: RenderThread が印の付いたパケットをすべて取りこぼしたときは、直前に描いたカメラとの照合で前の値を捨てる側に倒す（そのフレームだけ GameThread と前の値が違うことがある。文書に記した）。非連番のパケットでも RenderThread がカットと見たら前のメインカメラを消す。GameThread が見たカットでは GameThread も渡さないので結果は同じ。カットのパケットを RenderThread が取りこぼした次のパケットでは、GameThread が渡したカット後の前のカメラも消すため、その 1 フレームだけカメラ移動分の velocity・モーションブラーが無くなる（TAA の履歴はそのフレームで捨てられるので、筋は出ない側に倒れる）。

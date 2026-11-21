@@ -8530,7 +8530,7 @@
 - notes: 選定課題 G14-S4（Grade の置き場所。ロードマップ 4568 行）は推奨の (a) を採る: シーンリニア（トーンマップの前）に新設する。理由: ACES 2.0 LUT の演算子でも効き、log2 のコントラストで支点 0.18 が使える。今の display-linear の式（tonemapping.frag:296-313）では低コントラストの作り込みに足りず、LUT の演算子ではグレーディングが掛からない。トーンマップの入力が露出済みかは、ToneMappingPass.cpp に PreExposure の参照が無い（grep）ので露出済みの値と読める。UNCERTAIN: AutoExposurePass・BloomPass の後の段（SceneView.cpp:1326-1351 の並び）で露出が掛かっているかを読んで確かめ、支点 0.18 を「露出後の 18% グレー」と定義して試験で固定する。選定課題 G14-S8（GradingContrast の扱い。4572 行）は推奨の (a) を採る: `GradingContrast`・`GradingOverride`・`LensEffects`・`LookLut` を互換のため残し、`PostProcess.bValid` のときはプロファイルを優先する。理由: 起動画面（Rendering3DTestRoutine.cpp:1520-1531 の値）・Wasteland（WastelandRoutine.cpp:200-201・383-384）・ランチャー（LauncherRoutine.cpp:134）が今の差し替えで見た目を作っており、移すと絶対規則 7 の撮影の確かめが全シーンに要る。起動画面の値をベースのプロファイルへ移すこと（要件の設計案 7）はしない。ロードマップ 2886 行の SS-* との衝突は、どれも done なので順序の問題は無い（その実装の上に載せる）。コントラストの調整点が 3 つになる件（段階をまたぐ注意 4417・4480 行）: 新しい調整は Grade（シーンリニア）で行い、display-linear の GradingContrast・GradingOverride は互換の経路、G15 の GR120 の ContrastGain は Grade の上に掛ける、という規約を `Docs/Architecture/RenderingFlow.md` のトーンマップの節に 1 段落で書く。UBO の拡張は G15 の GR120 も触るので、欄を末尾に足し、GR120 はその後ろへ足すと同じ段落に書く。試験を足す理由: 中立のプロファイルで従来と一致しないずれと、LUT の演算子で Grade が黙って掛からない誤りは、撮影の 1 枚では見分けにくい。危険地帯（RenderThread・シェーダーの UBO）。評価者を通す。
 
 ## G14-GR62-CUT-SERIAL: カメラの不連続の印 CutSerial を足し、カットのフレームで前のカメラ・TAA の履歴・連番の持ち越しを捨てる
-- status: doing
+- status: done
 - after: G5-GR30-VERTEX-ANIM-VELOCITY, G5-GR30-REACTIVE, G5-GR30-THIN-SPECULAR-AA
 - gr: GR62
 - needs-gr: GR30
