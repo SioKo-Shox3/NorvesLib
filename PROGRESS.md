@@ -12997,8 +12997,71 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: 地形の provider の層の選び方が層の境の近くで `TerrainHeightField::SampleSurface`（最寄りの頂点）と食い違う件と、`PuddleDepthM` が常に 0 の件は、今回の完了条件の外として残る。
 - Notes: 判断: Public API の `PhysicsQueryFilter::IgnoreEntity` は構造体の末尾に足し、既定の無効なハンドルでは何も除かないので、既存の呼び手の挙動は変わらない。`bHasEntity` が偽の代理形状（Entity の無い静的なコライダー）には効かない。
 
-## G13-GR116-ACOUSTIC-EVALUATOR 統合ブランチの取り込みの後の確かめ（2026-11-21、run 20261121-194912 の反復 3、完了）
+- U1 操舵の基本の純関数（Seek・Flee・Arrive・Pursue・KeepDistance・Wander と上限の積分）: 着地(直し 0 回)
+- U4 近傍の一様格子ハッシュ: 着地(直し 0 回)
+- U5 SteeringAgentComponent と AIModule への登録・型の登録・Physics のリンク: 着地(直し 0 回)
+- U6 運動の層 AnimalMotor と動物の locomotion.v1 プロファイル: 着地(直し 0 回)
+- U2 経路追従・軌跡追従・群れの 3 則と重みの合成: 着地(直し 2 回)
+- U3 地上の 16 方向のコンテキスト操舵: 着地(直し 0 回)
+- U7 操舵の系（PreFixedTick で SoA を集め、ハッシュを作り直し、操舵を解いて書き戻す）: 着地(直し 0 回)
+- U8 LateTick の Animator への公開と操舵のデバッグ描画: 着地(直し 0 回)
+- U9 設計文書と更新段階の割当表（最後。タスクの verify）: 着地(直し 0 回)
 
-- Done: `feature/scene-launcher`（G13-GR115-GROUND-CONTACT の統合を含む）を取り込み、衝突を両側を合わせて解いた。`Engine` は地形・草の表面の provider の結び付けの後に音の評価器の情報源を設定し、`GetTerrainSurfaceProvider()` と `GetAcoustics()` を両方持つ（`m_Acoustics` は provider より後に宣言して先に破棄する）。物理の照会の除外は「動く物」「高さ場」「`IgnoreEntity`」の 3 つを並べた。`SurfaceContract.md` は `audio.transmissionLossDb` の段落と `vegetationDensityThreshold` の段落を両方残した。
-- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件。`AcousticTransmission.cpp`・`Engine.cpp`・`PhysicsBroadphase.cpp` を再コンパイル）。解いた 4 ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致。試験は作らない・回さない決まりにより ctest は回していない。撮影・計測の確かめは回さない決まり。
-- Notes: 音の評価器の静的幾何の寄与は RaycastAll の当たりの `Surface` を直に読むので、今回入った `SceneQuery::QuerySurface` の地形・草の provider の影響は受けない。
+## G13-GR22-STEERING-MOTOR（2026-11-21）
+- Done: 操舵の純関数（`Private/AI/Steering/SteeringBehaviors.*`: Seek・Flee・Arrive・Pursue・KeepDistance・Wander（固定シード）・PathFollow（`Math::PolylinePath`）・RecordTrail / FollowTrail（64 点・0.25 s のリング）・Separation・Alignment・Cohesion・CombineWeighted・`ApplySteeringLimits`（加速度と速度に依る旋回率の上限）と、地上の 16 方向のコンテキスト操舵）。近傍の XZ の一様格子 `Spatial::UniformGridHash`（既定 8 m。PreFixedTick ごとに SoA から作り直し、`AIModule::GetNeighborHash()` で GR24 と共用する）。
+- Done: Public の `SteeringAgentComponent`（PROPERTY: Dimension・MaxSpeed・MaxAcceleration・TurnRateBySpeed・NavProfileName・MotorProfilePath・WanderSeed。要求: Idle・Wander・Arrive・MoveTo・Pursue・Flee・KeepDistance・FollowTrail。Initialize / Finalize で AIModule に登録）。運動の層 `AnimalMotor` は同じ Entity の `CharacterBodyComponent::BeforeSimulation` に世代つきで結び、操舵の速度を `LocomotionIntent` にして `QuadrupedLocomotionModel::Step` を回し、`MoveDelta` で動かす。プロファイルは `LocomotionProfileCache` と `Assets/AI/Locomotion/Wolf.json`（locomotion.v1。値は仮）。`NorvesModule_AI` は `NorvesModule_Physics` を PRIVATE にリンクする。
+- Done: `SteeringSystem` が `FixedModulePre.PreFixedTick` で位置を集めてハッシュを作り直し、全個体を同じ入力から解いて書き戻す。固定駆動の CharacterBody は同じ歩の `Physics.CharacterFixed` で消費するので、モジュールの登録の順に依らない。`LateTick` で Animator へ `AnimDriveSignals` と GaitId・GaitWeight0..3・PitchAngle・BankAngle を渡し、`SetSteeringDebugDrawEnabled` で操舵の速度・望みの速度・目標・距離帯・経路を描く（Release では無効）。契約は `Docs/Architecture/AIModule.md`、更新段階の割当は `Docs/Architecture/TickStages.md`。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（`NorvesModule_AI.lib`・`Game.exe` を生成、error 0）。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol` は一致。
+- done-when (4) の試験（`AISteeringTest`・`AIUniformGridHashTest`・`AIGaitSelectTest`・`AIFixedStepContractTest`）と `Test/Modules/Physics/CMakeLists.txt`・`Docs/Testing.md` の更新は、試験を作らない・回さない決まりにより作っていない。verify の ctest の行は回していない。
+- 人が見るときの見どころ: 今は `SteeringAgentComponent` を置いたシーンが無いので、どのシーンでも見た目は変わらない。シーンに置いたときは、Arrive で行き過ぎないこと・KeepDistance の帯で震えないこと・三方が壁の行き止まりから開いた向きへ逃げること・歩様の切り替わりが落ち着いていることを、操舵のデバッグ描画を有効にして見る。撮影・計測の確かめは回さない決まり。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュを共用する）。
+- Notes: 判断: 可変駆動の CharacterBody は固定ステップより前に要求するので、直近の固定歩の操舵の速度を使う（同じ歩で消費するのは固定駆動のとき）。足元のナビのタイルが未読み込み・通行不能なら、ナビ由来の危険は使わず近傍の危険だけを使う。Wolf.json の歩様の上限（1.8・4.5・9・15 m/s）と操舵の既定値（最高速度 6 m/s・加速度 8 m/s²・旋回率 6/4/3/2 rad/s）は未調整の仮の値。
+- U10 KeepDistance を要求の帯どおりに判定し、重なった 2 個体を Separation が安定した ID で引き離す: 着地(直し 0 回)
+- U11 操舵の登録を EntityHandle と ID にし、活動の条件・部分経路の終点・GR24 の近傍の個体の解決を直す: 着地(直し 0 回)
+- U12 分離に近傍の ID を渡し、設計文書を直した契約に合わせる（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 6 の評価）: `KeepDistance` は要求の上下端をそのまま判定に使い（幅 0 も可）、帯へ戻る停止半径を `min(0.1 m, (0.5 − ヒステリシスの割合) × 帯幅)` にして帯の内側で止まる。`Separation` は 0.0001 m 未満の重なりを ID の組で決まる軸の逆向きに離し、操舵の系は所有 Entity の ObjectId を渡す。
+- 差し戻しの直し: 操舵の系は Component のポインタを持たず、ComponentId・所有 Entity の ObjectId・EntityHandle で登録して固定歩ごとに Engine の World から引き直す。近傍のハッシュと同じ添字の `AIModule::GetNeighborEntities()` を GR24 へ公開する。収集とモーターの条件は `SteeringSystem::CanSteer`（所有 Entity の階層での有効と Tick、Component の有効と Tick、破棄予定でない）にそろえた。`MoveTo` の完走は、`Partial` なら折れ線の終点、`Succeeded` なら終点から目的地へ NavRaycast が通るときだけ目的地へ Arrive する。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT_CODE=0（`NorvesModule_AI.lib`・`Game.exe` を生成、error 0、変更ファイルの警告 0）。`git diff --numstat` と `--ignore-cr-at-eol` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。
+- Notes: 評価の残課題（done-when の外）: `AIModule::Shutdown` 後の再 `Initialize` で生きている個体は登録し直されない。壁の近くの目的地ではコンテキスト操舵が正面を外して壁沿いにそれることがある（シーンに置いたときに見る点）。
+- U13 操舵の登録簿を Component の非所有の参照にし、所有者の ID とハンドルを歩ごとに読み、操舵できない目標の速度を零として読む: 着地(直し 0 回)
+- U14 運動の結び付きを所有者の ObjectId が 0 の間は結ばず、外すときは体の ComponentId で外す: 着地(直し 0 回)
+- U15 設計文書の登録・運動の結び付き・目標の速度の記述を実装に合わせる（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 8 の評価と判断役の判断）: 操舵の登録簿は `PhysicsModule::RegisterCharacter` と同じく非所有の `SteeringAgentComponent` の参照と ComponentId を持つ（`Initialize` で登録し、`EndPlay`・`Finalize`・デストラクタで外す）。所有 Entity の ObjectId と EntityHandle は登録の時に保存せず、固定歩ごとに所有者から読み、近傍の添字と同じ `Gather` で積む。運動の結び付きは所有者の ObjectId が 0 の間は結ばず、操舵の系が各歩の開始時に結ぶ。ObjectId か体が変わったら、古い `BeforeSimulation` を体の ComponentId で外してから結び直す。`Pursue`・`KeepDistance` の相手が操舵できない（`CanSteer` が偽）ときは、`Gather` の読む順に関わらずその速度を零として読む。上の「操舵の系は Component のポインタを持たず…ObjectId・EntityHandle で登録して…引き直す」はこの直しで置き換えた。
+- 経路 1 `World::CreateComponentOfClass`（World に入った Entity へ後から足す）: `World.cpp:1337` → `Entity::AddComponent`（`Entity.cpp:755-761`。`AddInner` の後に `Initialize`）で登録する。所有者は採番済みなので、次の `PreFixedTick` から操舵・近傍のハッシュ・運動の結び付き（`SteeringSystem.cpp:154-160`）の対象になる。体が準備済みなら同じ歩の `BeforeSimulation` で動き、そのフレームの `LateTick` で Animator へ公開し、デバッグ描画に入る。
+- 経路 2 `World::SpawnPrefab`（シーンの読み込み。ルートと子）: `AttachRootEntity`/`AttachChildEntity`（`World.cpp:5288-5290`・`5323-5325`）が行を作るか予約し、`InitializeEntitySubtreeForWorld` で `Initialize`・登録（この時点の ObjectId は 0）、その後に `AssignFreshObjectIdsRecursive` で採番する。登録は ObjectId に依らないので最初の `PreFixedTick` で解決され、採番後の ObjectId で運動を結ぶ。新しい体の運動は、体が `bReady` になった後の要求から（`AnimalMotor.cpp:156`）。子 Entity 自身の CharacterBody は、Physics が親を持つ Entity の体を `InvalidState` にする（`PhysicsModuleCharacter.cpp:129`）。このため子の動物は操舵・近傍・デバッグ描画には入るが、動かず、Animator へも公開されない。
+- 経路 3 `World::SpawnEntityOfClass`: `World.cpp:1308-1321` から経路 2 と同じ Attach → 初期化・登録 → 採番の順で進む。最初の歩から操舵・近傍の対象になり、運動は体の準備の後から。生成の後に Component を足す場合は経路 1 になる。
+- 経路 4 World へ入れる前の `AddComponent`: `Initialize` は所有者の World が null のまま走り、`AIModule` はモジュールの登録簿から引く（`SteeringAgentComponent.cpp:13-16`）ので登録される。`ResolveAgent`（`SteeringSystem.cpp:117-122`）は所有者の World が Engine の World になるまで null を返す。`AttachRootEntity` の後の最初の歩から、登録し直さずに操舵・近傍・運動の結び付きの対象になる。
+- 経路 5 段の最中の生成: `BindEntitySubtreeRows` が `ReserveEntityRowCreate` で行を予約し（`World.cpp:5408-5411`）、初期化・登録・採番はそのまま進む。行の確定前の `PreFixedTick` でも、位置と ObjectId は近傍に入り、ハンドルだけが無効になる（`SteeringSystem.cpp:219-221`）。同期点で行ができた後の収集から有効なハンドルを読む。体も収集の途中で加わった場合は、Physics の `JoinSerial`（`PhysicsModuleCharacter.cpp:29`・`70`）により運動の要求が次の収集からになる。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0（`NorvesModule_AI.lib`・`Game.exe` を生成。警告は前からある shaderc の LNK4099 だけ）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより ctest は回していない。上の 5 経路は、コードの呼び出しの順を読んで確かめた。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 既知の限界: Physics は親を持つ Entity の CharacterBody を動かさないので、動物は Prefab のルート（親なし）に置く。人がシーンに置いて見るときは、プレハブから出した動物とシーンの読み込みの動物が最初の数歩から動き出すことを、操舵のデバッグ描画を有効にして見る。
+- Notes: 要起票: World::AttachRootEntity/AttachChildEntity で Component の Initialize が ObjectId の採番より前に走り、Initialize で ObjectId を捕まえる Component がプレハブ経由で壊れる。順を入れ替えるかを調べる(Core・危険地帯)
+- U16 操舵の登録簿を Component の参照で照合し、所有者の先頭の操舵 Component だけを解決する: 着地(直し 0 回)
+- U17 運動の結び付きの再利用に操舵 Component の ID を含め、外すときは購読の識別子で外す: 着地(直し 0 回)
+- U18 設計文書の登録簿の照合・先頭の操舵 Component・運動の結び直しの記述を実装に合わせる（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 2 の評価）: 操舵の登録簿は登録・解除の照合を非所有の `SteeringAgentComponent` の参照だけで行い、公開の PROPERTY で書き換えられる `ComponentId` を持たない（登録の後に ID を書き換えてから破棄しても記録が消える）。`ResolveAgent` は所有者の先頭の `SteeringAgentComponent` だけを返し、1 つの Entity の 2 個目以降は操舵・近傍のハッシュ・Animator への公開・デバッグ描画の対象にしない（運動の層・`ReadTarget` と同じ決まり。自分を近傍とみなさない）。`AnimalMotor` は所有者の ObjectId・体の ComponentId・操舵 Component の ComponentId のどれかが変わったら結び直し、古い `BeforeSimulation` の購読は所有者の今の体から購読の識別子で外す。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0（`NorvesModule_AI.lib`・`Game.exe` を生成）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。
+- 経路（コードの読みで確かめた）: 登録の後に ComponentId を書き換えて破棄すると、`SteeringSystem::UnregisterAgent` が参照で照合して記録を消す。破棄の前に固定歩が来れば `BeginStep` → `EnsureMotorBinding` → `EnsureBinding` が ID の不一致で結び直す。操舵 Component が 2 個あると、2 個目は `ResolveAgent` が null を返して `Gather` で飛ばされ、近傍の格子に入らない。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 判断: 1 つの Entity に操舵 Component が複数あるときは先頭だけを使う（先頭が破棄予定・Tick 無効の間も 2 個目へ切り替えない）。
+- U19 操舵 Component を外したときも体から購読を外し、コールバックを接続ごとの番号で照合し、Shutdown でモーターを外す（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 3 の評価と再開の判断）: `AnimalMotor` は結ぶときに所有 Entity の `EntityHandle` を持ち、`RemoveComponent` で所有者が先に外れて `Detach` に null が渡ったときは、AIModule の Engine の World で `ResolveEntityHandle` して、その Entity の `CharacterBodyComponent` から購読の識別子で外す（World・Entity・体の生ポインタは保存しない）。コールバックの照合をモーターごとの世代から接続ごとに一意の番号（静的な通し番号）に替え、配信中にコピーされた古い呼び出しが同じ `ComponentId` の後任へ届かないようにした。`AIModule::Shutdown` → `SteeringSystem::Reset` で登録中の各モーターも外す。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0・error 0 件（`NorvesModule_AI.lib`・`Game.exe` を生成。変えた 4 つの .cpp の .obj は編集より新しい）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより ctest の行は回していない。撮影・計測の確かめは回さない決まり。
+- 経路 1（操舵 Component の即時の `RemoveComponent`）: `RemoveInner` が Outer を消してから `Finalize` → `DetachMotorAndUnregister` → `Detach(null, Engine の World)` が保存したハンドルで所有者を引いて体から外すので購読は残らない。接続番号を 0 にするので、コピー済みの呼び出しも `StepMotor` に届かず、1 歩の `MoveDelta` は 1 回まで。
+- 経路 2（段の最中の予約の取り外し）: `MarkForDestroy` の後は `CanSteer` が偽でコールバックが `StepMotor` を呼ばず、回収の `RemoveComponentImmediately` で経路 1 と同じく外す。ECS の行の作成が予約中でハンドルが取れない間は結ばないので、外せない購読はできない。
+- 経路 3（体の `RemoveComponent`）: 体の `EndPlay`・`Finalize` が `BeforeSimulation.Clear()` で購読ごと消す。予約中の歩では、コールバックが体の破棄予定を見て `StepMotor` の前で止まるので二重には動かない。
+- 経路 4（Entity の破棄）: `Entity::Finalize` は行を切ってから Component を一覧から外して 1 つずつ破棄する。体が先なら購読ごと消え、操舵側が先なら接続番号を 0 にした後で体が `Clear` する。間に固定歩は来ない。
+- 経路 5（World の破棄）: `World::Finalize` → `DestroyEntitySubtree` は Entity の行の参照を消してから Component を終了するので、破棄中の `ResolveEntityHandle` は null を返し（行が死んでいる・参照が消えている・WorldId が違うときはすべて null）、体には触れない。体が自分の終了で購読を消す。破棄中は外さない形で安全。
+- 経路 6（`AIModule::Shutdown`）: `Reset` が登録中の各モーターを外してから登録簿を消すので、以後の固定歩に古い操舵速度の `MoveDelta` は入らない。エンジンの終了では `ShutdownAll` → `Shutdown` → `Uninstall` の順で、最後に `m_Engine` が null になる。
+- 経路 7（同じ Entity の 2 個目の操舵 Component への引き継ぎ）: A を外すと経路 1 のとおり購読が消え、次の `BeginStep` で先頭の B が新しい接続番号で 1 件だけ購読する。B が A と同じ `ComponentId` でも番号が違うので、コピー済みの A の呼び出しは B の `StepMotor` を呼ばず、1 歩の `StepMotor` は 1 回。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 判断: 解除は所有 Entity のすべての `CharacterBodyComponent` から購読の識別子で外す（体の `ComponentId` は公開の PROPERTY で書き換えられるため。識別子で照合するので外れるのは自分の購読だけ）。
+- Notes: 判断: ECS の行の作成が予約中で所有 Entity のハンドルが取れない間は、運動の購読を保留し、ハンドルが取れる次の固定歩で結ぶ。
+- Notes: 人が見ること（設計の選択として残した）: `CanSteer` が偽の相手は速度を零として読むので `Pursue` の予測が外れる。帯の幅が 0 の `KeepDistance` は接近と後退を繰り返す余地がある。先頭の操舵 Component が操舵できなくても 2 個目へは切り替えない。
+- Notes: 要起票: QuadrupedLocomotionComponent を RemoveComponent で外すと GetOwner() が null になり、体の BeforeSimulation に購読が残る（`Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp:172-181` の `Detach` が所有者 null のとき `Remove` を飛ばす。`RemoveInner` が `Finalize` より先に Outer を消すため）。
+- U20 運動の結び付きを体の ECS の行（番号と世代）で照合し、同じ ComponentId の別の体へ替わっても結び直す（最後。タスクの verify）: 着地(直し 0 回)
+- 差し戻しの直し（反復 1 の評価）: `AnimalMotor` は体の同一性を体の `ComponentId` ではなく ECS の行（`Component::GetEcsEntity()` の番号と世代）で見る。結ぶときに行を保存し、`EnsureBinding` の再利用の判定・`GetBoundBody`・コールバックで今の体の行と比べる。体の行が null（段の最中に足されて作成が予約中）の間は購読を保留し、行ができた最初の固定歩で結ぶ。`AIModule.md` の運動の節を合わせた。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target NorvesModule_AI Game -- /m:1` が終了コード 0・error 0 件（`AnimalMotor.cpp`・`SteeringAgentComponent.cpp`・`SteeringSystem.cpp` を再コンパイルし、`NorvesModule_AI.lib`・`Game.exe` を生成）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより `ctest` と `PhysicsDynamicsTest`（ターゲットなし）は回していない。
+- 経路（コードの読みで確かめた）: 固定歩の間に体 A を外して同じ `ComponentId` の体 B を足すと、A の終了処理が購読を消し、B の行が予約中の歩はモーターが接続を外して保留し、行ができた次の `PreFixedTick` で B に 1 件だけ購読する。段の外の入れ替えは次の `PreFixedTick` で行の違いを見て `Detach` → 購読の順に結び直す。体だけを外すと `StepMotor`・`MoveDelta` は 0 回。操舵 Component の即時の取り外しと 2 個目への引き継ぎは前回どおり（保存したハンドルで外し、古い呼び出しは接続番号で退ける）。
+- Next: 飛ぶ動物と群れ（G13-GR22-FLIGHT-FLOCK）、行動の決定（GR24。近傍のハッシュと `GetNeighborEntities()` を共用する）。
+- Notes: 判断: 体の行が予約中の歩はモーターを結ばない（所有 Entity のハンドルの保留と同じ扱い。行ができる次の固定歩から結ぶ）。
