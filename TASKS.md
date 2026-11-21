@@ -8473,14 +8473,22 @@
 - notes: 設計は要件 `#### GR21` の【動的障害物】と P2、ロードマップ 2812・2823 行。動物は G13-GR22-STEERING-MOTOR の CharacterBody で動くので静的なコライダーとの接触は物理が解く（Kinematic の通り抜けの心配はロードマップ 2833 行の頃より小さい）が、ナビの塞ぎの取りこぼしは壁を擦る動きとして出るので、整合の試験は防波堤として残す。スモークの場面は代役が動くので G13-GR22-STEERING-MOTOR の後にした。0.25 s・0.5 セルのしきい値は要件の仮の値で未計測。`GameApplicationHandler.cpp`・`GameModeIds.h` は差分を小さくする。試験を足す理由: 反証する契約は「押印と解除の数が釣り合い、経路が古くなったら分かり、経路の上に固体が無い」こと。カウンタの漏れは見えない壁として遊んでいるときだけに出て、撮影・ログでは気づけず黙って起きる。やらないこと: 地形からのベイク（G13-GR21-NVNAV-COOK）、出し入れ（G13-GR21-NAV-STREAMING）。
 
 ## G13-GR22-FLIGHT-FLOCK: 飛ぶ動物の 3D の操舵（高度帯・バンク・離着陸・止まり木）と、地上と空の群れを作る
-- status: blocked
+- status: todo
 - after: G13-GR22-STEERING-MOTOR, G5-GR38-HEIGHTFIELD-QUERY, G5-GR38-PHYSICS-HEIGHTFIELD
 - gr: GR22
 - needs-gr: GR38
-- done-when: (1) `Private/AI/Flight/FlightController.*`: 3D の Seek・Arrive・Wander、地面からの高度帯（下限・上限。地面は `INavTerrainSource`）、旋回に応じたバンク（角の上限）、離陸・着陸・止まり木（アーキタイプの止まり木の候補の位置、または Entity の印）。飛ぶ動物は Kinematic の RigidBody と球のコライダーで、位置は AIModule の PreFixedTick で書く（物理の FixedBegin の後なので Kinematic の速度が移動量/dt になる。`PhysicsModule.cpp:191-210`・`1012-1017`）。障害物は前方の `SweepSphere`（GR08）で避ける。(2) 群れ: Separation・Alignment・Cohesion を地上（コンテキスト操舵へ重みで混ぜる）と空（3D）で使え、近傍は `UniformGridHash`（空は高さの帯で絞る）。仮のアーキタイプ `Assets/AI/Archetypes/Crow.json`（値は仮）。(3) 試験（`PhysicsDynamicsTest` の束へ MEMBER）: `AIFlockingTest` が、固定シードの N=32（2D と 3D）で 20 s 後に最小の個体間の距離が分離半径の 0.8 倍以上、距離 0.3 m 未満の衝突が 0、重心が目標へ近づく。`AIFlightTest` が、高度帯の外へ出ない（地形の偽の起伏の上でも）、バンクが上限を超えない、離陸から着陸までで止まり木に 0.2 m 以内で止まる、前方の箱を通り抜けない、NaN を出さない、2 回でビット一致、Kinematic の速度が移動量/dt に一致。
-- verify: `cmake --build build --config Debug --target PhysicsDynamicsTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(AIFlockingTest|AIFlightTest|AISteeringTest|AIUniformGridHashTest)$" --no-tests=error --output-on-failure --timeout 300`
-- paths: Library/Modules/AI, Assets/AI/Archetypes/Crow.json, Test/Modules/AI, Test/Modules/Physics/CMakeLists.txt, Docs/Architecture/AIModule.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- done-when: (1) `Private/AI/Flight/FlightController.*` に次を入れる。
+  - 3D の Seek・Arrive・Wander と、地面からの高度帯(下限・上限。地面は `INavTerrainSource`)。
+  - 旋回に応じたバンク(角の上限あり)。
+  - 離陸・着陸・止まり木(アーキタイプの止まり木の候補の位置、または Entity の印)。
+  - 飛ぶ動物は Kinematic の RigidBody と球のコライダーで動き、位置は AIModule の PreFixedTick で書く。
+  - 障害物は前方の `SweepSphere`(GR08)で避ける。掃引では、始点で触れている面のうち離れる向きの当たり(法線と進む向きの内積が正)を飛ばし、次の当たりの手前で止める。足場に触れたままでも上の静的な箱を通り抜けない。照会が失敗した歩は始点に留まる。
+  - Kinematic の速度は移動量/dt に一致する。物理がその歩の開始位置を控えたかを `RigidBodyComponent` の読み取りの口で引き、それを動く条件にする。控えていない歩(登録直後・剛体の交換・無効からの再有効化)は、収集した世界の姿勢を書き戻して速度 0 で待つ。
+  (2) 群れ: Separation・Alignment・Cohesion を地上(コンテキスト操舵へ重みで混ぜる)と空(3D)で使える。近傍は `UniformGridHash` で取り、空は高さの帯で絞る。空中待機と徘徊でも群れの速度が効く。仮のアーキタイプ `Assets/AI/Archetypes/Crow.json`(値は仮)を置く。
+  (3) Debug の Game のビルドが通る。試験は作らない・回さない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Modules/AI, Library/Modules/Physics/Public/Physics/RigidBodyComponent.h, Library/Modules/Physics/Private/Physics/RigidBodyComponent.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Assets/AI/Archetypes/Crow.json, Docs/Architecture/AIModule.md, TASKS.md, PROGRESS.md
+- effort: max
 - notes: 設計は要件 `#### GR22` の P3（カラスを採る場合のみ）とロードマップ 2813 行（飛行は 3D＋高度帯＋バンク）。カラスを採るかは企画で未定だが、作者の決定（企画で保留の要件もエンジンの機能として採る）に従い作る。多層ナビと 3D の経路探索は非ゴール（ロードマップ 2818 行）なので、飛行はステアリングだけ。試験の数値（0.8 倍・0.3 m・20 s・0.2 m）は要件の案の値で根拠は無い。試験を足す理由: 反証する契約は「群れがぶつからず散らばらず、飛ぶ物が帯と上限を守る」こと。外れると群れがすり抜ける・地面に潜るのが一瞬だけ起き、撮影では気づきにくい。やらないこと: 翼のアニメーション（見た目の資産が無い）。
 
 ## G13-GR24-SENSE-MODELS: 視覚（草と地形の遮蔽）・聴覚・嗅覚（風下の煙状の分布）・気づきの積分の純関数とポートを作る
