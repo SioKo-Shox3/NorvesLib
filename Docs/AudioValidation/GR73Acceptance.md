@@ -31,7 +31,9 @@
 
 音の定位、G13 の音の評価器（GR116）、AI の聴覚（GR24）は、同じ `Core::Scene::EvaluateAcousticDistanceGain` を呼ぶ契約とする。距離の式を定義する場所は Core のこの関数だけである。
 
-距離を d（m）、Min = max(MinDistance, 0.01 m)、Max = MaxDistance とする。MinDistance が非有限なら Min は 1 m。負の距離は 0 m とし、NaN と正の無限大の利得は 0 とする。d ≤ Min の利得は 1、それ以遠で Max が非有限または d ≥ Max なら 0 とする。区間内では t = (d − Min)/(Max − Min) とし、次の利得 g を [0, 1] に収める。
+距離を d（m）、Min = max(MinDistance, `kAcousticMinDistanceFloor`)、Max = MaxDistance とする。下限 `kAcousticMinDistanceFloor` は 0.01 m。MinDistance が非有限なら Min は 1 m。負の距離は 0 m とし、NaN と正の無限大の利得は 0 とする。Max が有限なら、まず d ≥ Max で利得を 0 とする。残りは d ≤ Min なら 1、d > Min で Max が非有限なら 0 とする。
+
+有限の Max ≤ Min では d < Max の利得は 1、d ≥ Max の利得は 0 になる。音源設定の検査 `IsValidEmitterSpatialSettings` は MaxDistance > max(MinDistance, 0.01 m) を求めるため、受理した設定では利得は Max で連続的に 0 に達する。Min < d < Max では t = (d − Min)/(Max − Min) とし、次の利得 g を [0, 1] に収める。
 
 | 曲線 | 距離利得 g |
 |---|---|
@@ -44,13 +46,17 @@
 
 `ComputeAudioSpatial` はリスナーから音源への単位方向 n を使う。d < 0.0001 m では n をゼロとする。広がりの係数は s = clamp(d/MinDistance, 0, 1)。ここでは設定値の MinDistance をそのまま使い、0 m のときは s = 1 とする。
 
-- パンは p = s·clamp(n·Right, −1, 1)。`ComputeEqualPowerPan` は入力を [−1, 1] に収め（NaN は 0）、θ = (p + 1)π/4 から左右のパン係数 L = cos θ、R = sin θ を返す。近くでは s が小さくなり、左右の差が縮まる。
+- 水平方向の成分を x = n·Right、f = n·Forward、その長さを h = √(x² + f²) とする。h < 1e-6 ならパンは p = 0、それ以外は p = s·clamp(x/h, −1, 1)。x/h は正面から右を正に測った水平の方位角 φ の sin φ に当たる。近くでは s が小さくなり、左右の差が縮まる。
+- `ComputeEqualPowerPan` は入力 p を [−1, 1] に収め（NaN は 0）、L = cos((1 + p)π/4)、R = cos((1 − p)π/4) をそれぞれ [0, 1] に収めて返す。端点では (L, R) は p = +1 で厳密に (0, 1)、p = −1 で厳密に (1, 0) となり、全域で L(−p) = R(p) が厳密に成り立つ。
 - 左右の出力利得は (g·L, g·R)。距離利得 g はここで一度だけ掛ける。
 - 背後の度合いは r = s·max(0, −n·Forward)。voice の音量に掛ける倍率は 10^(−6r/20)、高域の係数は 1 − 0.5r。d ≥ MinDistance の真後ろでは音量が 6 dB 下がり、高域の係数は 0.5 になる。MinDistance の内側では s に応じて両方の効果が弱まる。高域の係数は値を保持し、フィルタへの適用は `G16-GR73-ACOUSTICS-AI-WIRE` の範囲とする。
 
 ### ドップラー
 
-音源からリスナーへの単位方向を u とし、vs = DopplerScale·(音源速度·u)、vl = DopplerScale·(リスナー速度·u) とする。音速の既定は c = 343 m/s。`ComputeDopplerRatio` は (c − vl)/(c − vs) を [0.5, 2.0] に収める。d < 0.0001 m または DopplerScale = 0 なら 1、それ以外で c − vs ≤ 0.001 なら 2 とする。3D の voice を作るときは、ピッチ用の周波数比の上限に 12 半音分の余裕を加え、ドップラー比の最大 2.0 を確保する。
+`ComputeDopplerRatio` の音速は既定で c = 343 m/s。c が非有限または 0 以下のとき、d < 0.0001 m のとき、または DopplerScale が 0 のときは 1 を返す。音源からリスナーへの単位方向を u とし、投影速度 vs = DopplerScale·(音源速度·u)、vl = DopplerScale·(リスナー速度·u) と、その比 (c − vl)/(c − vs) は倍精度で求める。
+
+- 分母 c − vs が 0 以外で比が正なら、比を [0.5, 2.0] に収める。比が 0 以下なら、分子 c − vl が正のときは 2.0、それ以外は 0.5 を返す。
+- 分母が 0 なら、分子も 0 のときは 1.0、正なら 2.0、負なら 0.5 を返す。
 
 ### リスナーの決め方
 
@@ -62,7 +68,7 @@
 | `Entity` | 持ち主の Entity | 持ち主の Entity |
 | `Hybrid` | 持ち主の Entity（頭のソケットに付けた子 Entity など） | メインカメラ |
 
-`IAudioListenerSource` がリスナーの取得口となる。MainCamera 版は `Install` で保持した `Core::Engine::Engine*` から `GetRenderWorld().GetRenderingCoordinator().GetMainCamera()` を取得し、`IsValid()` を確かめて読む。必要なカメラや Entity を読めないときは原点と恒等姿勢を使う。基底は CameraProxy と同じ Forward = (0, 0, −1)、Right = (1, 0, 0)、Up = (0, 1, 0)。このとき `AUDIO_LISTENER fallback=origin reason=<no_camera|entity_missing>` を 1 回だけ記録する。速度は位置の差分/dt で求め、選んだリスナーが変わったフレームはゼロとする。
+`IAudioListenerSource` がリスナーの取得口となる。MainCamera 版は `Install` で保持した `Core::Engine::Engine*` から `GetRenderWorld().GetRenderingCoordinator().GetMainCamera()` を取得し、`IsValid()` を確かめて読む。`MainCamera` はカメラ、`Entity` は持ち主、`Hybrid` は両方を必要とする。必要な入力が一つでも欠けたら姿勢全体を既定値に戻す。位置は原点、基底は CameraProxy の既定（Forward = (0, 0, −1)、Right = (1, 0, 0)、Up = (0, 1, 0)）、速度は 0 とし、初回だけ `AUDIO_LISTENER fallback=origin reason=<no_camera|entity_missing>` を記録する。通常の速度は位置の差分/dt で求める。選んだリスナーが変わったフレームと、フォールバックに入るフレーム・復帰するフレームの速度は 0 とする。
 
 ### フレーム内の更新順と voice への反映
 
@@ -76,10 +82,10 @@
 | 渡し先 | 渡す値 |
 |---|---|
 | `IAudioService::SetVoiceOutputGains` | 距離利得を含む左右の線形利得 (g·L, g·R)。3D の voice では `SetVoicePan` を使わない |
-| `IAudioService::SetVoiceFrequencyRatio` | ピッチの周波数比 × ドップラー比。サービスは正の有限値を下限 1/1024 と voice 作成時の上限に収める |
+| `IAudioService::SetVoiceFrequencyRatio` | ピッチの周波数比 × ドップラー比。サービスは正の有限値を下限 1/1024 と voice 作成時の上限に収める。最終ピッチを pitch（半音）とすると、3D の voice 作成時の上限は min(max(12, pitch) + 12, 120) 半音（`kAudioMaxVoicePitchSemitones` = 120）。pitch > 120 の再生は既存の voice を奪う前に `InvalidState` で拒否する |
 | voice の音量 | 10^((volume_db + 揺らぎ_db)/20) × 再生の音量 × フェード利得 × 区分の音量 × 全体の音量 × 背後の音量倍率 |
 
-各操作は、渡す値の前回の適用値からの変化が ε = 1e-4 以下なら呼ばない。左右の利得は両方の変化が ε 以下のときに呼び出しを省く。
+3D の左右の利得は、両方とも前回の適用値との差が ε = 1e-4 以下なら更新を省く。3D の周波数比は `SetPitch` による変更も含めて同じ ε を使う。3D の voice の音量も差が ε 以下なら更新を省くが、非ゼロから厳密に 0 へ変わるときは送る。2D の voice の音量は前回の適用値と完全に一致するときだけ省く。
 
 ## 受入れの閾値
 
