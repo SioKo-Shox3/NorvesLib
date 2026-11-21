@@ -8699,7 +8699,7 @@
 - notes: 設計は要件 `#### GR68` の設計 5〜7 と制約 f・g、受け入れ確認の UiFocusNavigationTest・UiInputRoutingTest・UiPauseGateTest。選定課題 G15-S2（ポーズの状態の正本）を決めた: (A) GR119 の `SimulationPauseState`（理由のビット）を正本にし、`ShouldAdvanceSimulation` は Bridge の全停止として残す。画面の積みは集約して Menu を 1 ビット立て、GR118 のフォーカス・最小化もここへ載せる（推奨）。理由: GameMode の更新がゲートの外で回るのでメニューを GameMode にでき（今は GameMode の状態機械もワールドと同じゲートの中。`ApplicationProcessor.cpp:2718-2724`）、Bridge とゲームの中のポーズが混ざらない。Router の consume は `InputState` のポーリングには効かないので、ゲームの入力は Router（InputMapper）経由に限る規約を `Docs/Architecture/` の入力の節に書く（要件のリスク 3）。入力の解除の名前は G1 の `InputSystem::ReleaseAll`（`InputSystem.h:163`）にそろえ、ロードマップの `ReleaseAllKeys` は作らない（「段階をまたぐ注意」4402 行）。試験を足す理由: 反証する契約は「モーダルの間はゲームへ入力が届かず、押しっぱなしが残らない」「ポーズの要求の数え方」。破れるとメニューの中で犬が動く・閉じた後にキーが押されたままになり、操作したときだけ出て撮影では見えず、黙って起きる。危険地帯: 入力の配送の Public API なので評価者を通す。
 
 ## G15-GR119-PAUSE-GATE: ゲームの中のポーズの状態（理由のビット）を Engine に置き、GameMode の更新とワールド・物理・粒子の更新のゲートを分け、ポーズ中も動く印を足す
-- status: doing
+- status: done
 - after: G1-GR01-TICK-CONTRACT-DOC, G7-GR49-ENV-PARAMS, G7-GR49-ENV-SYSTEM, G7-GR49-ENV-INTERFACES, G7-GR57-GPU-DEFINITION, G7-GR57-GPU-SIMULATION, G7-GR57-GPU-DRAW, G7-GR57-GPU-INDIRECT
 - gr: GR119
 - needs-gr: GR02, GR10, GR49, GR57

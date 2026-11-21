@@ -13129,3 +13129,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261122-011236/verify-G14-GR62-LENS-SHUTTER-U8.txt`（Core を再コンパイルして `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`exit_code=0` で `Game.vcxproj -> ...Game.exe`。警告は LNK4099・C4996・C4244 だけ）。
 - 試験: 試験は作らず回していない（人の決まり）。
 - Next: ランナーの評価者の反証（危険地帯）。
+## G15-GR119-PAUSE-GATE 統合ブランチの取り込み（2026-11-22）
+- Done: `feature/scene-launcher` を取り込み、衝突を解いた。`Engine.cpp` は表面の provider の登録に使う `Component/GroundContactComponent.h`・`Logging/LogMacros.h` とモジュールの通知に使う `Module/ModuleRegistry.h` を両方残した。`Docs/Architecture/TickStages.md` のフレームの順序は `bBridgeAdvance` と `bWorldAdvance` の分割を保ったまま、統合側が足した AI の操舵の順序（`PreFixedTick` で操舵速度を確定・`AIModule::LateTick` で Animator へ公開）を足し、ポーズの分類表の AI の行を「経路探索と操舵」にして操舵の場所を書いた（どちらも `bWorldAdvance` の中で止まる）。
+- 証拠: `.harness/runs/20261122-015216/verify-merge-build.txt`（取り込んだ先頭で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`EXIT=0` で `Core.vcxproj -> ...Core.lib`・`Game.vcxproj -> ...Game.exe`。警告は LNK4099 など前からのもの）。
+- 試験: 試験は作らず回していない（人の決まり）。撮影・起動の確かめは回さない決まり。
+- Next: ランナーの評価者の反証（危険地帯: World・Entity・Component の Public API と更新の順序、Object の寿命）。
