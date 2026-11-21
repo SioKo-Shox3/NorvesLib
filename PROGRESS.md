@@ -12932,3 +12932,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: 今はポーズの理由を Push する呼び手が無い（フォーカス・最小化は G15-GR119-WINDOW-EVENTS、メニューのフローは G15-GR119-GAME-FLOW）ので、ランチャーと各シーンの動き・見た目は変わらない。ランチャーから Rendering3DTest などへ入って戻る流れと、Bridge の Paused/Stopped で全部止まることが従来どおりかを見る。
 - Next: ランナーの評価者の反証（危険地帯: World・Entity・Component の Public API と更新の順序、Object の寿命）。
 - Notes: 採った判断: ストリーミング（`StreamingSystem::Update`）はゲーム内ポーズ中も回す（Loading の理由のポーズ中に読み込みが止まらないように。進むフレームは従来どおり `PostTick.Streaming`、Bridge の停止中は止まる）。`ModuleRegistry::DispatchPauseStateChanged` の宣言のため `Library/Core/Public/Module/ModuleRegistry.h`（paths の外）に 1 行足した。`bTickWhenPaused` は ECS の列・反映の PROPERTY にせず通常のメンバにした。ポーズ中の印の付いた本体には未スケールの dt を渡し、本体の中の `TryGetComponentTickDelta` も持ち主の時間倍率を掛けずに同じ秒を返す。done-when (5) の `UiSystem` はコードに無いので分類表に載せていない。`ApplicationProcessor::TickSimulation` の宣言（第 3 引数）は変えず、Bridge の進行として扱う。
+- U5 ポーズの状態の変化の通知を発生順に積んで配る: 着地(直し 0 回)

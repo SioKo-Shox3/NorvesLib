@@ -22,7 +22,7 @@ namespace NorvesLib::Core::Engine
         if (++count == 1)
         {
             m_ActiveReasons |= bit;
-            OnChanged.Broadcast(m_ActiveReasons);
+            NotifyChanged();
         }
         return true;
     }
@@ -46,7 +46,7 @@ namespace NorvesLib::Core::Engine
         if (--count == 0)
         {
             m_ActiveReasons &= ~bit;
-            OnChanged.Broadcast(m_ActiveReasons);
+            NotifyChanged();
         }
         return true;
     }
@@ -68,6 +68,26 @@ namespace NorvesLib::Core::Engine
             count = 0;
         }
         m_ActiveReasons = 0;
-        OnChanged.Broadcast(m_ActiveReasons);
+        NotifyChanged();
+    }
+
+    void SimulationPauseState::NotifyChanged()
+    {
+        m_PendingReasons.push_back(m_ActiveReasons);
+        if (m_bNotifying)
+        {
+            return;
+        }
+
+        m_bNotifying = true;
+        // 通知中に末尾へ追加された分も、同じ添字のループで順に配る。
+        for (size_t index = 0; index < m_PendingReasons.size(); ++index)
+        {
+            // 購読者が待ち行列を伸ばしても、この通知の値は有効なままにする。
+            const uint32_t reasons = m_PendingReasons[index];
+            OnChanged.Broadcast(reasons);
+        }
+        m_PendingReasons.clear();
+        m_bNotifying = false;
     }
 } // namespace NorvesLib::Core::Engine
