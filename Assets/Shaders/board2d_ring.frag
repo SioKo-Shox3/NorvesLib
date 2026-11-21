@@ -14,7 +14,9 @@ layout(location = 0) out vec4 outColor;
 void main()
 {
     vec4 color = texture(boardTexture, fragUV) * fragColor;
-    vec2 p = fragLocalUV * 2.0 - 1.0;
+    // board2d.vert は画素の Y が増えるほど画面の上に写すため、反転のない板では UV の y も上向きに増える。
+    // 真上から時計回りに角度を測るため、p の y は画面の下向きに取る。
+    vec2 p = vec2(fragLocalUV.x * 2.0 - 1.0, 1.0 - fragLocalUV.y * 2.0);
     float r = length(p);
     float rAA = max(fwidth(r), 1e-5);
     const float twoPi = 6.28318530718;
