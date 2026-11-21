@@ -1,0 +1,15 @@
+{
+  "schema": "postprocess.v1",
+  "name": "neutral",
+  "overrideMask": ["exposureBias", "whiteBalance", "contrast", "pivot", "saturation", "shadowLift", "highlightRolloff",
+                   "shadowTint", "highlightTint", "protectedHue", "vignette", "grain", "chromaticAberration", "lensDirt", "look", "dither"],
+  "grade": {
+    "exposureBias": 0, "whiteBalance": {"temp": 0, "tint": 0}, "contrast": 1, "pivot": 0.18, "saturation": 1,
+    "shadowLift": {"amount": 0, "rangeEV": 2}, "highlightRolloff": {"start": 1, "strength": 0},
+    "shadowTint": [1, 1, 1], "highlightTint": [1, 1, 1],
+    "protectedHue": {"enabled": false, "center": 210, "width": 40, "keep": 1}
+  },
+  "lens": {"vignette": {"intensity": 0, "radius": 0.8, "softness": 0.5}, "grain": 0, "chromaticAberration": 0, "lensDirt": 0},
+  "look": {"lutA": null, "lutB": null, "blend": 0, "intensity": 1},
+  "dither": 0.00392156862745098
+}

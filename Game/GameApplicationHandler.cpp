@@ -4437,6 +4437,11 @@ namespace Game
                 LOG_WARNING_F("コリジョンレイヤーの表を読めません。Default だけの表で続行します: %s",
                     physicsLayersError.empty() ? "" : physicsLayersError.c_str());
             }
+            const auto surfaceResult = engine->GetSurfaceRegistry().LoadFromAssetFile("Data/Surfaces.json");
+            if (!surfaceResult.Succeeded())
+            {
+                LOG_WARNING_F("表面の語彙を読めません。Default だけで続行します: %s", surfaceResult.Detail.c_str());
+            }
             if (!m_InputSettings.Initialize(engine->GetInputMapper()))
             {
                 const auto& error = m_InputSettings.GetLastError();

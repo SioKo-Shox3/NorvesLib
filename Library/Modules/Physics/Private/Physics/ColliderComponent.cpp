@@ -72,6 +72,12 @@ namespace NorvesLib::Modules::Physics
         return module ? module->SetColliderHeightField(*this, heightField) : EPhysicsResult::NotRegistered;
     }
 
+    EPhysicsResult ColliderComponent::SetSurface(Core::Container::StringView name)
+    {
+        PhysicsModule* module = FindRegisteredPhysicsModule();
+        return module ? module->SetColliderSurface(*this, name) : EPhysicsResult::NotRegistered;
+    }
+
     EPhysicsResult ColliderComponent::SetSurfaceId(uint8_t surfaceId)
     {
         PhysicsModule* module = FindRegisteredPhysicsModule();
@@ -333,6 +339,19 @@ namespace NorvesLib::Modules::Physics
         m_LastRegistrationResult = module
             ? module->RegisterCollider(*this)
             : EPhysicsResult::NotRegistered;
+    }
+
+    void ColliderComponent::OnPropertyApplied(const Core::ClassProperty& property)
+    {
+        Core::Component::Component::OnPropertyApplied(property);
+        if (&property == s_PropertyPtr_SurfaceName)
+        {
+            PhysicsModule* module = FindRegisteredPhysicsModule();
+            if (module && module->ValidateCollider(*this) == EPhysicsResult::Success)
+            {
+                module->ResolveColliderSurface(*this);
+            }
+        }
     }
 
     void ColliderComponent::Finalize()
