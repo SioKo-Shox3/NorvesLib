@@ -8735,7 +8735,7 @@
 - notes: 設計はロードマップ 2905 行（GR119 のエンジン側）・「段階をまたぐ注意」の「G15 / GR119 ゲートの分離」（4483 行。前の段階が足した更新の分類を表で固定する）と 4437 行、要件 `#### GR119` の設計 (1)〜(3)。今のコードでは GameMode の状態機械もワールドと同じゲートの中（`ApplicationProcessor.cpp:2718-2724`）で、メニューを GameMode にするとポーズ中に動かない。選定課題 G15-S2 は (A)（G15-GR68-UI-INTERACT の notes）。needs-gr: 表に載せる更新の持ち主（GR02 の TimeSystem・GR10 の Animator・GR49 の EnvironmentSystem・GR57 の GPU 粒子の時計）が揃ってから分類を固定するため。G7 の EnvironmentSystem が今どのゲートの中で回るかは G7 の実装を読んで表に書く（ロードマップ 4437 行は「bAdvanceSim の中」と書く）。`TickStages.md` は G1-GR01-TICK-CONTRACT-DOC も書き換えるので after にした。再開のときの固定ステップの上限は今の `FixedStepScheduler` の値をそのまま使う（新しい数を置かない）。試験を足す理由: 反証する契約は「ポーズ中に止まるものと動くものの表」と「再開で時間が飛ばない」。破れるとポーズ中に敵や粒子が進む・再開で固定ステップがまとめて走るが、ポーズの操作をしたときだけ出て撮影・ログでは気づけず、黙って起きる。危険地帯: World・Entity・Component の Public API と更新の順序、Object の寿命（破棄の掃除）なので評価者を通す。やらないこと: フォーカス・最小化・閉じる要求（G15-GR119-WINDOW-EVENTS）、Game のフロー（G15-GR119-GAME-FLOW）。
 
 ## G16-GR73-BUS-MIXER: バス(Master・Se・Ambient・Music・Ui)を submix と send で作り、バスの音量・設定の音量・ポーズ用のゲイン・ダッキングと、再初期化の後に全部を当て直す入口を IAudioMixer に置く
-- status: doing
+- status: done
 - after: G16-GR73-VIRTUAL-VOICE, G8-GR72-AUDIO-SPI, G8-GR72-SOUND-SYSTEM, G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR73
 - needs-gr: GR72
