@@ -1,11 +1,15 @@
 ﻿#include "Audio/AudioDomain.h"
 #include "Audio/AudioComponent.h"
 
+#include "Audio/AudioListenerComponent.h"
+#include "Audio/AudioListenerResolver.h"
+#include "Audio/AudioSpatialHost.h"
 #include "Audio/NullAudioBackend.h"
 #include "Audio/SoundSystem.h"
 #include "CoreTypes.h"
 #include "Logging/LogMacros.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace NorvesLib::Modules::Audio
@@ -45,7 +49,26 @@ namespace NorvesLib::Modules::Audio::Private
 {
     namespace
     {
-        class AudioServiceModule final : public IAudioModule
+        template <typename T>
+        void RegisterComponent(Core::Container::VariableArray<T*>& components, T& component)
+        {
+            if (std::find(components.begin(), components.end(), &component) == components.end())
+            {
+                components.push_back(&component);
+            }
+        }
+
+        template <typename T>
+        void UnregisterComponent(Core::Container::VariableArray<T*>& components, T& component)
+        {
+            const auto it = std::find(components.begin(), components.end(), &component);
+            if (it != components.end())
+            {
+                components.erase(it);
+            }
+        }
+
+        class AudioServiceModule final : public IAudioModule, public IAudioSpatialHost
         {
         public:
             explicit AudioServiceModule(Core::Container::TUniquePtr<IAudioService> service,
@@ -72,14 +95,21 @@ namespace NorvesLib::Modules::Audio::Private
                 return kAudioModuleName;
             }
 
-            bool Install(Core::Engine::Engine&) override
+            bool Install(Core::Engine::Engine& engine) override
             {
-                return m_Service != nullptr;
+                if (!m_Service)
+                {
+                    return false;
+                }
+                m_Engine = &engine;
+                m_CameraListenerSource.SetEngine(&engine);
+                return true;
             }
 
             void RegisterReflectedTypes() override
             {
                 Core::ClassRegistry::Get().RegisterClass(AudioComponent::StaticClass());
+                Core::ClassRegistry::Get().RegisterClass(AudioListenerComponent::StaticClass());
             }
 
             bool Initialize() override
@@ -122,6 +152,13 @@ namespace NorvesLib::Modules::Audio::Private
                 if (m_Service)
                 {
                     m_Service->Tick();
+                    const AudioListenerState listener = m_ListenerResolver.Resolve(m_CameraListenerSource,
+                        Core::Container::Span<AudioListenerComponent* const>(m_Listeners), deltaSeconds);
+                    m_SoundSystem->SetListener(listener);
+                    for (AudioComponent* emitter : m_SpatialEmitters)
+                    {
+                        emitter->SyncSpatialEmitter(*m_SoundSystem);
+                    }
                     m_SoundSystem->Update(deltaSeconds);
                 }
             }
@@ -129,6 +166,9 @@ namespace NorvesLib::Modules::Audio::Private
             void Shutdown() override
             {
                 m_bShutdown = true;
+                m_Listeners.clear();
+                m_SpatialEmitters.clear();
+                m_ListenerResolver.Reset();
                 if (m_Service)
                 {
                     m_SoundSystem->Shutdown();
@@ -136,8 +176,33 @@ namespace NorvesLib::Modules::Audio::Private
                 }
             }
 
-            void Uninstall(Core::Engine::Engine&) override
+            void Uninstall(Core::Engine::Engine& engine) override
             {
+                if (m_Engine == &engine)
+                {
+                    m_Engine = nullptr;
+                    m_CameraListenerSource.SetEngine(nullptr);
+                }
+            }
+
+            void RegisterListener(AudioListenerComponent& listener) override
+            {
+                RegisterComponent(m_Listeners, listener);
+            }
+
+            void UnregisterListener(AudioListenerComponent& listener) override
+            {
+                UnregisterComponent(m_Listeners, listener);
+            }
+
+            void RegisterSpatialEmitter(AudioComponent& emitter) override
+            {
+                RegisterComponent(m_SpatialEmitters, emitter);
+            }
+
+            void UnregisterSpatialEmitter(AudioComponent& emitter) override
+            {
+                UnregisterComponent(m_SpatialEmitters, emitter);
             }
 
             IAudioService& GetAudioService() override
@@ -166,6 +231,11 @@ namespace NorvesLib::Modules::Audio::Private
 
             Core::Container::TUniquePtr<IAudioService> m_Service;
             Core::Container::TUniquePtr<SoundSystem> m_SoundSystem;
+            Core::Engine::Engine* m_Engine = nullptr;
+            MainCameraAudioListenerSource m_CameraListenerSource;
+            AudioListenerResolver m_ListenerResolver;
+            Core::Container::VariableArray<AudioListenerComponent*> m_Listeners;
+            Core::Container::VariableArray<AudioComponent*> m_SpatialEmitters;
             AudioModuleOptions m_Options;
             AudioBackendStatus m_BackendStatus;
             const char* m_FallbackReason = "";

@@ -14,7 +14,7 @@ target_sources(NorvesGameSources INTERFACE ${SOURCE_FILES})
 
 # Windows アプリケーションの入口は Game だけに含める。
 add_executable(${MODULE_NAME} WIN32 Boot/GameBoot.cpp Boot/GameBoot.h)
-target_link_libraries(${MODULE_NAME} PRIVATE NorvesGameSources NorvesModule_Physics)
+target_link_libraries(${MODULE_NAME} PRIVATE NorvesGameSources NorvesModule_Physics NorvesModule_AI)
 
 # インクルードパスの設定
 target_include_directories(NorvesGameSources
@@ -37,6 +37,7 @@ target_link_libraries(NorvesGameSources
         NorvesModule_Dummy
         NorvesModule_Physics
         NorvesModule_Gameplay
+        NorvesModule_AI
         # Memory # Core に統合されました
         # Random # Core に統合されました
         # FileStream # Core に統合されました
@@ -80,10 +81,9 @@ if(NORVES_ENABLE_IMGUI)
     # Game へは透過しない=ここで明示直リンクが必要。
     target_link_libraries(NorvesGameSources INTERFACE NorvesThirdParty_ImGui)
     target_compile_definitions(NorvesGameSources INTERFACE NORVES_ENABLE_IMGUI)
-    # 日本語ラベルの narrow リテラルを実行時 UTF-8 にする(ImGuiModule と同方式)。MSVC 既定の
-    # 実行文字コードは CP932 で ImGui 要求の UTF-8 と食い違うため /utf-8 を付与する。OFF 時は
-    # 付与されず素ビルド不変。
-    if(MSVC)
-        target_compile_options(NorvesGameSources INTERFACE /utf-8)
-    endif()
+endif()
+
+# Game のソースと実行時の文字コードを Core と同じ UTF-8 にそろえる。
+if(MSVC)
+    target_compile_options(NorvesGameSources INTERFACE $<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>)
 endif()

@@ -206,6 +206,9 @@ set(PRIVATE_SOURCES
     Private/Text/Base64.cpp
     Private/Text/JsonWriter.cpp
     Private/Text/Utf8.cpp
+    Private/Text/StringTable.cpp
+    Private/Text/TextLayout.cpp
+    Private/Text/FontAtlasTextMetrics.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
     Private/Debug/DebugOutput.cpp
@@ -252,6 +255,7 @@ set(PRIVATE_SOURCES
     Private/Component/ScriptComponent.cpp
     Private/Engine/ApplicationProcessor.cpp
     # Scene
+    Private/Scene/AcousticDistance.cpp
     Private/Scene/SceneQuery.cpp
     Private/Scene/LevelSnap.cpp
     Private/Scene/PhysicsLayerTable.cpp
@@ -637,6 +641,10 @@ set(PUBLIC_HEADERS
     Public/Text/JsonDocument.h
     Public/Text/JsonWriter.h
     Public/Text/Utf8.h
+    Public/Text/StringTable.h
+    Public/Text/TextMetrics.h
+    Public/Text/FontAtlasTextMetrics.h
+    Public/Text/TextLayout.h
     Public/Container/Containers.h
     Public/Container/PointerTypes.h
     Public/Container/VariableArray.h
@@ -750,6 +758,7 @@ set(PUBLIC_HEADERS
     Public/Component/HoldSlotComponent.h
     Public/Component/AnimatorComponent.h
     # Scene
+    Public/Scene/AcousticDistance.h
     Public/Scene/SceneQuery.h
     Public/Scene/LevelSnap.h
     Public/Scene/RenderTransformHistory.h
@@ -1022,6 +1031,7 @@ set(PUBLIC_HEADERS
     Public/Math/GeometryTypes.h
     Public/Math/GeometryIntersection.h
     Public/Math/Curves.h
+    Public/Math/PolylinePath.h
     # Thread
     Public/Thread/Atomic.h
     Public/Thread/ConditionVariable.h
@@ -1144,6 +1154,12 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb  # stb_image.h
         ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
+
+# 表示文字列はキーだけを扱い、日本語のログは UTF-8 のコンソールにそのまま出力する。
+# Core のヘッダを使う側も実行時の文字コードを UTF-8 にそろえる。
+if(MSVC)
+    target_compile_options(${MODULE_NAME} PUBLIC $<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>)
+endif()
 
 target_compile_definitions(${MODULE_NAME}
     PUBLIC

@@ -12707,37 +12707,145 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（危険地帯: Public API の `CameraProxy`。FramePacket で値のまま写る）。描画での読み取りは G14-GR61-GRADE-PASS、毎フレームの重ね合わせの結線は G14-GR61-LAYERS。今は描画がこの値を読まないので、見た目は変わらない。
 - Notes: done-when (5) の `PostProcessProfileMixerTest`・`PostProcessProfileJsonTest` は絶対規則 11 に従って作っていない。既存の試験は回していない。読む→書く→読むの往復とホットリロードの実際の動きはゲームで確かめていない（描画が読むのは後の項目）。
 - Notes: 判断: LUT が片方だけのプロファイルどうしの補間は両方の枠を同じパスにして Blend=0。EaseIn=t²・EaseOut=t(2−t)。`SetSource` は不正なパスでも保持値を消して false。値の範囲はすべて仮。
-- U1 UBO の拡張と tonemapping.frag の Grade・Look 2 枚・ディザ: 着地(直し 0 回)
-- U2 色収差・レンズダート・ビネットを bValid のときプロファイルから読む: 着地(直し 0 回)
-- U3 RenderingFlow.md にトーンマップとグレーディングの節を足す: 着地(直し 0 回)
-- U4 ToneMappingPass がプロファイルの値で UBO と LUT 2 枚を用意する: 着地(直し 0 回)
-### G14-GR61-GRADE-PASS トーンマップにシーンリニアの Grade・見た目の LUT 2 枚の混ぜ・ディザを足し、カメラのプロファイルの値で描く（2026-11-21、run 20261121-085648）
-- Done: `GPUToneMappingParams` を 80 → 192 バイトへ末尾に広げ（大きさと全欄の offset を static_assert で固定。glslangValidator の反射で GLSL の `ToneMappingParams` の 36 欄と一致）、`tonemapping.frag` に `gradingMode = 2`（カメラのプロファイル）を足した。トーンマップの前にシーンリニアで Grade（露出バイアス → ホワイトバランス → 暗部の持ち上げ → log2 のコントラスト pivot·(c/pivot)^contrast → 彩度と保護色相 → ハイライトの肩 → スプリットトーン）を ACES 2.0 LUT を含む全演算子に掛け、中立の値では入力をビットのまま返す。トーンマップの後の Look は binding 3・4 の LUT A・B を重みで混ぜて Intensity を掛け、最終段に成分ごとの三角分布のディザ（sRGB の符号化値の上、強さ 0 で掛けない）。gradingMode 0・1 の経路は分岐の外に残し、演算は変えていない。
-- Done（同）: `ToneMappingPass` は `GetActiveCamera()->PostProcess.bValid` のとき、Sanitize した写しの値だけで定数を作る（`GradingContrast`・`GradingOverride`・`LookLut`・`m_Settings` のグレーディング・ビネット・グレインを読まない）。見た目の LUT は A・B の枠で別々に読み、nullptr・読めない側は重み 0 で恒等として扱う。bValid=false は従来の詰め方のまま（足した欄は 0、ディザは掛からない）。
-- Done（同）: bValid のとき `BloomPass` のレンズダートと `VignettePass` の色収差は `PostProcess.Lens` から読み、`VignettePass` はビネットを掛けない（ビネットはトーンマップのパスがプロファイルの値で掛ける）。`View.cpp` の撮影の表示情報も同じ値にした。`Docs/Architecture/RenderingFlow.md` に「トーンマップとグレーディング」の節（段の順、支点 0.18 = 露出後の値、コントラストの調整点 3 つの規約、定数のブロックは末尾に足し GR120 は GR61 の欄の後ろ）を足した。
-- 証拠: `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が EXIT=0（Game.exe を生成）、`glslangValidator -V Assets/Shaders/tonemapping.frag` がエラー 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。
-- Next: ランナーの評価者の反証（危険地帯: RenderThread とシェーダーの UBO）。毎フレームの重ね合わせの結線は G14-GR61-LAYERS。今はどのカメラも bValid=false なので、どのシーンの見た目も変わらない。
-- Notes: done-when (4) の `PostProcessIdentityVulkanTest`・`PostProcessGradeVulkanTest` は絶対規則 11 に従って作っていない。既存の試験・ctest は回していない。人が見るときの見どころ: `CameraProxy::PostProcess` に `bValid=true` の値を入れたカメラ（G14-GR61-LAYERS の結線の後、`Assets/PostProcess/*.ppprofile.json`）で、起動画面（Rendering3DTest の天球・地面・球・岩）を ACES Filmic と ACES 2.0 LUT の両方で見て、中立のプロファイル（neutral.ppprofile.json の dither を 0）が bValid=false と見分けがつかないこと、Contrast 0.7 で 18% グレーの明るさが変わらず暗部が明るく明部が暗くなること、空のグラデーションの段がディザで目立たなくなること。
-- Notes: 判断: Look は gradingMode=2 では ACES 2.0 LUT にも掛ける（従来の 1 枚の LUT は今のまま掛けない）。`Lens.Grain` は FilmGrainStrength と同じ単位（sRGB の符号化値での標準偏差）。ホワイトバランスは R・B を Temperature で ±20%、G を Tint で ∓20% にして Rec.709 の輝度で割る。暗部の持ち上げは輝度を sqrt(Y²+f²)（f = Amount·Pivot·2^−RangeEV）にする灰色の加算、ハイライトの肩は Start より上の輝度を Start + e/(1 + Strength·e/Start) に縮める、スプリットトーンの重みは log2(Y/Pivot) の −2〜+2 EV の smoothstep。撮影の記録（`FrameCaptureDisplayInfo`）はプロファイルの Grade の値を持たない（GradingMode=2 だけ記録される）。
-- U5 差し戻しの直し（プロファイル経路のグレインのシード・Grade の出力の上限・レンズの値の補正）: 着地(直し 0 回)
-- Done（差し戻しの直し、反復 2）: プロファイルの経路のグレインのシードを固定の開始値（`ProfileFilmGrainBaseSeed`）とフレーム番号で作り、`m_Settings.FilmGrainSeed` は bValid=false の経路だけで読む。`ApplyGrade` の log2 のコントラストの後と出力を半精度の上限 65504 で頭打ちにし、強い露出バイアスとコントラストで ACES Filmic・Uncharted2 の 2 次式が単精度で溢れて NaN になるのを防いだ（gradingMode 0・1 と演算子の関数は変えていない）。`BloomPass`・`VignettePass`・`View.cpp` は bValid のとき Sanitize した写しからレンズの値を読み、範囲外の値は `ToneMappingPass` と同じく既定値に戻る。
-- 証拠（同）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成）、`glslangValidator -V Assets/Shaders/tonemapping.frag` がエラー 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。単精度の再計算で、指摘の例（入力 128、露出の倍率 256、Contrast 4、支点 0.18）の Grade の出力が 1.98e20 → 65504、ACES Filmic が NaN → 1、Uncharted2 が NaN → 1.287（白色点 11.2 で正規化する既存の式のため 1 を超えるのは、Grade を掛けない経路の入力 65504 と同じ）。
-- Next（同）: ランナーの評価者の反証（2 周目）。見た目はどのシーンも変わらない（どのカメラも bValid=false のまま）。
-- Notes（同）: 残課題（完了条件の外）: LUT A・B が同じパスでも 2 つの枠で別々に読む。表示変換の照合の色の階段（`SetDisplayRampInput`）を bValid のカメラで使うと Grade も掛かる。
-- U6 Grade の上限を RGB の比を保つ縮めに替え、ACES 2.0 LUT の Look のコメントを直す: 着地(直し 0 回)
-- Done（差し戻しの直し、反復 3）: `ApplyGrade` のコントラストの後と出口の上限を、成分ごとの `min` から RGB の比を保つ縮め（`LimitGradeColor`。+Inf と巨大値を 1e30 に落としてから、最大の成分が 65504 を超えるときだけ全体を 65504/最大値 倍する）に替えた。明るい色がハイライトの肩より前で白く飛ばなくなる。`TonemapACES`・`Uncharted2Helper` と gradingMode 0・1 の分岐は変えていない。tonemapping.frag の見出しのコメントを、gradingMode 2 の Look は ACES 2.0 LUT を含む全演算子に掛ける、と実態に合わせた。
-- 証拠（同）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成）、`glslangValidator -V Assets/Shaders/tonemapping.frag -o .harness/tonemapping.spv` が EXIT=0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致（22/8）。単精度の使い捨ての計算（各演算を float32 に丸めてシェーダーの式を写したもの）: 入力 (4,2,1)・ExposureBias=3・Contrast=4・ContrastPivot=0.25・HighlightRolloff Start=0.25・Strength=1 で、コントラストの後 (67108864, 4194304, 262144) → 上限の後 (65504, 4094, 255.875) → 肩の後 (1.94111, 0.12132, 0.007582) → ACES Filmic (0.91135, 0.16407, 0.002571)。入力グレー 128・ExposureBias=8・Contrast=4・支点 0.18 で、Grade の出力 65504、ACES Filmic 1.0、Uncharted2 1.28706（NaN・Inf なし）。入力 (+Inf, 4, 1) でも上限の後と出力に NaN なし。
-- Next（同）: ランナーの評価者の反証。見た目はどのシーンも変わらない（どのカメラも bValid=false のまま）。人が見るときは、カメラのプロファイルを有効にしたシーンで、強いコントラストと露出バイアスを掛けた明るい色の物体が白く飛ばず色を保つこと。
-- Notes（同）: 判断: 上限は共通の演算子（bValid=false でも全シーンが通る）を逆数の形に替える案を採らず、gradingMode 2 の Grade の中で比を保って縮める（判断役の判断に従った）。tonemapping.frag は UTF-8 BOM 付きになった（Assets/Shaders の 139 本のうち 114 本と同じ形）。試験（完了条件 (4)）は決まりにより作らず回していない。撮影・計測の確かめは回さない決まり。残課題（完了条件の外）: LUT A・B が同じパスでも 2 つの枠で別々に読む、表示変換の照合の色の階段（`SetDisplayRampInput`）を bValid のカメラで使うと Grade も掛かる、撮影の記録にプロファイルの Grade の値が残らない（GradingMode=2 だけ）。
-- U7 Grade の上限を、彩度・肩の前は比を保つ縮め(1e30)、表示変換の手前は演算子が飽和する値(1e18)での切りに替える: 着地(直し 1 回)
-- Done（差し戻しの直し、反復 4）: `ApplyGrade` の上限を用途で 3 つに分けた。入口でシーンカラーの ±Inf だけを ±65504 に置き換える（有限の値は変えない）。`LimitGradeColor` は、有限の値は最大の成分が 1e30 を超えるときだけ RGB の比を保って縮め（Inf を含むときは Inf の成分を ±1e30・有限の成分を 0）、輝度で成分が結びつく彩度と肩の段の直前だけで呼ぶ。色（スプリットトーン）を掛けた後に成分ごとに ±1e18 で切る（どの演算子も単精度で飽和する値より上なので表示の値は変わらず、ACES Filmic・Uncharted2 の 2 次式があふれない）。前の形（65504 で比を保って縮める・先に成分ごとに 1e30 で切る）は、明るい成分 1 つのせいで支点の暗い成分まで潰し、1e30 を超える有限値を灰色にしていた。
-- 証拠（同）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成）、`glslangValidator -V Assets/Shaders/tonemapping.frag -o .harness/tonemapping.spv` が EXIT=0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致（20/11）。単精度の使い捨ての計算（シェーダーの式を float32 で写し、上限を掛けない float64 の式と比べたもの）: 入力 (4,2,1)・露出倍率 8・Contrast 4・支点 0.25・肩 Start 0.25・Strength 1 で肩の後 (1.941129, 0.121321, 0.007583)・ACES Filmic (0.911354, 0.164076, 0.002571)、差の最大 7.8e-8。入力 (32, 0.25, 0)・Contrast 4・支点 0.25 で ACES Filmic (1, 0.374111, 0)、差 1.6e-8。入力 (32768, 16384, 8192)・露出倍率 256・Contrast 4・支点 1/64・肩 0.25/1 で ACES Filmic (0.911354, 0.164076, 0.002571)、差 1.9e-8。入力グレー 128・露出倍率 256・Contrast 4 で Grade の出力 1e18、ACES Filmic 1・Uncharted2 1.287（NaN・Inf なし）。最悪の有限値（65504・露出倍率 256・WB 1.45・支点 0.01・彩度 4・色 4）と Inf の入力（中立／暗部の持ち上げ・彩度 2・肩あり）で Grade と 4 演算子の出力がすべて有限。色の倍率 1e-18 で差 0、色 0 で NaN なし。中立では Grade の出力が入力とビット一致。
-- Next（同）: ランナーの評価者の反証。見た目はどのシーンも変わらない（どのカメラも bValid=false のまま）。人が見るときは、カメラのプロファイルを有効にしたシーンで、強いコントラストを掛けても明るい色の物体のそばの暗い色が黒く潰れず、明るい色が白く飛ばないこと。
-- Notes（同）: 判断: 判断役の「Grade の中の上限は RGB の比を保つ形」は、輝度で成分が結びつく彩度と肩の前の縮めで守り、表示変換の手前のあふれ止めは演算子が飽和する値（1e18）での成分ごとの切りにした（比を保って縮めると、肩が無いときに暗い成分を潰すため。共通の演算子 `TonemapACES`・`Uncharted2Helper` は変えていない）。試験（完了条件 (4)）は決まりにより作らず、ctest・撮影・GPU の確かめは回していない。
-- U8 Grade の彩度・保護色相・スプリットトーンの補間を端点で厳密な形にし、View.cpp の使っていない include を消す: 着地(直し 0 回)
-- Done（差し戻しの直し、反復 5）: 判断役の判断に従い、`ApplyGrade` の 3 か所の補間（保護色相の彩度、彩度の式、スプリットトーンの色）を端点で厳密な形 `a * (1.0 - t) + b * t` に書き直した（`mix` に頼らない）。重みが 1 のとき元の値と明部の倍率がそのまま通り、暗い成分を桁落ちで 0 にしない。`LimitGradeColor`（1e30 で比を保つ縮め）・出口の 1e18 の切り・`TonemapACES`・`Uncharted2Helper`・gradingMode 0・1 は変えていない。`View.cpp` の使っていない `#include <algorithm>`・`<cmath>` を消した。
-- 証拠（同）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成）、`glslangValidator -V Assets/Shaders/tonemapping.frag` が EXIT=0。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致（tonemapping.frag +7/-3、View.cpp +0/-2）。
-- 証拠（同、シェーダーの演算を単精度に丸めた使い捨ての計算。ディザ 0・記載の無い設定は中立）: (i) 入力 (0.25,0.25,64)・Contrast 4・支点 0.25・彩度 0・青を完全に保護（中心 240°・半幅 40°・Keep 1）→ Grade (0.25, 0.25, 1.07e9)、ACES Filmic (0.374111, 0.374111, 1)。(ii) 入力 (32,0.25,0)・Contrast 4・支点 0.25・明部の色倍率 (2⁻²⁶,1,1) → Grade (1, 0.25, 0)、ACES Filmic (0.803797, 0.374111, 0)。(iii) 入力 (4,2,1)・ExposureBias 3・Contrast 4・支点 0.25・肩の開始 0.25・強さ 1 → 肩の後 (1.941129, 0.121321, 0.007583)、ACES Filmic (0.911354, 0.164076, 0.002571)。(iv) グレー 128・ExposureBias 8・Contrast 4 → ACES Filmic (1,1,1)・Uncharted2 (1.287,1.287,1.287) で NaN・Inf なし。中立の設定では (0.18,0.18,0.18)・(4,2,1)・(0,0,0)・(65504,1,0.001) の Grade の出力が入力とビット一致。
-- 証拠（同）: 例 3（入力 (32768, 1/8192, 0)・+8 EV・支点 1/64・Contrast 4・肩の開始 1・強さ 1e-35）は書き換えの前後とも ACES Filmic (1, 0.0000419, 0) で変わらない。これは仕様として扱う: 最大の成分が 1e30 を超えたときに比を保って縮めると暗い成分も比例して縮むのは完了条件に書いた上限の形どおりで、目に見える差が出るのは肩の強さを 0 より大きく約 1e-29 以下にした、肩がほぼ効かない設定のときだけ。
-- Next（同）: ランナーの評価者の反証。見た目はどのシーンも変わらない（どのカメラも bValid=false のまま）。人が見るときは、カメラのプロファイルを有効にしたシーンでコントラストを強くし、彩度の高い光源（明るい青・赤のハイライト）の色と、保護色相・スプリットトーンの明部の色が潰れず残るかをゲームで見る。
-- Notes（同）: 単精度の丸めによる差は、上に書いた確かめの値の外では問わない（判断役の判断で完了条件に入れた範囲）。完了条件の外の残課題は残したまま: LUT A・B が同じでも 2 枠で別々に読む、`SetDisplayRampInput` を使うと Grade も掛かる、撮影の記録にプロファイルの Grade の値が残らない、片方の LUT が読めないとき重みを配り直さない。試験は絶対規則 11 に従って作らず、撮影・GPU の確かめは回さない決まり。
+
+- U1 proxy・問い合わせの結果・接触のイベント・静的コライダーへ登録簿の表面を通し、GetColliderSurface を実装する: 着地(直し 0 回)
+- U2 ColliderComponent の SurfaceName を保存対象にし、名前を登録簿の表面へ解決して proxy へ写す（文書を含む）: 着地(直し 0 回)
+
+## G13-GR115-PHYSICS-SURFACE（2026-11-21、run 20261121-061935）
+- Done: `PhysicsShapeProxy` に `Surface`（`Scene::SurfaceId`）と `bHasSurface` を足し、`Raycast`・`Overlap*`・`ExecuteQuery` / `ExecuteBatch` の全種（RaycastClosest・RaycastAll・Overlap・Sweep）と旧入口の結果の `Surface`、`PhysicsContactEvent` の `SelfSurface` / `OtherSurface` へ写す。`GetColliderSurface` を公開スナップショットの proxy から実装（明示なしは `NoHit`、`Default` の明示は `Success`）。
+- Done: `StaticColliderDesc` の表面を `Scene::SurfaceId Surface` + `bHasSurface`（登録簿の添字。地形の層の番号は入れない）にし、detached の proxy へ写す。payload の `"surface"` は文字列なら登録簿の表面の名前、整数（0〜255）なら従来の地形の層の番号（結果の `uint8_t SurfaceId` にだけ写す）として読む。
+- Done: `ColliderComponent` に `PROPERTY(Core::Container::String, SurfaceName)` と `SetSurface(name)` / `GetSurface()`。名前は登録（`Initialize`）時と、登録簿の `GetRevision()` が変わった後の最初の `StepFixed` / `RefreshDynamicSnapshot` で `SurfaceId` に解決し、`BuildBroadphase` で proxy へ写す。未知の名前は `FindByName` の警告 1 回で `Default`、読み込みは止めない。形状はこれまでどおり保存しない。
+- Done: `Docs/Architecture/SurfaceContract.md` の「物理の結果」と `Docs/Architecture/PhysicsQueries.md` の「コライダーの表面（GR115）」を今の形に直した。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0（行末は `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。試験のターゲットのビルドと ctest は回していない。done-when (3) の `PhysicsSurfaceTagTest` は試験を作らない決まりで作っておらず、`Docs/Testing.md` も変えていない。
+- 人が見るときの見どころ: シーンの JSON のコライダーに `"SurfaceName"` を書いて読み込み、保存し直しても名前が残ること。登録簿に無い名前は警告ログ 1 回で読み込みが続くこと。問い合わせの結果の表面を使う消費者（足音など）はまだ無いので、画面には出ない。
+- Next: ランナーの評価者の反証（危険地帯: 物理の公開型・コライダーの寿命）。地形・草の表面は G13-GR115-GROUND-CONTACT、取り込みの材質からの継承は GR81。
+- Notes: `SetSurface` はほかの setter と同じく未登録なら `NotRegistered`（登録前は PROPERTY に入れておけば `Initialize` で解決される）。名前の形が不正なら `InvalidArgument` で旧値を保つ。未知の名前は名前を保ったまま `bHasSurface` = true・`Surface` = `Default` にする。
+- Notes: 再初期化（`ResetTransientState`）で登録簿の改訂の記録を `UINT64_MAX` にし、最初の歩で全コライダーを解決し直す。静的なコライダーの表面の名前は物理モジュールのチャンクが持ち、チャンクの適用時と登録簿の改訂のたびに同じ `ColliderHandle` のまま解決し直す。
+- U3 静的コライダーの表面の名前をモジュールが保持して登録簿の改訂で同じハンドルのまま解決し直し、v1 の数値の surface を従来の層番号として読み、OverlapEnd に今の表面を載せる: 着地(直し 0 回)
+- U4 ColliderComponent の SurfaceName を編集で書き換えたときに表面を解決し直し、文書を今の形に直す: 着地(直し 0 回)
+- Done: 差し戻しの直し。静的コライダーの表面の名前を `StaticColliderDesc::SurfaceName` で受けて物理モジュールが保持し、`RefreshColliderSurfaces` の改訂の変化で同じハンドルのまま解決し直す。`norves.static-colliders.v1` の数値の `"surface"`（例 `"surface":3`）を従来の層番号として読み、既存のファイルの読み込みを失敗させない。`OverlapEnd` は今のステップに proxy がある側は今の表面、取り除かれた側は最後に重なっていたときの表面を載せる。`ColliderComponent::OnPropertyApplied` で `SurfaceName` の適用（シーン編集など）のときに登録済みなら名前を解決し直し、次の公開から結果に出す。名前の形の判定は `PhysicsSurfaceName.h` にまとめた。
+- 確かめ（差し戻しの直しの後）: 全部が載った状態で `cmake --build build --config Debug --target Game -- /m:1` が終了コード 0、error の行 0（`ColliderComponent.cpp`・`PhysicsModule.cpp` を再コンパイルして `Game.exe` を生成）。2 通りの numstat は一致。試験のターゲットのビルドと ctest は回していない（試験を作らない・回さない決まり）。
+- 人が見るときの見どころ（追加）: シーン編集でコライダーの `SurfaceName` を書き換えると、次の物理の公開から問い合わせの表面が変わること。静的コライダーの JSON に `"surface":3` のような数値があっても読み込みが通ること。
+
+- U11 Core に弧長でパラメータ化した折れ線 PolylinePath.h を足す(U1 の切り直し): 着地(直し 0 回)
+- U12 AI モジュールの静的ライブラリと共有の型・タイル・格子を置く(U2 の切り直し): 着地(直し 1 回)
+- U3 純関数のナビ格子の焼き NavGridBaker: 着地(直し 0 回)
+- U4 格子の問い合わせ(通行・最寄り・視線・コスト)と視線での平滑化: 着地(直し 0 回)
+- U5 整数コストの A* NavPathfinder(予算で分けて進める): 着地(直し 0 回)
+- U6 エージェントのプロファイルの集合と NavProfiles.json: 着地(直し 0 回)
+- U7 カメラの周りだけを描くナビのデバッグ描画: 着地(直し 0 回)
+- U8 ナビのサービス INavigationService と予算実行: 着地(直し 0 回)
+- U10 AI モジュールの設計文書: 着地(直し 0 回)
+- U9 AI モジュール本体と Game への登録(最後。タスクの verify): 着地(直し 0 回)
+
+## G13-GR21-AI-MODULE-NAV（2026-11-21）
+- Done: `Library/Modules/AI`（static lib `NorvesModule_AI`）に `IAIModule`・`RegisterAIModule`・`FindAIModule`・`RegisterReflectedTypes`（登録する型が無いので空）と `AIModule` を置いた。`AIModule` は `Install` で Engine を借り、`NavigationService` を所有して `GetNavigation()` で `INavigationService` を貸し、`PreFixedTick` で古い要求から展開の予算（既定 1500）を配り、`LateTick` でカメラの周りだけを `DebugDrawQueue` に描く（既定は無効）。Game にリンクし `OnPreInitialize` で Gameplay の直後に登録した。
+- Done: Core に `Math/PolylinePath.h`（弧長・最寄り点（ヒントと跳びの上限つき）・先読み点・残りの長さ）。ナビは `NavGridDesc`・SoA の `NavTile`・`NavGrid`（タイルの読み込み・解放・世代・タイルをまたぐ Region の併合）・`NavGridBaker::Bake`・`NavGridQueries`（通行・最寄り・視線・コスト）と視線の平滑化・`NavPathfinder`（8 近傍・角切りなし・128/181・オクタイル×ε・自前の二分ヒープ・分割と一括がビット同一・Region 違いは 0 展開で Failed・Partial）・`NavAgentProfileSet` と `Assets/AI/NavProfiles.json`（Small・Medium・Large の仮の値）・`NavDebugDraw`。契約は `Docs/Architecture/AIModule.md`。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致）。
+- done-when (4) の試験（`PolylinePathTest`・`NavGridPathfindingTest`・`AIModuleLinkTest`・構成の時のリンクの検査）と `Docs/Testing.md` の更新は、試験を作らない・回さない決まりにより作っていない。
+- 人が見るときの見どころ: 今は経路を要求する呼び手もタイルを焼いて読み込む呼び手も無いので、どのシーンでも見た目は変わらない。起動のログに AI モジュールの登録の失敗や `AI/NavProfiles.json` を読めない旨の警告が出ないことを見る。撮影・計測の確かめは回さない決まり。
+- Next: 操舵（G13-GR22-STEERING-MOTOR。行動の決定と位置の書き戻しは PreFixedTick 側に置き、登録の順に依らないことを固める）、動く障害物（G13-GR21-NAV-OBSTACLES）、地形からのベイク（G13-GR21-NVNAV-COOK）。
+- Notes: 判断: AI のソースは `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)` で集める。1 セルだけの経路はセル中心の 1 点を返す。`Reset` の後も古い `PathHandle` は無効のまま。始点が通れなければ 2 m 以内の通れるセルへ寄せ、無ければ Failed。展開の予算 1500 は未計測の仮の値。
+- U13 照会のしきい値の上限・ゼロ変位の視線・経路の古さに視線が調べたタイルを含める: 着地(直し 0 回)
+- U14 焼きの採取範囲を量子化の上限まで広げ、セルの矩形で押印し、タイルに格子設定を持たせる: 着地(直し 0 回)
+- U15 経路のデバッグ描画にもカメラの中心と半径を当てる: 着地(直し 0 回)
+- U16 設計文書を直した契約に合わせ、Game のビルドで仕上げる(最後。タスクの verify): 着地(直し 0 回)
+- Done(差し戻しの直し): 通行のしきい値は `ClearanceQ` で表せる上限(255)を超える半径を 256 とし、A*・通行・最寄り点・視線・コストの全部で通さない。XZ の変位がゼロの視線も、始点が格子線の上なら両側のセルを調べる。`IsPathStale` は経路のセル列に加え、返す折れ線の各線分の視線が調べたセル(角の両脇を含む)のタイルの世代も見る。
+- Done(差し戻しの直し): 焼きの余白は量子化の上限から決まる最小 33 セル以上(上限 256)。静的な足跡はセルの正方形と回転した箱の重なり(分離軸・接触を含む)で押印し、セル中心の間の細い壁も塞ぐ。`NavTile::Grid` が焼いた格子設定を持ち、格子が空なら最初のタイルの設定を採り、以降の不一致は `Mismatch` で拒む。経路のデバッグ描画も格子と同じカメラの中心・半径の円へ切り詰める。設計文書を合わせて直した。
+- 確かめ(差し戻しの直し): `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0(`NorvesModule_AI.lib`・`Game.exe` を生成、`error C`・`error LNK`・`fatal error` は 0、AI のファイルの警告 0。警告は既存の shaderc の LNK4099 だけ)。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol` は一致。
+- Notes: 判断: クリアランスの量子化の意味(中心間距離 − 半セル)は変えていない。厚みの無い足跡が格子線の上にあるときは両側のセルを塞ぐ(隙間を作らない側に倒す)。
+
+- U1 stb_vorbis v1.24 を取り込み、独立の静的ターゲットと出所・脆弱性の文書を置く: 着地(直し 0 回)
+- U2 NorvesAudioDecode と IAudioDecoder / CreateVorbisDecoder を作り、NorvesAudioDomain をリンクさせる: 着地(直し 0 回)
+### G16-GR74-VORBIS-DECODER stb_vorbis を取り込み、Vorbis の復号を IAudioDecoder の背後の独立の静的ライブラリにする（2026-11-21、run 20261121-055839）
+- Done: `Library/ThirdParty/stb_vorbis/` に上流 nothings/stb の commit 9f755b604db3492df2cbeb39bf84b81e3e3932e3（stb_vorbis v1.24）の `stb_vorbis.c`・`LICENSE`・`UPSTREAM.json`（版・取得元・commit・sha256・SPDX・当てた修正）・`CMakeLists.txt`（独立の静的ターゲット `NorvesThirdParty_StbVorbis`。`STB_VORBIS_NO_STDIO`・`STB_VORBIS_NO_PUSHDATA_API`・`STB_VORBIS_NO_COMMENTS` を PUBLIC で定義し、MSVC では `/w` で第三者の警告を抑える）を置いた。GHSL-2023-165〜171 は v1.24 で修正済み、未修正の GHSL-2023-172（CVE-2023-45682）には上流 PR #1560 と同じ 1 行（`DECODE` の `var >= 0`）を当てた。`Docs/ThirdParty/StbVorbis.md` に出所・ライセンス・脆弱性の照合表と、ランタイムが復号するのは cook で全部を復号して検証し、ロードで payload のハッシュを確かめたものだけという緩和を書いた。
+- Done: 静的ライブラリ `NorvesAudioDecode`（Core と `NorvesThirdParty_StbVorbis` にだけリンク。`Library/Modules/Audio/CMakeLists.txt`）。`Public/Audio/AudioDecoder.h` の `IAudioDecoder`（`GetInfo` = レート・チャンネル・総フレーム、`DecodeFrames(int16_t*, maxFrames)` = 書いたフレーム数、`SeekToFrame`、`Rewind`、`HasFailed`）と `CreateVorbisDecoder(Span<const uint8_t>)`（メモリの上の Ogg をコピーせず、デコーダが生きている間だけ借りる）。実装 `Private/Audio/Decode/VorbisDecoder.cpp` は stb の pull の API（`open_memory`・`get_samples_short_interleaved`・`seek64`・`stream_length_in_samples64`）を包み、総フレームを超えて返さず、総フレームに届く前に復号が止まれば失敗の印を立てる（印は戻さない）。XAudio2・Windows.h を含めない。`NorvesAudioDomain` が `NorvesAudioDecode` に PUBLIC でリンクする。
+- 確かめ: `cmake --build build --config Debug -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が終了コード 0・エラーの行なしで `Game.exe` のリンクまで通った。`NorvesAudioDecode` 単体のビルドも終了コード 0（`VorbisDecoder.cpp` のコンパイルを含む）。新規 2 ファイルは BOM + CRLF、CMakeLists の numstat は 2 通りで一致（15 追加・1 削除）。証拠は `.harness/runs/20261121-055839/G16-GR74-VORBIS-DECODER-U2-verify.txt`。
+- Next: ランナーの評価者の反証（第三者のパーサがメモリを読む = 危険地帯）。AssetCook から `NorvesAudioDecode` で全フレームを復号して検証する cook は G16-GR74-VORBIS-COOK。まだ呼び出し元が無いので、ゲームの見た目・音に変化は無い。
+- Notes: 試験は作らない決まり（絶対規則 11）なので、done-when の (3) 固定の .ogg の fixture と作り方の README、(4) `AudioDecoderTest`・`StbVorbisVendorContractTest`、試験の閾値の文書 `Docs/AudioValidation/GR74Acceptance.md`、`Docs/Testing.md` の 3 点は作っていない（`Test/` は既に無い）。ctest も回していない。
+- Notes: 既知の限界: (a) stb は総フレームを最後のページの granule から求めるので、終端のページを含む末尾を失った入力でも、直前の有効なページまでの短い総フレームで正常に開いて終端まで復号できることがある（切り詰めを失敗として見分けられない場合がある）。cook の検証は payload のハッシュの照合と組み合わせる前提。(b) 壊れた入力でシークの内部の条件が崩れると、Debug では `HasFailed` を返す前に stb の `assert` で止まりうる（`stb_vorbis.c` の seek の箇所）。ランタイムが開くのは検証済みの payload だけ。
+- U3 stb_vorbis の CRC 表を定数にし、シークの assert を実行時の検査にする: 着地(直し 1 回)
+- U4 CreateVorbisDecoder が開く前に Ogg のページの並びを全部検査し、切り詰め・破損・後ろのごみを拒む: 着地(直し 0 回)
+- Done(差し戻しの直し): `stb_vorbis.c` の CRC 表を事前計算の `static const` の表にし、デコーダを開くたびの `crc32_init()` の書き込みを無くした（別のインスタンスを別のスレッドで同時に使える）。`stb_vorbis_seek_frame64`・`stb_vorbis_seek64` の `assert` と無視していた復号の成否を実行時の検査にし、崩れたら `VORBIS_seek_failed` で 0 を返す（ラッパの `SeekToFrame` が false を返す）。`UPSTREAM.json` のサイズ・sha256 と当てた修正の記録、`StbVorbis.md` を更新した。
+- Done(差し戻しの直し): `CreateVorbisDecoder` が stb に渡す前に入力全体の Ogg のページを 1 回なぞって検査する（`OggS`・版 0・既知のフラグだけ・区切りの表と本体が入力に収まる・CRC・先頭だけが BOS・単一の serial・連番・EOS は最後のページだけで入力の末尾ちょうどで終わり granule が未設定でない）。通らない入力は開かず空を返し、開いた後も stb の総フレームが EOS の granule と一致しなければ空を返す。`AudioDecoder.h` の注記（並行利用・検査の内容）と `StbVorbis.md` の運用上の前提を直した。
+- 確かめ: `cmake --build build --config Debug --target NorvesAudioDecode -- /m:1` と `cmake --build build --config Debug -- /m:1`（試験のターゲットを外した verify のビルドの行）がどちらも終了コード 0・エラーの行なしで `Game.exe` のリンクまで通った（CRC の `static_assert` 2 件を含む）。numstat は 2 通りで一致、3 ファイルとも BOM + CRLF のまま。
+- Notes: 上の既知の限界 (a)（末尾を失った入力が短い総フレームで開く）と (b)（壊れた入力へのシークが Debug の `assert` で止まる・Release で失敗を返さない）は、この直しで解消した。
+- Next: ランナーの評価者の反証（危険地帯）。cook からの全フレームの復号の検証は G16-GR74-VORBIS-COOK。呼び出し元がまだ無いので、ゲームの見た目・音に変化は無い。
+- U5 stb の内部のエラー状態を生成・復号・シークの後に読み、破損を失敗として返す: 着地(直し 1 回)
+- Done(差し戻しの直し): `VorbisDecoder.cpp` で stb の内部のエラー状態を `stb_vorbis_get_error()` で読む。生成では `stb_vorbis_open_memory`・`stb_vorbis_stream_length_in_samples64`・`stb_vorbis_seek_start` の各直後に読み、非 0 なら空を返す。`DecodeFrames` は `stb_vorbis_get_samples_short_interleaved` の各チャンクの直後に読み、非 0 なら `HasFailed` を立ててそのチャンクを戻り値と位置に数えない。`SeekToFrame` は `stb_vorbis_seek64` の直後に読み、非 0 なら `HasFailed` を立てて false を返す。CRC は正しいのに中身が壊れたパケット（`decode_residue` の `VORBIS_invalid_stream` など）を成功として返さない。`AudioDecoder.h` の doc コメントと `StbVorbis.md` の運用上の前提（読む 3 か所・正常な入力では立たない根拠）を直した。ベンダーのソースと `ValidateOggPages` は変えていない。
+- 確かめ: `cmake --build build --config Debug --target NorvesAudioDecode -- /m:1` と `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify の 2 行）がどちらも終了コード 0・エラーの行なしで、`VorbisDecoder.cpp` を再コンパイルして `NorvesAudioDecode.lib`・`NorvesAudioDomain.lib`・`Game.exe` まで通った（警告は libwebsockets の MSB8065 の 1 件だけ）。numstat は 2 通りで一致、3 ファイルとも BOM + CRLF のまま。
+- Notes: 既知の制約: Vorbis I 仕様 §3.2.1 の訂正（単一エントリの codebook は 1 ビットの符号が 0 でも 1 でもそのエントリに復号する）に対し、同梱の stb は 0 だけを受け付け、1 では `VORBIS_invalid_stream` を記録して floor・residue に誤った値を残す。その入力は stb が正しく復号できないので、ラッパは失敗として返す（cook の全フレームの復号で見つかる）。仕様の推奨どおり 0 を書くエンコーダの出力は影響を受けない。stb に修正は当てていない。
+- Notes: 試験と fixture は作らない決まり（絶対規則 11）なので、SNR とシーク後のビット一致は確かめていない。実際の .ogg での正しさは G16-GR74-VORBIS-COOK の全フレームの復号で初めて通る。残りは done-when の外: stb の復号の経路に残る Debug の `assert`（CRC が正しく作り込まれた不正な入力で止まりうる）と、ビルドに出る D9025 の警告 1 行。
+- Next: ランナーの評価者の反証（危険地帯）。呼び出し元がまだ無いので、ゲームの見た目・音に変化は無い。
+
+- U2 IAudioService に出力の左右の係数と周波数比を直接渡す口を足す: 着地(直し 0 回)
+- U1 Core の距離の減衰の純関数と、音の AudioSpatial の純関数と型を足す: 着地(直し 0 回)
+- U3 SoundSystem に 3D の経路(位置の追従・係数の適用・ε の省略)を足す: 着地(直し 0 回)
+- U5 受入れの記録・AudioFlow・TickStages に 3D 定位とリスナーを書く: 着地(直し 0 回)
+- U4 リスナー(seam・AudioListenerComponent・選定と MainCamera の読み取り)を足す: 着地(直し 1 回)
+- U6 音のモジュールと AudioComponent をつなぐ(Engine の保持・リスナーの解決・エミッタの追従): 着地(直し 0 回)
+- U7 文書に残った「リスナー連携が無い」「再生は 2D のみ」の古い記述を GR73 に合わせる: 着地(直し 0 回)
+### G16-GR73-SPATIAL-LISTENER 3D の定位の純関数とリスナーを作り、Entity に追従する 3D の AudioComponent を出力の左右の係数と周波数比へ流す（2026-11-21、run 20261121-055840）
+- Done: 距離の減衰の定義を Core の 1 か所 `Core::Scene::EvaluateAcousticDistanceGain`（`Library/Core/Public/Scene/AcousticDistance.h`。InverseClamped = (Min/d − Min/Max)/(1 − Min/Max)・Linear・LogDb・Table、d ≤ Min で 1・d ≥ Max で 0・連続）に置いた。Audio に依らないので AI の聴覚（GR24）と音の評価器（GR116）も同じ関数を呼べる。`NorvesAudioDomain` に純関数の `AudioSpatial`（リスナーの基底でのローカル化 → 等パワーのパン θ = (p + 1)π/4、p = s·clamp(n·Right, −1, 1)、近距離の広がり s = clamp(d/Min, 0, 1)、背後の減衰 10^(−6r/20) と高域の係数 1 − 0.5r（r = s·max(0, −n·Forward)）、ドップラー比 (c − v_l·n)/(c − v_s·n) を [0.5, 2.0] に収め DopplerScale = 0 で 1.0）を足した。`IAudioService` に `SetVoiceOutputGains`・`SetVoiceFrequencyRatio` を足し、`SoundSystem` の 3D の経路は位置の差分/dt で音源の速度を出し、距離のゲイン×パンを `SetVoiceOutputGains`、ピッチ×ドップラーを `SetVoiceFrequencyRatio`、背後の減衰を voice の音量の積に 1 回だけ流す（変化が ε = 1e-4 以下なら呼ばない。3D の voice に `SetVoicePan` は使わない）。リスナーは `AudioListenerState`・`IAudioListenerSource`・`AudioListenerComponent`（PROPERTY の Mode{MainCamera, Entity, Hybrid}・Priority、`RegisterReflectedTypes` で登録）で、Priority の最大・同じなら持ち主の ObjectId の小さい方を選ぶ。`AudioServiceModule::Install` が Engine を保持し、MainCamera は `GetRenderWorld().GetRenderingCoordinator().GetMainCamera()` を `IsValid()` で確かめて読む。無い・無効なら原点と CameraProxy の既定の基底で、`AUDIO_LISTENER fallback=origin` のログは 1 回だけ。`AudioComponent` に Spatialization{None/World3D}・MinDistance・MaxDistance・Rolloff・DopplerScale・OcclusionMode の PROPERTY を足し（既定は None で今の 2D のまま）、World3D は持ち主の位置で `PlayAt` を呼び、音のモジュールの Tick（リスナーの解決 → `SetListener` → 位置の同期 → `SoundSystem::Update`）で毎 Tick 持ち主の `GetWorldTransform()` に追従する。式・定数・閾値・更新順は新規の `Docs/AudioValidation/GR73Acceptance.md` に固定し、`AudioFlow.md`・`TickStages.md`（Component の割当の表に `AudioListenerComponent`）に書いた。
+- 証拠: `.harness/runs/20261121-055840/verify-G16-GR73-SPATIAL-LISTENER-game-build.txt`（全部を載せた版で `cmake --build build --config Debug --target Game -- /m:1`（タスクの verify のビルドの行から試験のターゲットを外した形）が EXIT=0 で Game.exe まで。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致）。verify の ctest の行は、試験を外す決まりの形にすると選ぶ試験が残らない（`Test/` は TEST-REMOVE-1114 で消えている）ので回していない。verify の 3 行目の `Scripts/Test-M9World.ps1` は c9226a9b で消えていて回せない。done-when (5) の `AudioSpatialTest`・`AudioListenerTest` と、左右の鏡像の負の対照は、試験を作らない決まりで作っていない（閾値は GR73Acceptance.md に式の定義として固定した）。
+- Next: ランナーの評価者の反証（危険地帯: Public API の `IAudioService`・`ISoundSystem`・`AudioComponent`）。聴感での確かめは G16-GR73-SPATIAL-CHECK。人が聴くときの見どころ: 既定は Spatialization = None なので、ランチャーと各シーンの音は前と同じ。`AudioComponent` の Spatialization を World3D にした Entity をカメラの周りで動かし、左右を横切ると音像が移るか、同じ距離で背後に回ると約 6 dB 下がるか、遠ざかると減って MaxDistance（既定 50 m）で消えるか、近づくと音程が上がり離れると下がるかを聴く。`AudioListenerComponent` が無ければ主のカメラで聴く。
+- Notes: 判断: Entity モードのリスナーの向きは `CameraComponent::BuildCameraProxy` と同じ規約（前 = 回転 × +Z）にした。リスナーが無い・カメラが無効のときの基底だけ CameraProxy の既定（前 −Z）。
+- Notes: 判断: 距離の滑らかさの閾値（隣接の差 ≤ 0.05）は、InverseClamped の既定 Min = 1 m では 1.0〜1.1 m で約 0.093 下がるので、GR73Acceptance.md で標本を Min = 2 m に固定した。
+- Notes: 判断: 3D の voice は作成時の周波数比の上限に 12 半音を足して（ドップラーの最大 2.0）作り、ステレオの clip を選んだ 3D の再生は既存の voice を奪う前に Rejected にする（奪う判定を clip の検査の後へ移した。2D の再生の結果は前と同じ）。背後の高域の係数は値として持つだけで、フィルタへの適用は G16-GR73-ACOUSTICS-AI-WIRE。
+- BLOCKED(反復 2): ランナーの再検証で verify の 3 行目 `Scripts/Test-M9World.ps1 -ContractOnly` が「スクリプトが存在しない」で落ちた。スクリプトは c9226a9b(試験だけが使うスクリプトの削除)で消えていて、指揮役は verify 行を書き換えられず、作り直すと試験を作ることになる。実装と Game のビルド(EXIT=0)は前回のまま。判断待ちは blocked/G16-GR73-SPATIAL-LISTENER.md(推奨: その verify 行を消して done に戻す)。同じ行は todo の音のタスクにも残っている。
+- Done(反復 3): 判断役の判断に従い、`TASKS.md` の verify から 3 行目 `Scripts/Test-M9World.ps1 -ContractOnly` を外して done に戻した。スクリプトは c9226a9b(試験だけが使うスクリプトの削除)で消えていて、絶対規則 11 により M9 の契約の行は無いものとして扱う。実装は 7c6d46ef から変えていない。
+- 証拠(反復 3): `.harness/runs/20261121-055840/build-G16-GR73-SPATIAL-LISTENER.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで)。
+- Notes: 要起票: `Scripts/Test-M9World.ps1 -ContractOnly` の verify 行が todo と backlog のタスクに残り、どれも同じ理由で BLOCKED になる。行を外すか、ランナーの試験の行の判定で回さない扱いにする
+- U8 評価の指摘を直す — パンの両端と方位角・ドップラーの特異点・距離の範囲の統一(純関数): 着地(直し 0 回)
+- U9 評価の指摘を直す — リスナーのフォールバックを既定の姿勢へ統一し速度の履歴を切る: 着地(直し 0 回)
+- U10 評価の指摘を直す — フェードアウト中の追従・3D の ε・voice 作成のピッチ上限: 着地(直し 0 回)
+- U11 受入れの記録と音の流れの文書を直した規則に合わせ、Game をビルドする: 着地(直し 0 回)
+- Done(反復 4): 評価(反復 3)の反例を直した。等パワーのパンを L = cos((1 + p)π/4)・R = cos((1 − p)π/4) を [0, 1] に丸める形にし、真右・真左で (0, 1)・(1, 0) を厳密に返す(負の左利得で `PlayAt` が失敗しない)。左右の鏡像は L(−p) = R(p) で厳密。パンは Right・Forward への射影の水平の方位から求める(水平成分が 0 なら中央)。ドップラー比は倍精度で求め、分母が 0 のときと比が 0 以下のときだけ分子の符号で 2.0・0.5・1.0 を返す。Core の距離関数は有限の Max の判定を Min より先にし、音源設定の検査は MaxDistance > max(MinDistance, `kAcousticMinDistanceFloor` = 0.01 m) を求める。リスナーはモードが要する入力(MainCamera はカメラ、Entity は持ち主、Hybrid は両方)のどれかが欠けたら姿勢全体を既定にし、フォールバックの出入りの境の速度を 0 にした。`ISoundSystem::IsAudible`(物理 voice へ停止を発行するまで真)を足し、`AudioComponent` はフェードアウト中も持ち主の位置に追従する。3D の voice の音量(厳密な 0 へは送る)と 3D の `SetPitch` の周波数比に ε = 1e-4 の省略を入れた。voice 作成のピッチ上限は min(max(12, pitch) + 12, `kAudioMaxVoicePitchSemitones` = 120) にし、120 半音を超える再生は既存の voice を奪う前に `InvalidState` で拒否する。受入れの記録と AudioFlow.md を同じ規則に合わせた。
+- 証拠(反復 4): `.harness/runs/20261121-055840/G16-GR73-SPATIAL-LISTENER-iter4-build.txt`(全部を載せた版で `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。verify の ctest の行は、試験を外す決まりの形では選ぶ試験が残らないので回していない。
+- Next(反復 4): ランナーの評価者の反証(危険地帯: Public API の `ISoundSystem`・`AudioTypes.h`)。聴感の確かめは G16-GR73-SPATIAL-CHECK(World3D の `AudioComponent` を付けた Entity をカメラの真右・真左・背後へ動かし、真横で片側だけから鳴ること、フェードアウト中も音像が Entity を追うことを聴く)。
+- Notes(反復 4): 判断: 退化した距離の範囲(有限の Max ≤ Min)は d < Max で 1、d ≥ Max で 0 にした(受理する設定では起きない)。3D の voice の上限で切った分のドップラーは、サービスが周波数比を作成時の上限に丸める。2D の voice の音量・ピッチの扱いは変えていない。再生中に MinDistance・MaxDistance・Rolloff を変えても鳴っている音には反映されない(`Play` の時点の設定を保つ)のは今のまま。
+- U12 3D の周波数比を voice の範囲へ丸めてから比べ・送り・保存し、受入れ記録と音の流れの文書に書く: 着地(直し 0 回)
+- Done(反復 5、run 20261121-094434): 判断役の判断(done-when・verify・paths の書き換え)に従い、残りの不具合を直した。3D の周波数比を `SoundSystem` の側で [1/1024(`kAudioMinVoiceFrequencyRatio`。`AudioTypes.h` に公開してサービスと共有), voice 作成時の上限 exp2(上限の半音/12)(Instance の `MaxFrequencyRatio`)] へ丸める関数を 1 つにし、再生の開始・毎フレームの `UpdateSpatial`・`SetPitch` の 3 か所で使う。ε の比較と `LastFrequencyRatio` の保存は丸めた比で行う(上限 4 の voice へ `SetPitch(+36)`→`SetPitch(+48)` としても同じ 4 を二度送らない)。有限の低いピッチ(−2040 半音で float の比が 0 になる)は下限で鳴らし、既存の voice を奪ってから `InvalidState` で落ちる道を無くした。フェードの秒数と voice の音量の検査も `StealInstance` の前へ移した。`GR73Acceptance.md` と `AudioFlow.md` に丸めの規則を書き、閾値の表は試験で照合しない参照の値だと明記した。ドップラーの特異点と、3D の音量の「非ゼロから厳密に 0 への遷移は送る」は書き換えた done-when のとおりで変えていない。
+- 証拠(反復 5): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK` は 0 件で、`SoundSystem.cpp`・`AudioDomain.cpp` をコンパイルしている。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。試験は作らない・回さない決まりなので、係数の数値の確かめはしていない。
+- Next(反復 5): ランナーの評価者の反証(危険地帯: Public API の `AudioTypes.h`・`ISoundSystem`・`AudioComponent`)。聴感の確かめは G16-GR73-SPATIAL-CHECK。人が聴くときの見どころ: World3D の `AudioComponent` を付けた Entity をカメラの真右・真左・背後へ動かし、音像の移りと背後での音量の下がり、接近と離脱での音程の上下を聴く。
+- Notes(反復 5): 既知の限界: 再生中に MinDistance・MaxDistance・Rolloff を変えても、鳴っている音には効かない(`Play` の時点の設定を保持する)。2D の `AudioComponent::Stop` は、フェード中のハンドルが残るため、以前は `StaleHandle` だった場面で `AlreadyInState` を返すことがある。フェードの秒数の補正の診断値(`ClampedFadeCount`)は、後続の `StealInstance` が失敗した再生でも数える。
+- Done(反復 2、run 20261121-094434): このタスクのブランチの `TASKS.md` の done-when・verify・paths を、判断役が書き換えて統合ブランチに入っている文言と同じにした(実装は変えていない)。評価者がタスクのブランチの古い完了条件(試験・ドップラーの式どおりのクランプ・0 への音量の ε)で判定していたため。
+- 証拠(反復 2): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-iter2-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK` は 0 件。ソースの変更が無いので差分のビルド)。
+- Next(反復 2): ランナーの評価者の反証(書き換え後の done-when が基準)。聴感の確かめは G16-GR73-SPATIAL-CHECK。
+- Done(反復 3、run 20261121-094434): 統合ブランチ feature/scene-launcher を取り込んだ後の verify の失敗は、`Core.vcxproj` の 4 か所の C1060(コンパイラのヒープ不足)だけで、ほかの枠のビルドが同時に走っていたためのメモリ不足だった(コンパイルエラー・リンクエラーは無し)。ソースは変えず、同じ verify を回し直して通した。
+- 証拠(反復 3): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-iter3-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK`・C1060 は 0 件)。
+- Next(反復 3): ランナーの評価者の反証。聴感の確かめは G16-GR73-SPATIAL-CHECK。
+
+- U1 StringTable(言語ごとの文字列表・切り替えの通知・文字集合の収集): 着地(直し 0 回)
+- U2 最初の日本語の文字列表と文字のスタイル表(データだけ): 着地(直し 0 回)
+- U3 Engine::Engine に StringTable を持たせ、GetStringTable で引けるようにする(起動時の読み込みは未配線): 着地(直し 0 回)
+- U4 ITextMetrics と TextLayout の本体(折り返し・禁則・揃え・行間・省略・基準線): 着地(直し 0 回)
+- U6 FontAtlas を使う ITextMetrics の実装: 着地(直し 0 回)
+- U5 TextLayout のインラインのタグ({icon:Action}・色)と結果のキャッシュ: 着地(直し 0 回)
+- U7 Core と Game に /utf-8 を常時付け、NORVES_ENABLE_CORE_TEXT の既定を ON にする(単独のコミット): 着地(直し 0 回)
+
+## 2026-11-21 G15-GR69-STRINGTABLE-LAYOUT（run 20261121-065219 の反復 1〜2、完了）
+- Done: `Text/StringTable`（`Assets/Text/<lang>.strings.json` を AssetFileReader と JsonDocument で読み、Identity のハッシュ → 文字列の表にする。欠落キーは開発ビルドでキーの文字列 + 1 回だけの警告、製品は fallback の言語 → キー。`Format` は `{0}`・`{name}` の置換だけ。`LoadLanguage` → `SetActiveLanguage` → `OnLanguageChanged`（実際に変わったときだけ 1 回）。重複キーは読み込みの誤りで前の表を保つ。`CollectCodepoints` は全言語の訳文 + 印字可能な ASCII をキーの接頭辞で絞る）。`Engine::Engine` のメンバにして `GEngine->GetStringTable()` で引く（シングルトンにしない）。
+- Done: `Assets/Text/ja.strings.json`（タイトル・ポーズ・終了の確認・設定・セーブ・クレジット・地図・ファストトラベルの画面の 76 キー。文面は仮。BOM なし UTF-8）と `Assets/UI/ui_text_styles.json`（body・caption・heading・title → Faces・基準 px・文字集合の接頭辞）。表の全コードポイントが body の face の cmap にあることを置くときに照合した（171 種で未収録 0）。
+- Done: `Text/TextMetrics.h` の `ITextMetrics` と `Text/TextLayout`（UTF-8 → 要素 → 行 → 位置の 3 段。日本語は任意の字の間・英語は空白で折り返し、行頭禁止・行末禁止の短い表で追い出し、空行になるときだけ禁則を破る。左・中央・右揃え、行間の倍率、最大行数と `…` の省略、基準線は全 face の ascender の最大）。`{icon:Action}` は CJK の字と同じ切れ方の分けられない要素で幅を確保し、`Codepoint` 0 のグリフと `TextLayoutResult::Icons`（Action の複製）に残す。`{color:#RRGGBB}`/`{color:#RRGGBBAA}`〜`{/color}`（深さ 8）。形の合わないタグは字として組む。`TextLayoutCache`（文字列のハッシュ × 世代 × 設定で、当たりは全バイトと設定を完全に照合。既定 256 件、最も長く使っていないものから捨てる）。TextComponent の座標の規約は変えていない。
+- Done: `Text/FontAtlasTextMetrics`（`FontAtlas::GetGlyph` の寸法を返し、desc の全 face を FreeType で開いた ascender・descender の最大を基準線に使う。行送りは atlas の行送りと ascender + descender の大きい方。`Bind` の成功ごとにプロセスで一意の世代を振る）。
+- Done: 別のコミット（996a3125）で、Core（PUBLIC）と Game に MSVC の `/utf-8` を常時付け、`NORVES_ENABLE_CORE_TEXT` の既定を ImGui から切り離して ON にした。ログの日本語の行をバイトで照合する台本は `Scripts/` に無い（非 ASCII の字が無い）。
+- 証拠: `.harness/runs/20261121-065219/verify-G15-GR69-STRINGTABLE-LAYOUT-build.txt`（ImGui・CORE_TEXT とも ON の構成で `cmake --build build --config Debug -- /m:1` が EXIT=0。Core・Game の vcxproj の全構成に `/utf-8`、FontAtlasTextMetrics.cpp の FreeType の経路のコンパイルを確認）。
+- 試験: done-when (5) の StringTableTest・TextLayoutTest・StringTableCharsetCoverageTest と verify の ctest の 2 行は、人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: StringTable・TextLayout を使う画面はまだ無く、各シーンの見た目は変わらない。`/utf-8` で日本語のログの行が、起動直後のコンソールで文字化けせずに出ること。
+- Next: ランナーの評価者の反証（Public API の Engine・Text）。起動時に `ja` を読む配線と、UI の Label への組版の配線は、文字列表を使う側の項目でする。
+- Notes: 既知の限界: 起動時の `GEngine->GetStringTable().LoadLanguage("ja", ...)` の呼び出しは置いていない（Game の .cpp は paths の外。`Surfaces.json` と同じく呼ぶ側で配線する）。`TextLayoutCache` の探索は保持件数に比例する。単独の `\r` は改行として扱わない。盤面の単位の作業ツリー（`.slots/NorvesLib-3-uN`）は FreeType の submodule が無いと ImGui・CORE_TEXT とも OFF で構成されるので、CORE_TEXT の経路を確かめる単位は `git submodule update --init Library/ThirdParty/freetype` と ON の再構成が要る。
+- U8 折り返しの位置の選び方を直す(幅内で禁則を守る単語境界 → 文字境界の順、空白の判定を bSpace に統一): 着地(直し 0 回)
+- U9 StringTable の差し戻しを直す(代替言語の読み込み・Format の二重括弧・省略記号の文字集合・使用中の言語の読み直しの通知): 着地(直し 0 回)
+- U10 アトラスの CPU の状態が失われたら、寸法と世代を未接続の値にそろえる: 着地(直し 0 回)
+- U11 CMake の文字描画の選択肢の説明を日本語にし、Debug の全体のビルドで仕上げを確かめる(最後): 着地(直し 0 回)
+
+## 2026-11-21 G15-GR69-STRINGTABLE-LAYOUT（run 20261121-065219 の反復 3、差し戻しの対応、完了）
+- Done: 折り返しの位置は、幅内で禁則を守る単語境界の最も後ろ → 無ければ幅内で禁則を守る文字境界の最も後ろ → どちらも無いときだけ幅の位置で禁則を破って切る、の順にした（全文字の送り 1・幅 3 の `（ABC` は `（AB` / `C`）。単語境界の空白の判定を `bSpace`（' '・タブ・U+3000）にそろえ、タブの後ろでも切れる（幅 5 の `go	far` は `go	` / `far`）。
+- Done: `StringTable::LoadLanguage` は表の `fallback` の言語が未読み込みならそれも読む（自分を先に登録するので循環と自己参照はそこで止まる。代替言語が読めなくても主の言語は成功のまま警告を 1 行出す）。使用中の言語を読み直したら `OnLanguageChanged` を送る。`Format` は `{{`・`}}` を畳まず原文のまま残す（置換は `{0}`・`{name}` だけ）。`CollectCodepoints` は接頭辞にかかわらず、組版が省略に挿入する U+2026 を加える。
+- Done: `FontAtlasTextMetrics` は結び付けたアトラスの CPU の状態が失われたら（`FontAtlas::Shutdown`・`Upload` の失敗）、未接続と同じ値（空の字形・寸法 0・世代 0）を返す。`TextLayoutCache` の世代 0 の結果は寸法 0 で組んだものなので食い違わない。`NORVES_ENABLE_CORE_TEXT` の説明を日本語にした。
+- 証拠: `.harness/runs/20261121-065219/verify-G15-GR69-STRINGTABLE-LAYOUT-iter3-build.txt`（ImGui・CORE_TEXT とも ON の構成で `cmake --build build --config Debug -- /m:1` が EXIT=0、Game.exe まで生成。StringTable.obj・FontAtlasTextMetrics.obj は直したソースより新しい。`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。
+- 試験: done-when (5) の試験と verify の ctest の 2 行は、人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: 文字列表と組版を使う画面はまだ無く、各シーンの見た目は変わらない。
+- Next: ランナーの評価者の反証（前回の指摘への対応差分）。起動時に `ja` を読む配線と、UI の Label への組版の配線は、文字列表を使う側の項目でする。
+- Notes: 既知の限界: 使用中の言語の代替言語だけを読み直したときは `OnLanguageChanged` を送らない（代替言語の訳を返すのは製品ビルドの欠落キーだけ）。

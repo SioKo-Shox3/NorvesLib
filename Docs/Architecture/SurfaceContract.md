@@ -14,7 +14,7 @@
 - `SurfaceQuery` は位置、法線、任意のコライダー、半径と照会フラグを持つ。半径 0 は点を表す。
 - `SurfaceSample` は主・副の表面と副の重み、濡れ、水たまりの深さ、草の密度、明示タグを使った場合のコライダーを持つ。
 
-登録簿の `SurfaceId` と、地形の `GroundSample::SurfaceId`（`uint8_t` の層番号）、物理の結果の `uint8_t SurfaceId` は別物であり、暗黙に変換しない。地形の層から表面へは `TerrainMaterialDesc` の `Layers` と各層の `SurfaceName` の表を介する。番号を表面へ橋渡しする場所は、今後実装する地形の provider と物理の表面の受け渡しの 2 か所に限る。
+登録簿の `SurfaceId` と、地形の `GroundSample::SurfaceId`（`uint8_t` の層番号）、物理の結果の `uint8_t SurfaceId` は別物であり、暗黙に変換しない。地形の層から表面へは `TerrainMaterialDesc` の `Layers` と各層の `SurfaceName` の表を介する。表面を解決するのは、地形の層に対応する名前を引く地形の provider と、コライダーに明示した表面を渡す物理の 2 か所に限る。
 
 保存するのは `String` の名前であり、`SurfaceId` の数値は保存しない。添字は読み込みで決まる。再読み込みでは同じ名前の添字を保ち、消えた名前は添字を再利用せず引退させる。引退した添字の `GetDesc` は `Default` の記述を返し、`GetName` は元の名前を返す。同じ名前が復帰すれば元の添字を使う。
 
@@ -73,10 +73,17 @@ provider が返す 2 層の重みは、負または非有限の値を 0 とし�
 
 ## 物理の結果
 
-`PhysicsRaycastHit`、`PhysicsOverlapHit`、`PhysicsQueryHit` は従来の `uint8_t SurfaceId` に加え、登録簿の `SurfaceId` 型の `Surface` を持つ。`Surface` は将来コライダーの明示表面を渡す欄であり、現在は常に `Default`。
+コライダーに明示した表面は、`PhysicsRaycastHit`、`PhysicsOverlapHit`、`PhysicsQueryHit` の `Surface` に入る。`RaycastClosest`、`RaycastAll`、`OverlapSphere`、`OverlapBox`、`OverlapCapsule`、`SweepSphere`、`SweepCapsule` と旧入口で共通とする。`PhysicsContactEvent` の `SelfSurface` は通知先、`OtherSurface` は相手のコライダーの表面を表す。いずれも明示なしなら `Default` を返す。
+
+`ColliderComponent` は `SurfaceName` を `PROPERTY` として持ち、シーンには名前を保存する。`Initialize` で登録するときに名前を解決する。登録後は `SetSurface` で名前を設定したときと、シーン編集などで `SurfaceName` を適用したとき（`OnPropertyApplied`）に解決し直す。`GetSurface` はその時点で新しい値を返す。空の名前は明示を外す。名前の形式が不正なら `SetSurface` は `InvalidArgument` を返し、旧値を保つ。未知の名前は保持し、`FindByName` が `Default` を返す。ログ有効時の警告は登録簿の読み直しまで名前ごとに 1 回だけ出る。
+
+登録簿の `GetRevision()` が変わると、次の `StepFixed` または `RefreshDynamicSnapshot` のうち、先に実行された方で名前を解決し直す。物理クエリは次のスナップショットの公開から新しい表面を返す。`GetColliderSurface` は公開スナップショットを参照する。明示なしなら `NoHit` を返し、`SceneQuery::QuerySurface` は provider へ進む。`Default` を明示した場合は `Success` を返す。
+
+Entity を持たない静的コライダーでは、物理モジュールが `StaticColliderDesc::SurfaceName` の名前を保持し、チャンクの適用時に解決する。登録簿の改訂を検出したときも、同じ `ColliderHandle` のまま解決し直す。名前が空なら `Surface` に登録簿の添字、`bHasSurface` に明示の有無を渡す。`norves.static-colliders.v1` の `"surface"` は、文字列なら登録簿の名前、整数（0〜255）なら従来の地形の層番号を指定する。層番号は結果の `uint8_t SurfaceId` にだけ写す。
+
+`Hit` と `OverlapBegin` は今のステップの proxy の表面を返す。`OverlapEnd` は両側を個別に扱い、その側の proxy が今のステップにもあれば現在の表面を、なければ最後に重なっていたときの表面を返す。
 
 ## 後の段階
 
-- コライダーの `SurfaceName` の PROPERTY と、物理の結果への表面の受け渡し。
 - 地形・草・濡れの provider と、足音・足跡などの消費者。
 - スクリプトへの公開。

@@ -1,6 +1,8 @@
 ﻿#include "Audio/AudioComponent.h"
 
+#include "Audio/AudioSpatialHost.h"
 #include "Audio/IAudioModule.h"
+#include "Object/Entity.h"
 #include "Thread/Atomic.h"
 
 #include <algorithm>
@@ -34,6 +36,13 @@ namespace NorvesLib::Modules::Audio
         bAutoPlay = false;
         Volume = 1.0f;
         PitchSemitones = 0.0f;
+        Spatialization = AudioSpatialization::None;
+        const AudioEmitterSpatialSettings defaults;
+        MinDistance = defaults.MinDistance;
+        MaxDistance = defaults.MaxDistance;
+        Rolloff = defaults.Rolloff;
+        DopplerScale = defaults.DopplerScale;
+        OcclusionMode = defaults.OcclusionMode;
     }
 
     IAudioModule* AudioComponent::FindRegisteredModule() const
@@ -45,8 +54,41 @@ namespace NorvesLib::Modules::Audio
     void AudioComponent::PruneHandles(ISoundSystem& soundSystem)
     {
         m_Handles.erase(std::remove_if(m_Handles.begin(), m_Handles.end(),
-            [&soundSystem](SoundInstanceHandle handle) { return !soundSystem.IsPlaying(handle); }),
+            [&soundSystem](SoundInstanceHandle handle) { return !soundSystem.IsAudible(handle); }),
             m_Handles.end());
+    }
+
+    AudioEmitterSpatialSettings AudioComponent::MakeSpatialSettings() const
+    {
+        return {
+            .MinDistance = MinDistance.Get(),
+            .MaxDistance = MaxDistance.Get(),
+            .Rolloff = Rolloff.Get(),
+            .DopplerScale = DopplerScale.Get(),
+            .OcclusionMode = OcclusionMode.Get()
+        };
+    }
+
+    void AudioComponent::SyncSpatialEmitter(ISoundSystem& soundSystem)
+    {
+        if (Spatialization.Get() != AudioSpatialization::World3D || m_Handles.empty())
+        {
+            return;
+        }
+        const auto* owner = GetOwner();
+        if (!owner)
+        {
+            return;
+        }
+        PruneHandles(soundSystem);
+        if (!m_Handles.empty())
+        {
+            const Math::Vector3 position = owner->GetWorldTransform().position;
+            for (SoundInstanceHandle handle : m_Handles)
+            {
+                (void)soundSystem.SetEmitterPosition(handle, position);
+            }
+        }
     }
 
     void AudioComponent::Initialize()
@@ -58,6 +100,10 @@ namespace NorvesLib::Modules::Audio
         Super::Initialize();
         m_OwnerKey = AllocateComponentOwnerKey();
         m_AudioModule = FindAudioModule(Core::Module::GetModuleRegistry());
+        if (auto* host = Private::FindAudioSpatialHost(m_AudioModule))
+        {
+            host->RegisterSpatialEmitter(*this);
+        }
         if (m_AudioModule && m_OwnerKey != 0 && bAutoPlay.Get() && !SoundName.Get().empty())
         {
             SoundPlayParams params;
@@ -70,9 +116,16 @@ namespace NorvesLib::Modules::Audio
 
     void AudioComponent::Finalize()
     {
-        if (IAudioModule* module = FindRegisteredModule(); module && m_OwnerKey != 0)
+        if (IAudioModule* module = FindRegisteredModule())
         {
-            (void)module->GetSoundSystem().ReleaseOwner(m_OwnerKey, SoundFade{});
+            if (auto* host = Private::FindAudioSpatialHost(module))
+            {
+                host->UnregisterSpatialEmitter(*this);
+            }
+            if (m_OwnerKey != 0)
+            {
+                (void)module->GetSoundSystem().ReleaseOwner(m_OwnerKey, SoundFade{});
+            }
         }
         m_Handles.clear();
         m_AudioModule = nullptr;
@@ -92,7 +145,19 @@ namespace NorvesLib::Modules::Audio
         PruneHandles(soundSystem);
         SoundPlayParams ownedParams = params;
         ownedParams.OwnerKey = m_OwnerKey;
-        const AudioResult result = soundSystem.PlayGlobal(id, ownedParams, outHandle);
+        AudioResult result;
+        if (Spatialization.Get() == AudioSpatialization::World3D)
+        {
+            ownedParams.Spatialization = AudioSpatialization::World3D;
+            ownedParams.Spatial = MakeSpatialSettings();
+            const auto* owner = GetOwner();
+            const Math::Vector3 position = owner ? owner->GetWorldTransform().position : Math::Vector3::Zero;
+            result = soundSystem.PlayAt(id, position, ownedParams, outHandle);
+        }
+        else
+        {
+            result = soundSystem.PlayGlobal(id, ownedParams, outHandle);
+        }
         if (result == AudioResult::Success)
         {
             m_Handles.push_back(outHandle);
