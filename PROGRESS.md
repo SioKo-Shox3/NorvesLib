@@ -12964,3 +12964,35 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 1): `.harness/runs/20261121-180853/verify-G16-GR73-VIRTUAL-VOICE-iter1-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が cmake exit code 0 で Game.exe まで。`AudioDomain.cpp`・`SoundSystem.cpp`・`XAudio2Backend.cpp` を再コンパイル。エラーは 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致)。
 - Next(反復 1): ランナーの評価者の反証(前回の指摘 1 件への対応の差分)。人が聴くときの見どころは反復 2 の Next のとおり。
 - Notes(反復 1): 採った判断: 上限の定数は `AudioDomain.h` に置き、XAudio2 のバックエンドがそれを include して static_assert で照らす。サービスの共通の検査なので、Null のバックエンドでも同じ上限で拒む。範囲の外に残したもの: 2D の音の奪取と検査の順、ロードし直しでの形式の変化の検出、復帰の失敗を毎 Update 試し直すこと(文書に書いた既知の限界)。done-when (3) の試験は判断役の決定で外れた。試験は作らない・回さない決まり、撮影・計測の確かめは回さない決まり。
+
+- U1 表面の記述に草のしきい値の欄を足し、地形の層の表面名を語彙に足す: 着地(直し 0 回)
+- U2 HitEffectEmitter の表面の選択で parent をたどる: 着地(直し 0 回)
+- U3 足ごとの接地の表面を持つ GroundContactComponent: 着地(直し 0 回)
+- U4 地形と草の表面の provider と、濡れの 1 か所の関数: 着地(直し 1 回)
+- U5 Engine で provider を持って結び、HitEffect に登録簿を渡し、文書を直す: 着地(直し 0 回)
+## G13-GR115-GROUND-CONTACT（2026-11-21）
+- Done: 表面の記述に `vegetationDensityThreshold`（既定 0.35。`Surfaces.json` の Grass_Tall に 0.35）と、地形の層の表面名 6 種（Soil・Gravel・Moss・Mud・Sand・Water）を足した。`Scene/TerrainSurfaceProvider.h` に `TerrainSurfaceProvider`（4 頂点の双線形で上位 2 層とウェイトを返す。層→表面名は地形の材質の記述を登録簿で引き、層番号の変換はこの中だけ）・`VegetationSurfaceProvider`（密度がしきい値を超える所を Grass_Tall にし、`VegetationDensity01` を返す）・濡れの 1 か所の関数 `ComputeGroundWetness01`（環境の濡れ、無効なら地形の濡れと、草の水気の偏りを `ComputeEffectiveWetness` で合わせる）を置いた。`Engine::Engine` が 2 つをメンバで持ち、コンストラクタで優先度 200・100 で `BindSurfaceProvider`、デストラクタで外す。
+- Done: `Component/GroundContactComponent.h`（REFLECTION_CLASS・3 つのコンストラクタ。PROPERTY は足の数・足の関節名・足の局所の位置の予備・レイの長さ）。PostPhysics の群で、公開済みの物理のスナップショットの番号が変わったときだけ、体と足ごとに下向きの `RaycastClosest`（自分のコライダーを除く）と `QuerySurface` で `GroundContactState{Foot[4], Body, FootCount, StepSerial}` を更新する。`TickStages.md` の割当表に載せた。
+- Done: `HitEffectEmitter::SetSurfaceRegistry` を足し、`SelectEffect` は完全一致が無ければ登録簿の parent をたどる（登録簿が無ければ完全一致だけ）。Engine が登録簿を渡す。`SurfaceContract.md` に provider・しきい値・接地の状態・エフェクトのフォールバックを書いた。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件、警告は既存の shaderc の LNK4099 だけ）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が一致し、新規ファイルは BOM+CRLF。
+- done-when (4) の試験（`GroundContactStateTest` の新設、`HitEffectEmissionTest`・`SceneQuerySurfaceTest` のケース足し）と `QuerySurface` の時間の記録は、試験を作らない・回さない決まりにより作っていない。verify の ctest の行は回していない。
+- 人が見るときの見どころ: GroundContactComponent を付けた呼び手はまだ無く、どのシーンでも見た目は変わらない。当たりのエフェクトは、表に無い表面（Gravel・Soil など）に当たると親（Rock・Dirt_Mud）の効果が出る。起動のログに `SURFACE_PROVIDER_BIND_FAILED` が出ないことを見る。撮影・計測の確かめは回さない決まり。
+- Next: 足音の再生（GR75）・踏み倒し（GR44）は、足すときに `GroundContactState` を読む。
+- Notes: 判断: 足 IK（G9-GR14）は足の接地のレイの結果を外へ出していないので、足ごとに自前の下向きのレイを 1 本撃つ。GR59 の水たまりは CPU で水深を引ける形が無い（`SamplePuddlePotential` は凹み度）ので `PuddleDepthM` は 0。provider は照会ごとに `TerrainSystem::FindTerrain` で地形を引くので、地形の登録・解除に合わせず Engine の構築時に 1 回結ぶ。
+- U6 接地の自己ヒットを足ごとに撃ち直し、取得できないときは番号も戻し、型を Engine で登録して tick を消費者より先にする: 着地(直し 0 回)
+- U7 地形の材質表の層→表面名を地形の provider に結ぶ: 着地(直し 0 回)
+- U8 犬の水しぶきが接地の状態の点と法線を読み、文書を直してタスクのビルドを通す: 着地(直し 0 回)
+- Notes: 判断: 犬の足の水しぶき（`FootSplashComponent`）は、所有者に `GroundContactComponent` があり、脚の `FallbackJoint` と同じ関節の足が当たっていれば、その足の `Point` と `Normal` を地面に使う（無ければ従来の `QueryGround` と地形の高さ）。放出量の式（環境の生の濡れ・地形の `SamplePuddlePotential`・足の速度）と着地の通知の保留は変えていない。踏み倒し（GR44）は CPU 側に表面の判定が無いので置き換えるものが無い。
+- Done（差し戻しの直し）: 地形の材質表で読んだ層の表面名を地形の provider に結び、表の無い地形だけ仮の対応を使う。`GroundContactComponent` は自己ヒットのコライダーを標本ごとに覚えて撃ち直し（一度覚えれば以後は足ごとに 1 本。枠が満ちたら生きていない学習の枠を空ける）、物理のスナップショットの番号を取れないときは状態と `StepSerial` を 0 に戻す。`Engine::Engine` が型を登録し（`Game.exe` に型が残り、シーンの記述から名前で作れる）、tick の優先度を -1 にして同じ PostPhysics の消費者より先に更新する。`FindFootIndex` で関節名から足の番号を引ける。犬の足の水しぶきは同じ関節の足の当たりがあればその点と法線を使う。`SurfaceContract.md`・`TickStages.md` を直した。
+- 確かめ（差し戻しの直し）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件、警告は既存の shaderc の LNK4099 だけ）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が全ファイルで一致。verify の ctest の行と done-when (4) の試験は、試験を作らない・回さない決まりにより回していない・作っていない。
+- Notes: 範囲: done-when (1)(3) の直しのため、`paths:` に無い `Library/Core/Private/Component/TerrainComponent.cpp`（表を読めた直後に provider へ結ぶ 1 か所）と `Library/Core/Private/Component/FootSplashComponent.cpp`（地面の点と法線の取り方）を変えた。物理のフィルタに Entity の除外は足していない（物理モジュールの実装に波及するため、自己ヒットは学習で除く）。
+- U9 地形の層→表面名の対応を伸びる配列で持ち、最古の上書きをやめる: 着地(直し 0 回)
+- U11 水しぶきは今の公開番号の接地の結果を当たり・未接地とも採る: 着地(直し 0 回)
+- U10 物理の照会のフィルタに持ち主の Entity を除く欄を足し、接地は足ごとに 1 本のレイにする: 着地(直し 1 回)
+- U12 表面の契約の文書を今の形に直し、タスクのビルドを通す: 着地(直し 0 回)
+- Notes: 既知の限界: 層→表面名は、`TerrainComponent` が `LayerTablePath` の表を読めた高さ場では表の `surface` の名前（`TerrainSurfaceProvider::SetLayerSurfaceNames` で主の高さ場と層数の合う外周の帯に結ぶ。弱参照で持ち、件数の上限なし）、表の無い高さ場では仮の材質の記述（`MakeProvisionalTerrainMaterialDesc`）の名前。草のしきい値 0.35 は根拠の無い仮の値（データで替える）。優先度は地形 200 > 草 100 なので、草が種別を決めるのは地形の無い所だけで、地形の上の濃い草は `VegetationDensity01` で返る。
+- Done（判断役の指示による直し）: 地形の層→表面名の結びを件数の上限なしで持ち（外すのは期限切れの弱参照だけ）、17 件以上の地形を結んでも登録中の地形は表の表面名を保つ。`PhysicsQueryFilter` の末尾に `IgnoreEntity`（既定は無効）を足し、`PhysicsBroadphase.cpp` の `ValidateProxyForQuery` がその Entity の代理形状を候補から落とす。`GroundContactComponent` は持ち主を `IgnoreEntity` に入れて体と各足のレイを 1 本ずつ撃ち、自己ヒットの撃ち直しと自分のコライダーの学習を消した（`SetIgnoredColliders` は持ち主以外に除く最大 4 個）。犬の足の水しぶきは、対応する足の `StepSerial` が今の物理の公開番号と同じなら当たり・未接地とも採り、未接地の足ではその着地で放出しない（番号が古い・取れない・足が無いときだけ従来の照会）。`SurfaceContract.md` を今の形に直した。
+- 確かめ（判断役の指示による直し）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成。error 0 件）。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` が全ファイルで一致。試験は作らない・回さない決まりにより ctest は回していない。撮影・計測の確かめは回さない決まり。
+- 人が見るときの見どころ: `GroundContactComponent` を付けた呼び手はまだ無く、どのシーンでも既定の見た目は変わらない。付けた犬では、接地の `RayLength` が短く足が床に届かない場面で水しぶきが出なくなる（共有の接地状態が未接地のため）。
+- Next: 地形の provider の層の選び方が層の境の近くで `TerrainHeightField::SampleSurface`（最寄りの頂点）と食い違う件と、`PuddleDepthM` が常に 0 の件は、今回の完了条件の外として残る。
+- Notes: 判断: Public API の `PhysicsQueryFilter::IgnoreEntity` は構造体の末尾に足し、既定の無効なハンドルでは何も除かないので、既存の呼び手の挙動は変わらない。`bHasEntity` が偽の代理形状（Entity の無い静的なコライダー）には効かない。

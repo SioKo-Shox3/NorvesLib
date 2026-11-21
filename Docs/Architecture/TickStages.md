@@ -50,6 +50,7 @@
 | `SpringArmComponent` | Camera（主群） | 固定更新後の位置を読み、追従姿勢を更新 | Unscaled | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1938` |
 | `HoldSlotComponent` | PostPhysics（主群） | 保持状態の整理 | World | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1950` |
 | `SocketAttachmentComponent` | PostPhysics（主群） | 評価済みの姿勢からソケットの追従を更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1960` |
+| `GroundContactComponent` | PostPhysics（主群・優先度 -1） | 固定ステップの公開番号が変わったときに、体と足ごとの接地のレイと表面の照会で同じ群の消費者（`FootSplashComponent` など優先度 0）より先に接地の状態を更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Component/GroundContactComponent.cpp:171` |
 | `AnimatorComponent` | Animation（主群）・PoseFinalize | Animation でアニメを進め、PoseFinalize で評価とイベント配信 | Animation | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1978` |
 | `SkinnedMeshComponent` | Animation（主群）・PoseFinalize | 自前の Animation 時刻更新と PoseFinalize での姿勢評価 | Animation | 非ポーズ時のsimulation | `Library/Core/Private/Object/World.cpp:1992` |
 | `ScriptComponent` | Default（主群） | Script の更新 | World | 非ポーズ時のsimulation | `Library/Core/Private/Component/ScriptComponent.cpp:56` |

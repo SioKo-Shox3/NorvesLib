@@ -3,6 +3,7 @@
 
 #include "Animation/AnimationEvents.h"
 #include "Component/AnimatorComponent.h"
+#include "Component/GroundContactComponent.h"
 #include "Component/SkinnedMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/TimeChannels.h"
@@ -183,6 +184,11 @@ namespace NorvesLib::Core::Component
         BindEvents();
         auto* owner = GetOwner();
         auto* mesh = owner ? owner->GetComponent<SkinnedMeshComponent>() : nullptr;
+        const auto* groundContact = owner ? owner->GetComponent<GroundContactComponent>() : nullptr;
+        if (groundContact && (!groundContact->IsActive() || groundContact->IsPendingDestroy()))
+        {
+            groundContact = nullptr;
+        }
         auto* engine = Engine::GEngine;
         auto* system = GetLiveSystem();
         if (system && owner)
@@ -245,20 +251,46 @@ namespace NorvesLib::Core::Component
 
             auto& terrainSystem = engine->GetTerrainSystem();
             Scene::GroundQueryHit hit;
-            const auto result = engine->GetSceneQuery().QueryGround(
-                foot.position + Math::Vector3(0.0f, GroundProbeUp, 0.0f), GroundProbeUp + GroundProbeDown, hit);
-            if (result != Scene::EPhysicsSceneQueryResult::Success || !hit.bHit)
+            // 今の公開番号に対応する足の結果は、接地・未接地ともに採用する。
+            // 公開番号が取れない、接地状態が古い、または対応する足がない場合だけ従来の照会を使う。
+            bool bUseSharedContact = false;
+            if (groundContact)
             {
-                // 物理の地面が取れない場合は、照会の始点以下の地形の高さ場を使う。
-                Rendering::Terrain::GroundSample sample;
-                if (!terrainSystem.SampleGround(foot.position.x, foot.position.z, sample) || !sample.bValid ||
-                    sample.Height - foot.position.y > GroundProbeUp)
+                uint64_t sequence = 0;
+                const auto& contacts = groundContact->GetGroundContactState();
+                const int32_t index = groundContact->FindFootIndex(leg.FallbackJoint);
+                if (engine->GetSceneQuery().GetPublishedSnapshotSequence(sequence) == Scene::EPhysicsSceneQueryResult::Success &&
+                    sequence != 0 && contacts.StepSerial == sequence && index >= 0 &&
+                    static_cast<uint32_t>(index) < contacts.FootCount)
                 {
-                    continue;
+                    bUseSharedContact = true;
+                    const auto& footContact = contacts.Foot[index];
+                    if (!footContact.bHit)
+                    {
+                        continue;
+                    }
+                    hit.bHit = true;
+                    hit.Point = footContact.Point;
+                    hit.Normal = footContact.Normal;
                 }
-                hit.bHit = true;
-                hit.Point = Math::Vector3(foot.position.x, sample.Height, foot.position.z);
-                hit.Normal = sample.Normal;
+            }
+            if (!bUseSharedContact)
+            {
+                const auto result = engine->GetSceneQuery().QueryGround(
+                    foot.position + Math::Vector3(0.0f, GroundProbeUp, 0.0f), GroundProbeUp + GroundProbeDown, hit);
+                if (result != Scene::EPhysicsSceneQueryResult::Success || !hit.bHit)
+                {
+                    // 物理の地面が取れない場合は、照会の始点以下の地形の高さ場を使う。
+                    Rendering::Terrain::GroundSample sample;
+                    if (!terrainSystem.SampleGround(foot.position.x, foot.position.z, sample) || !sample.bValid ||
+                        sample.Height - foot.position.y > GroundProbeUp)
+                    {
+                        continue;
+                    }
+                    hit.bHit = true;
+                    hit.Point = Math::Vector3(foot.position.x, sample.Height, foot.position.z);
+                    hit.Normal = sample.Normal;
+                }
             }
             if (!(foot.position.y - hit.Point.y <= MaxFootHeight))
             {
