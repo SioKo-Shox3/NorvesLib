@@ -12754,3 +12754,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(差し戻しの直し): 焼きの余白は量子化の上限から決まる最小 33 セル以上(上限 256)。静的な足跡はセルの正方形と回転した箱の重なり(分離軸・接触を含む)で押印し、セル中心の間の細い壁も塞ぐ。`NavTile::Grid` が焼いた格子設定を持ち、格子が空なら最初のタイルの設定を採り、以降の不一致は `Mismatch` で拒む。経路のデバッグ描画も格子と同じカメラの中心・半径の円へ切り詰める。設計文書を合わせて直した。
 - 確かめ(差し戻しの直し): `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0(`NorvesModule_AI.lib`・`Game.exe` を生成、`error C`・`error LNK`・`fatal error` は 0、AI のファイルの警告 0。警告は既存の shaderc の LNK4099 だけ)。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol` は一致。
 - Notes: 判断: クリアランスの量子化の意味(中心間距離 − 半セル)は変えていない。厚みの無い足跡が格子線の上にあるときは両側のセルを塞ぐ(隙間を作らない側に倒す)。
+- U1 操舵の基本の純関数（Seek・Flee・Arrive・Pursue・KeepDistance・Wander と上限の積分）: 着地(直し 0 回)
