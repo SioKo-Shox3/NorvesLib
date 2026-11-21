@@ -4450,6 +4450,11 @@ namespace Game
             {
                 LOG_WARNING_F("表面の語彙を読めません。Default だけで続行します: %s", surfaceResult.Detail.c_str());
             }
+            const auto acousticsResult = engine->GetAcoustics().LoadSettingsFromAssetFile("Data/Acoustics.json");
+            if (!acousticsResult.Succeeded())
+            {
+                LOG_WARNING_F("音の通りにくさの設定を読めません。既定値で続行します: %s", acousticsResult.Detail.c_str());
+            }
             if (!m_InputSettings.Initialize(engine->GetInputMapper()))
             {
                 const auto& error = m_InputSettings.GetLastError();

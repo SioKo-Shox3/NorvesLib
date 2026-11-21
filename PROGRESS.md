@@ -12818,3 +12818,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U1 評価器の骨組み(公開型・設定の読み込み・距離の dB・寄与源の登録と合成)と Acoustics.json: 着地(直し 0 回)
 - U2 既定の 4 つの寄与源(静的幾何・草・地形・雨の騒音床)と供給元の差し込み: 着地(直し 0 回)
 - U4 設計の文書 Docs/Architecture/AcousticTransmission.md: 着地(直し 0 回)
+- U3 Engine のメンバ GetAcoustics と Game の起動での設定の読み込み(最後。タスクの verify): 着地(直し 0 回)

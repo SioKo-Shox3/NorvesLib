@@ -47,6 +47,8 @@ namespace NorvesLib::Core::Engine
     {
         (void)Component::WorldFieldInteractorComponent::StaticClass();
         m_ScatterSystem.SetRenderWorld(&m_RenderWorld);
+        // 音の通りにくさの評価に使うシーンと環境の情報をエンジンから借りる。
+        m_Acoustics.SetSources(Scene::AcousticSources{&m_SceneQuery, &m_SurfaceRegistry, &m_Vegetation, &m_TerrainSystem, &m_EnvironmentSystem});
         m_InputSystem.SetRouter(&m_InputRouter);
         // 設定/active contextが無ければ入力を消費せず、旧controllerへ透過する。
         m_InputMapper.Attach(m_InputRouter);
