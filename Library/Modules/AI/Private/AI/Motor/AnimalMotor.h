@@ -40,6 +40,7 @@ namespace NorvesLib::Modules::AI
         uint64_t m_BindingGeneration = 0;
         uint64_t m_BoundOwnerId = 0;
         uint64_t m_BoundBodyId = 0;
+        uint64_t m_BoundAgentId = 0;
         uint64_t m_AnimatorChildId = 0;
         Core::Locomotion::QuadrupedLocomotionParams m_Params;
         Core::Locomotion::LocomotionState m_State;

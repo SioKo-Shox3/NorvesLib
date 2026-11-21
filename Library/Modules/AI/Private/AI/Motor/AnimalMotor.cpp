@@ -76,7 +76,9 @@ namespace NorvesLib::Modules::AI
             }
             return false;
         }
-        if (IsBound() && m_BoundOwnerId == owner.GetObjectId() && m_BoundBodyId == body->GetComponentId())
+        // 所有者・体・操舵 Component の ID はどれも書き換えられるので、どれかが変われば結び直す。
+        if (IsBound() && m_BoundOwnerId == owner.GetObjectId() && m_BoundBodyId == body->GetComponentId() &&
+            m_BoundAgentId == agent.GetComponentId())
         {
             return true;
         }
@@ -84,7 +86,8 @@ namespace NorvesLib::Modules::AI
         Detach(&owner);
         m_BoundOwnerId = owner.GetObjectId();
         m_BoundBodyId = body->GetComponentId();
-        m_Before.Bind([world, ownerId = m_BoundOwnerId, agentId = agent.GetComponentId(),
+        m_BoundAgentId = agent.GetComponentId();
+        m_Before.Bind([world, ownerId = m_BoundOwnerId, agentId = m_BoundAgentId,
                        bodyId = m_BoundBodyId, generation = m_BindingGeneration](float dt)
         {
             auto* entity = world->FindEntityByObjectId(ownerId);
@@ -109,11 +112,10 @@ namespace NorvesLib::Modules::AI
     void AnimalMotor::Detach(Core::Entity* owner)
     {
         ++m_BindingGeneration;
-        // 所有者の ObjectId が変わっても、体の ComponentId で古い接続を外す。
-        if (owner && m_BoundBodyId != 0)
+        // 購読は Bind ごとの識別子で照合されるため、所有者や体の ID が変わっていても自分の購読だけが外れる。
+        if (owner && IsBound())
         {
-            auto* body = owner->GetComponent<Physics::CharacterBodyComponent>();
-            if (body && body->GetComponentId() == m_BoundBodyId)
+            if (auto* body = owner->GetComponent<Physics::CharacterBodyComponent>())
             {
                 body->BeforeSimulation.Remove(m_Before);
             }
@@ -121,6 +123,7 @@ namespace NorvesLib::Modules::AI
         m_Before.Clear();
         m_BoundOwnerId = 0;
         m_BoundBodyId = 0;
+        m_BoundAgentId = 0;
         m_AnimatorChildId = 0;
         m_State = {};
         m_Output = {};

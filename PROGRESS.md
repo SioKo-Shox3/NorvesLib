@@ -12794,3 +12794,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Notes: 既知の限界: Physics は親を持つ Entity の CharacterBody を動かさないので、動物は Prefab のルート（親なし）に置く。人がシーンに置いて見るときは、プレハブから出した動物とシーンの読み込みの動物が最初の数歩から動き出すことを、操舵のデバッグ描画を有効にして見る。
 - Notes: 要起票: World::AttachRootEntity/AttachChildEntity で Component の Initialize が ObjectId の採番より前に走り、Initialize で ObjectId を捕まえる Component がプレハブ経由で壊れる。順を入れ替えるかを調べる(Core・危険地帯)
 - U16 操舵の登録簿を Component の参照で照合し、所有者の先頭の操舵 Component だけを解決する: 着地(直し 0 回)
+- U17 運動の結び付きの再利用に操舵 Component の ID を含め、外すときは購読の識別子で外す: 着地(直し 0 回)
