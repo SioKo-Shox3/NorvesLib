@@ -12692,3 +12692,15 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U6 FontAtlas を使う ITextMetrics の実装: 着地(直し 0 回)
 - U5 TextLayout のインラインのタグ({icon:Action}・色)と結果のキャッシュ: 着地(直し 0 回)
 - U7 Core と Game に /utf-8 を常時付け、NORVES_ENABLE_CORE_TEXT の既定を ON にする(単独のコミット): 着地(直し 0 回)
+
+## 2026-11-21 G15-GR69-STRINGTABLE-LAYOUT（run 20261121-065219 の反復 1〜2、完了）
+- Done: `Text/StringTable`（`Assets/Text/<lang>.strings.json` を AssetFileReader と JsonDocument で読み、Identity のハッシュ → 文字列の表にする。欠落キーは開発ビルドでキーの文字列 + 1 回だけの警告、製品は fallback の言語 → キー。`Format` は `{0}`・`{name}` の置換だけ。`LoadLanguage` → `SetActiveLanguage` → `OnLanguageChanged`（実際に変わったときだけ 1 回）。重複キーは読み込みの誤りで前の表を保つ。`CollectCodepoints` は全言語の訳文 + 印字可能な ASCII をキーの接頭辞で絞る）。`Engine::Engine` のメンバにして `GEngine->GetStringTable()` で引く（シングルトンにしない）。
+- Done: `Assets/Text/ja.strings.json`（タイトル・ポーズ・終了の確認・設定・セーブ・クレジット・地図・ファストトラベルの画面の 76 キー。文面は仮。BOM なし UTF-8）と `Assets/UI/ui_text_styles.json`（body・caption・heading・title → Faces・基準 px・文字集合の接頭辞）。表の全コードポイントが body の face の cmap にあることを置くときに照合した（171 種で未収録 0）。
+- Done: `Text/TextMetrics.h` の `ITextMetrics` と `Text/TextLayout`（UTF-8 → 要素 → 行 → 位置の 3 段。日本語は任意の字の間・英語は空白で折り返し、行頭禁止・行末禁止の短い表で追い出し、空行になるときだけ禁則を破る。左・中央・右揃え、行間の倍率、最大行数と `…` の省略、基準線は全 face の ascender の最大）。`{icon:Action}` は CJK の字と同じ切れ方の分けられない要素で幅を確保し、`Codepoint` 0 のグリフと `TextLayoutResult::Icons`（Action の複製）に残す。`{color:#RRGGBB}`/`{color:#RRGGBBAA}`〜`{/color}`（深さ 8）。形の合わないタグは字として組む。`TextLayoutCache`（文字列のハッシュ × 世代 × 設定で、当たりは全バイトと設定を完全に照合。既定 256 件、最も長く使っていないものから捨てる）。TextComponent の座標の規約は変えていない。
+- Done: `Text/FontAtlasTextMetrics`（`FontAtlas::GetGlyph` の寸法を返し、desc の全 face を FreeType で開いた ascender・descender の最大を基準線に使う。行送りは atlas の行送りと ascender + descender の大きい方。`Bind` の成功ごとにプロセスで一意の世代を振る）。
+- Done: 別のコミット（996a3125）で、Core（PUBLIC）と Game に MSVC の `/utf-8` を常時付け、`NORVES_ENABLE_CORE_TEXT` の既定を ImGui から切り離して ON にした。ログの日本語の行をバイトで照合する台本は `Scripts/` に無い（非 ASCII の字が無い）。
+- 証拠: `.harness/runs/20261121-065219/verify-G15-GR69-STRINGTABLE-LAYOUT-build.txt`（ImGui・CORE_TEXT とも ON の構成で `cmake --build build --config Debug -- /m:1` が EXIT=0。Core・Game の vcxproj の全構成に `/utf-8`、FontAtlasTextMetrics.cpp の FreeType の経路のコンパイルを確認）。
+- 試験: done-when (5) の StringTableTest・TextLayoutTest・StringTableCharsetCoverageTest と verify の ctest の 2 行は、人の決まり（試験を作らない・回さない）で作らず回していない。
+- 人が見るときの見どころ: StringTable・TextLayout を使う画面はまだ無く、各シーンの見た目は変わらない。`/utf-8` で日本語のログの行が、起動直後のコンソールで文字化けせずに出ること。
+- Next: ランナーの評価者の反証（Public API の Engine・Text）。起動時に `ja` を読む配線と、UI の Label への組版の配線は、文字列表を使う側の項目でする。
+- Notes: 既知の限界: 起動時の `GEngine->GetStringTable().LoadLanguage("ja", ...)` の呼び出しは置いていない（Game の .cpp は paths の外。`Surfaces.json` と同じく呼ぶ側で配線する）。`TextLayoutCache` の探索は保持件数に比例する。単独の `\r` は改行として扱わない。盤面の単位の作業ツリー（`.slots/NorvesLib-3-uN`）は FreeType の submodule が無いと ImGui・CORE_TEXT とも OFF で構成されるので、CORE_TEXT の経路を確かめる単位は `git submodule update --init Library/ThirdParty/freetype` と ON の再構成が要る。
