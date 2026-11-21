@@ -67,6 +67,13 @@ namespace NorvesLib::Core::Scene
         Only
     };
 
+    // 照会の対象を代理の動きの区分で絞る。
+    enum class EPhysicsQueryMobilityPolicy : uint8_t
+    {
+        Any,       // すべての代理を対象にする。
+        StaticOnly // 静的な代理だけを対象にする。
+    };
+
     struct PhysicsQueryFilter
     {
         PhysicsCollisionMask LayerMask = AllPhysicsLayers;
@@ -74,11 +81,17 @@ namespace NorvesLib::Core::Scene
         ColliderHandle IgnoreColliders[4]{};
         BodyHandle IgnoreBodies[4]{};
 
+        // 物理側は Accepts の後に代理ごとに次の条件を適用し、MaxHits に達する前に候補を絞る。
+        EPhysicsQueryMobilityPolicy MobilityPolicy = EPhysicsQueryMobilityPolicy::Any;
+        bool bExcludeHeightFields = false; // 地形などの高さ場の代理を対象から除く。
+
         constexpr bool IsValid() const
         {
-            return TriggerPolicy == EPhysicsQueryTriggerPolicy::Include
-                || TriggerPolicy == EPhysicsQueryTriggerPolicy::Exclude
-                || TriggerPolicy == EPhysicsQueryTriggerPolicy::Only;
+            return (TriggerPolicy == EPhysicsQueryTriggerPolicy::Include
+                    || TriggerPolicy == EPhysicsQueryTriggerPolicy::Exclude
+                    || TriggerPolicy == EPhysicsQueryTriggerPolicy::Only)
+                && (MobilityPolicy == EPhysicsQueryMobilityPolicy::Any
+                    || MobilityPolicy == EPhysicsQueryMobilityPolicy::StaticOnly);
         }
 
         constexpr bool Accepts(PhysicsCollisionMask layer, bool bTrigger, ColliderHandle collider, BodyHandle body) const
