@@ -12816,3 +12816,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠(反復 3): `.harness/runs/20261121-094434/verify-G16-GR73-SPATIAL-LISTENER-iter3-game-build.txt`(`cmake --build build --config Debug --target Game -- /m:1` が EXIT=0 で Game.exe まで。`error C`・`error LNK`・C1060 は 0 件)。
 - Next(反復 3): ランナーの評価者の反証。聴感の確かめは G16-GR73-SPATIAL-CHECK。
 - U1 voice の作成を位置付きの口に切り出し、再生の位置を仮想の時計で追う: 着地(直し 0 回)
+- U2 休眠の設計を音の流れの文書と GR73 の受入れ記録に書く: 着地(直し 0 回)

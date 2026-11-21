@@ -79,7 +79,7 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 3. 毎フレームの `PostUpdate.ModuleTick` は `ModuleRegistry::TickAll` を呼ぶ。登録は `GameThreadOnly` で、描画用の World 同期とスクリプト後処理の後、`OnPreRender` と描画の前に実行する。
 4. この通常の Module Tick はシミュレーションの進行 gate の外にある。音声の `Tick` は `IAudioService::Tick()`、次いで `SoundSystem::Update(deltaSeconds)` を呼ぶ。
 5. サービスの `Tick` は callback が各 voice のメールボックスに入れた `Drained` / `VoiceError` を消費して状態を進め、古い世代や終了後の通知を扱う。
-6. 続く `SoundSystem::Update` は `Drained` の voice を破棄して論理インスタンスを回収し、残った音のフェードと音量、停止を進める。時間には上限付きの可変フレーム delta を使う。
+6. 続く `SoundSystem::Update` は `Drained` の voice を破棄して論理インスタンスを回収し、残った音のフェードと音量、停止を進める。休眠への移行と復帰もここで行う。時間には上限付きの可変フレーム delta を使う。
 7. 終了時は `ModuleRegistry::ShutdownAll` が登録の逆順で終了する。音声モジュールは先に `SoundSystem`、次にサービスを終了し、サービスは callback を静止させてから voice とバックエンドを破棄する。
 
 呼び出し元は `Library/Core/Private/Module/ModuleRegistry.cpp` と
@@ -118,7 +118,7 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 
 1. `IAudioService::Tick()` が voice の終了・エラーの通知を取り込む。
 2. `AudioListenerResolver::Resolve` でリスナーを決め、`SoundSystem::SetListener` で渡す。
-3. 登録された `AudioComponent` のうち `Spatialization == World3D` のものは、`ISoundSystem::IsAudible` が真のインスタンスへ、持ち主の `Entity::GetWorldTransform()` の位置を `ISoundSystem::SetEmitterPosition` で渡す。有効なハンドルでは物理 voice に停止を発行するまで `IsAudible` が真なので、フェードアウト中も音源は持ち主に追従する。
+3. 登録された `AudioComponent` のうち `Spatialization == World3D` のものは、`ISoundSystem::IsAudible` が真のインスタンスへ、持ち主の `Entity::GetWorldTransform()` の位置を `ISoundSystem::SetEmitterPosition` で渡す。有効なハンドルでは物理 voice に停止を発行するまで `IsAudible` が真なので、フェードアウト中も音源は持ち主に追従する。休眠中も `IsAudible` は真で、インスタンスは復帰の判定に使う位置を受け取り続ける。
 4. `SoundSystem::Update(dt)` が各 3D インスタンスの音源速度を位置の差分/dt で求める。`ComputeAudioSpatial` にリスナーと音源の状態を渡し、下表の値を反映する。左右の利得は両方とも前回の適用値との差が ε = 1e-4 以下なら更新を省く。3D の周波数比は再生開始時から丸めて送り、送信に成功した比を保存する。毎フレームの更新と `SetPitch` では丸めた比をこの保存値と同じ ε で比較する。3D の voice の音量にも同じ ε を使い、音量が非ゼロから厳密に 0 になるときは送る。2D の voice の音量は完全一致のときだけ更新を省く。
 
 | 係数 | 反映先 |
@@ -129,3 +129,37 @@ XAudio2 の callback は別スレッドから届きうるが、voice の状態�
 | 背後の高域の係数 | 値を保持する。フィルタへの適用は `G16-GR73-ACOUSTICS-AI-WIRE` の範囲 |
 
 真後ろでの音量減衰は 6 dB、高域の係数は 0.5。`MinDistance` の内側では、近距離の広がりと同じ係数 s = d/MinDistance で背後の効果も弱まる。式と受入れ条件は [GR73 3D 定位とリスナーの受入れ記録](../AudioValidation/GR73Acceptance.md)を参照。
+
+### 休眠(virtual voice)
+
+休眠中も論理インスタンスと `SoundInstanceHandle` は有効である。`SoundSystem::Instance` は定義から写した値、選んだ clip（`TSharedPtr<AudioClipResource> Clip`）、音量・ピッチ・位置を保持する。物理の voice は手放し、`Voice` は無効の値になる。
+
+| `SoundSystem::Instance` の欄 | 意味と更新条件 |
+|---|---|
+| `bVirtual` | 現在休眠中なら真。距離と呼び出し側のどちらか一方でも理由があれば休眠を望み、両方が外れたら復帰を試みる |
+| `bVirtualByDistance` | 3D のみ。`Update` の空間計算で得た距離 d（`AudioSpatialResult::Distance`）が MaxDistance × 1.05 を超えたら立て、d ≤ MaxDistance で外す。その間の帯では前の値を保ち、距離による切替は交差ごとに最大 1 回とする。倍率 1.05 は `SoundSystem.cpp` の定数 `kSoundVirtualEnterDistanceScale` の仮の値 |
+| `bVirtualRequested` | `ISoundSystem::SetInstanceAudible(SoundInstanceHandle handle, bool bAudible)` の `false` で立て、`true` で外す。物理の voice の切替は次の `Update` で行う |
+
+`SetInstanceAudible` は古いハンドルに `StaleHandle`、停止要求後に `InvalidState`、呼び出し側の指定が今と同じなら `AlreadyInState`、変更を受け付けたら `Success` を返す。GR75 は −55 dB 未満で `false`、−52 dB を超えたら `true` を渡す。再生中は休眠しても `IsPlaying` と `IsAudible` は真である。
+
+`Update` は休眠を望む物理の voice に停止要求がなければ、`IAudioService::AbortVoice` でバックエンドの `StopVoice` と `DestroyVoice` を同期で順に行う。失敗時はサービスがその voice を隔離して寿命を管理する。どちらの場合もインスタンスは `Voice` を空にし、`bVirtual` を立てる。停止要求を受けてフェードアウト中の音は、そのまま停止まで進める。`PlayAt` の時点で d > MaxDistance × 1.05 の 3D 音源は、物理の voice を作らず休眠状態で開始する。
+
+再生位置 `PlayFrame` は clip のフレーム単位の `double` である。毎 `Update` で dt（秒）× サンプルレート × 周波数比だけ進める。周波数比は 2D ではピッチの比、3D ではピッチの比 × ドップラー比を、いずれも [1/1024, voice 作成時の上限] に収めた値とする。物理の voice がある間も同じ時計で再生位置を近似する。
+
+ループは `LoopEnd` に達したら [LoopBegin, LoopEnd) に折り返す。`LoopLength` が 0 なら `LoopEnd` は clip の末尾である。休眠中のワンショットは末尾に達した `Update` で完了として回収し、ハンドルは古くなる。休眠中もフェード利得は進める。音量・ピッチ・位置の変更は値だけを保持し、サービスは呼ばない。
+
+休眠中に `Stop`、`StopOwner`、ループに対する `ReleaseOwner`、定義の登録解除、バンクの解放で停止要求を受けたインスタンスは、次の `Update` で voice を作らずに回収する。`Shutdown` は休眠中を含めてすべてのインスタンスを回収する。
+
+復帰には、物理の voice の数（`ActiveInstanceCount − VirtualVoiceCount`）が `MaxConcurrentVoices` 未満で、同じ定義の物理の voice の数も `MaxInstances` 未満であることを要する。`MaxInstances` が 0、または定義が登録解除済みなら定義ごとの制限はない。休眠中のインスタンスはどちらの上限にも数えず、定義の `StopOldest` と優先度による奪取の対象からも外す。復帰のためにほかの voice は奪わず、空きがなければ休眠のまま次の `Update` で再び試す。
+
+`StartInstanceVoice(instance, 再開の位置)` は、位置を渡して物理の voice を作り直す口である。再開の位置は `floor(PlayFrame)` をループなら `LoopEnd` の手前、ワンショットなら clip の末尾の手前に収めたフレームとする。これを `AudioVoiceDesc::StartFrame` に指定して voice を作り、現在の音量と、3D では左右の利得と周波数比、2D ではピッチを送って再生を開始する。失敗時は休眠を保ち、次の `Update` で再び試す。ストリームの voice（`G16-GR74-STREAM-VOICE`）も同じ `StartInstanceVoice` で作り直し、再開の位置をデコーダの `Seek` に渡す。
+
+| `AudioDiagnostics` の欄 | 型 | 数え方 |
+|---|---|---|
+| `VirtualVoiceCount` | `uint32_t` | 現在休眠しているインスタンス数。休眠状態で開始した音も含む |
+| `VirtualizeCount` | `uint64_t` | 物理の voice を手放して休眠に移るたびに 1 増える。休眠状態での開始は数えない |
+| `DevirtualizeCount` | `uint64_t` | 休眠から物理の voice への復帰に成功するたびに 1 増える |
+
+この 3 欄は `StolenVoiceCount` と同じく論理サウンド層が数え、ボイス層では 0 のままとする。`SoundSystemDiagnostics::ActiveInstanceCount` は休眠中を含む論理インスタンス数である。
+
+休眠・復帰の切替にフェードは掛けない。距離による切替点では距離利得が 0 であり、呼び出し側の指定では GR75 が −55 dB 未満で休眠させるため、切替の段差は聞こえない前提である。受入れの閾値は [GR73 3D 定位とリスナーの受入れ記録](../AudioValidation/GR73Acceptance.md#受入れの閾値)を参照。
