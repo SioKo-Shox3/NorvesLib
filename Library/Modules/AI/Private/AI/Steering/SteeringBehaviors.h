@@ -104,7 +104,8 @@ namespace NorvesLib::Modules::AI::Steering
     Math::Vector3 Pursue(const SteeringKinematics& self, const SteeringKinematics& target,
                          const SteeringLimits& limits, const PursueParams& pursueParams,
                          const ArriveParams& arriveParams, SteeringPlane plane);
-    /// 水平距離が帯を外れたら中央へ戻り、帯を保っている間は目標の速度に合わせる。
+    /// 要求された上下端で水平距離を判定し、帯を保つ間は目標の速度に合わせる。
+    /// 帯の中央へ戻るときは、停止半径をヒステリシスの余白を除いた帯の内側に収める。
     Math::Vector3 KeepDistance(const SteeringKinematics& self, const SteeringKinematics& target,
                                const SteeringLimits& limits, const KeepDistanceParams& params,
                                KeepDistanceState& state, SteeringPlane plane);
@@ -168,9 +169,11 @@ namespace NorvesLib::Modules::AI::Steering
     Math::Vector3 FollowTrail(const SteeringKinematics& self, const TrailRing& ring, const SteeringLimits& limits,
                               const FollowTrailParams& params, SteeringPlane plane);
 
-    /// 水平半径内の近傍から離れる。重なりには添字で定まる向きを使い、非有限の近傍は除く。
+    /// 水平半径内の有限な近傍から離れる。重なった個体は、有効な ID の組で決まる軸に沿って互いに逆向きに離れる。
+    /// 近傍位置に対応する ID が揃わない場合や、どちらかの ID が零または両者が同じ場合は、近傍の添字で向きを決める。
     Math::Vector3 Separation(const SteeringKinematics& self, Core::Container::Span<const Math::Vector3> neighborPositions,
-                             float radius, const SteeringLimits& limits, SteeringPlane plane);
+                             float radius, const SteeringLimits& limits, SteeringPlane plane,
+                             Core::Container::Span<const uint64_t> neighborIds = {}, uint64_t selfId = 0);
     /// 有限な近傍速度の平均を速さの上限に収める。有効な近傍が空なら零を返す。
     Math::Vector3 Alignment(const SteeringKinematics& self, Core::Container::Span<const Math::Vector3> neighborVelocities,
                             const SteeringLimits& limits, SteeringPlane plane);

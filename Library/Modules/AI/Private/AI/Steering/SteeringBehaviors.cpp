@@ -116,6 +116,14 @@ namespace NorvesLib::Modules::AI::Steering
             return true;
         }
 
+        uint64_t SplitMix64(uint64_t value)
+        {
+            value += 0x9e3779b97f4a7c15ULL;
+            value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+            value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+            return value ^ (value >> 31);
+        }
+
         // 重み付き和は float の範囲を超え得る。速さを制限してから成分を丸める。
         Math::Vector3 ClampVelocitySum(double x, double y, double z, float maxSpeed)
         {
@@ -283,9 +291,10 @@ namespace NorvesLib::Modules::AI::Steering
         const SteeringLimits clean = SanitizeLimits(limits);
         const KeepDistanceParams defaults;
         const double minDistance = std::max(0.0f, FiniteOr(params.MinDistance, defaults.MinDistance));
-        const double maxDistance = std::max<double>(minDistance + 0.1, FiniteOr(params.MaxDistance, defaults.MaxDistance));
+        const double maxDistance = std::max<double>(minDistance, FiniteOr(params.MaxDistance, defaults.MaxDistance));
         const double fraction = std::clamp(FiniteOr(params.HysteresisFraction, defaults.HysteresisFraction), 0.0f, 0.5f);
-        const double margin = fraction * (maxDistance - minDistance);
+        const double bandWidth = maxDistance - minDistance;
+        const double margin = fraction * bandWidth;
         const Math::Vector3 position = ToPlane(self.Position, plane);
         const Math::Vector3 center = ToPlane(target.Position, plane);
         const double x = Difference(position.x, center.x);
@@ -332,7 +341,9 @@ namespace NorvesLib::Modules::AI::Steering
                 dirZ = -velocity.z / speed;
             }
         }
-        return ArriveOffset(dirX * offset, Difference(center.y, position.y), dirZ * offset, clean, {});
+        ArriveParams arrive;
+        arrive.StopRadius = static_cast<float>(std::clamp<double>((0.5 - fraction) * bandWidth, 0.0, arrive.StopRadius));
+        return ArriveOffset(dirX * offset, Difference(center.y, position.y), dirZ * offset, clean, arrive);
     }
 
     void InitializeWander(WanderState& state, uint32_t seed)
@@ -557,7 +568,8 @@ namespace NorvesLib::Modules::AI::Steering
     }
 
     Math::Vector3 Separation(const SteeringKinematics& self, Core::Container::Span<const Math::Vector3> neighborPositions,
-                             float radius, const SteeringLimits& limits, SteeringPlane plane)
+                             float radius, const SteeringLimits& limits, SteeringPlane plane,
+                             Core::Container::Span<const uint64_t> neighborIds, uint64_t selfId)
     {
         if (!std::isfinite(radius) || radius <= 0.0f)
         {
@@ -584,9 +596,20 @@ namespace NorvesLib::Modules::AI::Steering
             const double weight = 1.0 - distance / radius;
             if (distance < 1e-4f)
             {
-                const double angle = static_cast<double>(i) * 2.39996323;
-                sumX += std::sin(angle) * weight;
-                sumZ += std::cos(angle) * weight;
+                const uint64_t neighborId = neighborIds.size() == neighborPositions.size() ? neighborIds[i] : 0;
+                double angle = static_cast<double>(i) * 2.39996323;
+                double sign = 1.0;
+                if (selfId != 0 && neighborId != 0 && selfId != neighborId)
+                {
+                    const uint64_t lo = std::min(selfId, neighborId);
+                    const uint64_t hi = std::max(selfId, neighborId);
+                    const uint64_t hash = SplitMix64(SplitMix64(lo) ^ hi);
+                    const double turns = static_cast<double>(hash >> 11) * 0x1p-53;
+                    angle = turns * (2.0 * std::numbers::pi);
+                    sign = selfId == lo ? 1.0 : -1.0;
+                }
+                sumX += sign * std::sin(angle) * weight;
+                sumZ += sign * std::cos(angle) * weight;
             }
             else
             {
