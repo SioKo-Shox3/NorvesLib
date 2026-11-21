@@ -12724,3 +12724,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠（同）: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0（Game.exe を生成）、`glslangValidator -V Assets/Shaders/tonemapping.frag` がエラー 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。単精度の再計算で、指摘の例（入力 128、露出の倍率 256、Contrast 4、支点 0.18）の Grade の出力が 1.98e20 → 65504、ACES Filmic が NaN → 1、Uncharted2 が NaN → 1.287（白色点 11.2 で正規化する既存の式のため 1 を超えるのは、Grade を掛けない経路の入力 65504 と同じ）。
 - Next（同）: ランナーの評価者の反証（2 周目）。見た目はどのシーンも変わらない（どのカメラも bValid=false のまま）。
 - Notes（同）: 残課題（完了条件の外）: LUT A・B が同じパスでも 2 つの枠で別々に読む。表示変換の照合の色の階段（`SetDisplayRampInput`）を bValid のカメラで使うと Grade も掛かる。
+- U6 Grade の上限を RGB の比を保つ縮めに替え、ACES 2.0 LUT の Look のコメントを直す: 着地(直し 0 回)

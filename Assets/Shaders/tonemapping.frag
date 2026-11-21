@@ -1,4 +1,4 @@
-#version 450
+﻿#version 450
 
 layout(location = 0) in vec2 fragUV;
 
@@ -64,6 +64,7 @@ layout(location = 0) out vec4 outColor;
 const uint ACES20_LUT_OPERATOR = 4u;
 const uint NEUTRAL_LINEAR_OPERATOR = 5u;
 const uint GRADING_MODE_PROFILE = 2u;
+const float GRADE_VALUE_MAX = 65504.0;
 const float ACES20_LUT_SHAPER_OFFSET = 0.00390625;
 const float ACES20_LUT_SHAPER_MAX = 256.0;
 const float ACES20_LUT_SHAPER_SPAN = log2(ACES20_LUT_SHAPER_MAX / ACES20_LUT_SHAPER_OFFSET + 1.0);
@@ -240,10 +241,22 @@ float GradeContrastChannel(float value, float pivot, float contrast)
     return base > 0.0 ? pivot * pow(base, contrast) : 0.0;
 }
 
+// 半精度の上限を超えたときだけ、RGB を同じ倍率で縮める。
+vec3 LimitGradeColor(vec3 c)
+{
+    // 正の無限大を有限値にして、縮めるときの無限大と 0 の積を防ぐ。
+    c = min(c, vec3(1e30));
+    float m = max(max(c.r, c.g), c.b);
+    if (m > GRADE_VALUE_MAX)
+    {
+        c *= GRADE_VALUE_MAX / m;
+    }
+    return c;
+}
+
 // 表示変換より前のシーンリニア値に、カメラの色補正を掛ける。
 vec3 ApplyGrade(vec3 c)
 {
-    const float GRADE_VALUE_MAX = 65504.0;
     const vec3 luma = vec3(0.2126, 0.7152, 0.0722);
     c *= params.gradeExposureScale;
     c *= params.gradeWhiteBalanceGain.rgb;
@@ -264,8 +277,8 @@ vec3 ApplyGrade(vec3 c)
                  GradeContrastChannel(c.b, pivot, contrast));
     }
 
-    // シーンカラーの半精度上限でべき乗の結果を抑え、彩度計算で無限大同士を引くのを防ぐ。
-    c = min(c, vec3(GRADE_VALUE_MAX));
+    // RGB の比を保って半精度の上限に収め、彩度計算で無限大同士を引くのを防ぎ、元の比を肩に渡す。
+    c = LimitGradeColor(c);
 
     float saturation = params.gradeSaturation;
     if (saturation != 1.0)
@@ -294,8 +307,8 @@ vec3 ApplyGrade(vec3 c)
     float y = dot(max(c, vec3(0.0)), luma);
     float t = smoothstep(-2.0, 2.0, log2(max(y, 1e-6) / pivot));
     vec3 tint = params.gradeShadowTint.rgb + (params.gradeHighlightTint.rgb - params.gradeShadowTint.rgb) * t;
-    // 色を掛けた後も同じ上限を守り、表示変換の二次式があふれるのを防ぐ。
-    return min(c * tint, vec3(GRADE_VALUE_MAX));
+    // 色を掛けた後の RGB の比を保って半精度の上限に収め、表示変換の二次式があふれるのを防ぐ。
+    return LimitGradeColor(c * tint);
 }
 
 // フィルムグレイン: 画素・フレームごとのseedから決まる、平均0・分散1の三角分布の雑音（PCGのhash）。
@@ -435,8 +448,9 @@ void main()
     vec3 result = mapped;
 
     // ========================================
-    // Color Grading（display-linear Rec.709空間で適用）
-    // ACES 2.0 SDR LUT は表示変換そのものなので、既定のグレーディングを掛けない
+    // カラーグレーディング（表示リニアの Rec.709 空間で適用）
+    // gradingMode 2 の Look LUT A・B は ACES 2.0 SDR LUT を含む全演算子の出力に適用できる。
+    // gradingMode 0・1 の従来のグレーディングは ACES 2.0 SDR LUT のときに省く。
     // ========================================
     if (params.gradingMode == GRADING_MODE_PROFILE)
     {
