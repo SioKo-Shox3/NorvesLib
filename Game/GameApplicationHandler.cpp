@@ -77,6 +77,7 @@
 #include "DummyModule/DummyRenderModule.h"
 #include "Physics/IPhysicsModule.h"
 #include "Gameplay/IGameplayModule.h"
+#include "AI/IAIModule.h"
 #include "Gameplay/World/InteractionService.h"
 
 #if defined(NORVES_GAME_AUDIO)
@@ -1140,6 +1141,13 @@ namespace Game
                 NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
         {
             LOG_ERROR("Gameplay module registration failed");
+            return false;
+        }
+
+        if (NorvesLib::Modules::AI::RegisterAIModule(
+                NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
+        {
+            LOG_ERROR("AI モジュールの登録に失敗しました");
             return false;
         }
 
@@ -4436,6 +4444,11 @@ namespace Game
             {
                 LOG_WARNING_F("コリジョンレイヤーの表を読めません。Default だけの表で続行します: %s",
                     physicsLayersError.empty() ? "" : physicsLayersError.c_str());
+            }
+            const auto surfaceResult = engine->GetSurfaceRegistry().LoadFromAssetFile("Data/Surfaces.json");
+            if (!surfaceResult.Succeeded())
+            {
+                LOG_WARNING_F("表面の語彙を読めません。Default だけで続行します: %s", surfaceResult.Detail.c_str());
             }
             if (!m_InputSettings.Initialize(engine->GetInputMapper()))
             {

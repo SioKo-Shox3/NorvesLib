@@ -2,6 +2,7 @@
 
 #include "Math/Vector3.h"
 #include "Resource/FontAtlas.h"
+#include "Text/Utf8.h"
 
 namespace NorvesLib::Core::Component
 {
@@ -40,22 +41,23 @@ namespace NorvesLib::Core::Component
                                      : 1.0f;
         float penX = 0.0f;
         float penY = lineHeight;
-        for (const TCHAR character : m_Text)
+        static_assert(sizeof(TCHAR) == 1, "TextComponent は1バイトの TCHAR を UTF-8 として扱います。");
+        ForEachUtf8Codepoint(Container::Span<const char>(m_Text.data(), m_Text.size()), [&](uint32_t codepoint)
         {
-            if (character == TEXT('\n'))
+            if (codepoint == '\n')
             {
                 penX = 0.0f;
                 penY += lineHeight;
-                continue;
+                return;
             }
 
-            const FontAtlasGlyph& glyph = m_FontAtlas->GetGlyph(static_cast<uint32_t>(character));
+            const FontAtlasGlyph& glyph = m_FontAtlas->GetGlyph(codepoint);
             if (!glyph.bValid)
             {
-                continue;
+                return;
             }
 
-            if (character != TEXT(' '))
+            if (codepoint != ' ')
             {
                 Rendering::BoardProxy proxy;
                 if (BuildBoardProxy(proxy))
@@ -73,6 +75,6 @@ namespace NorvesLib::Core::Component
                 }
             }
             penX += glyph.AdvancePx + m_LetterSpacing;
-        }
+        });
     }
 } // namespace NorvesLib::Core::Component

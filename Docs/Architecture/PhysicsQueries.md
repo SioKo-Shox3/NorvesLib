@@ -98,3 +98,14 @@
 ## 親の休眠と物理の寿命（GR41）
 コライダー・RigidBody の有効性は所有者の `Entity::IsActiveInHierarchy()` で決まり、祖先のどれかを `SetActive(false)` にするか破棄予約すると、次の固定ステップで作業用・公開のブロードフェーズ、クエリ、接触から外れる。
 trigger に重なっていた子は、休眠で `OverlapEnd` が1回出て、親を戻すと `OverlapBegin` が1回出る。ゲーム側の受け手は「休眠でも End が来る」と読む。
+
+## コライダーの表面（GR115）
+
+`ColliderComponent` は `Initialize` で登録するとき、`SetSurface` で名前を設定したとき、シーン編集などで `SurfaceName` を適用したとき（`OnPropertyApplied`）に名前を解決する。登録簿の改訂後は、最初の `StepFixed` または `RefreshDynamicSnapshot` で解決し直す。
+`BuildBroadphase` は解決済みの値を proxy の `Surface` に、名前の指定の有無を `bHasSurface` に写す。物理クエリは次の公開から新しい表面を返し、`GetColliderSurface` は同じ公開スナップショットから明示された表面を返す。
+形状の署名が一致して静的な木を共有するときも、表面は毎回の proxy から読む。
+
+Entity を持たない静的コライダーでは、物理モジュールが `StaticColliderDesc::SurfaceName` を保持し、チャンクの適用時と登録簿の改訂を検出したときに解決する。改訂後も `ColliderHandle` は同じ。名前が空なら `Surface`（登録簿の添字）と `bHasSurface` を使う。静的 payload（`norves.static-colliders.v1`）の `"surface"` は、文字列なら登録簿の名前、整数（0〜255）なら地形の層番号を指定する。層番号は結果の `uint8_t SurfaceId` にだけ写す。
+
+接触イベントの `Hit` と `OverlapBegin` は今のステップの proxy の表面を返す。`OverlapEnd` は、今のステップに proxy がある側は現在の表面、取り除かれた側は最後に重なっていたときの表面を返す。
+名前の保存と再解決、明示なしと `Default` の扱いは[表面の語彙と照会の契約](SurfaceContract.md)に従う。

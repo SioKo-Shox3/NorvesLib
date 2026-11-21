@@ -1,0 +1,55 @@
+{
+  "name": "stb_vorbis",
+  "version": "1.24",
+  "upstream": {
+    "repository": "https://github.com/nothings/stb",
+    "commit": "9f755b604db3492df2cbeb39bf84b81e3e3932e3",
+    "commitDate": "2026-11-12T17:33:26Z",
+    "retrievedBy": "指定コミットの stb_vorbis.c と LICENSE を原本からコピーし、SHA-256 を照合"
+  },
+  "license": {
+    "spdx": "MIT OR Unlicense",
+    "source": "LICENSE / stb_vorbis.c",
+    "excluded": "stb のほかのヘッダと tests は取り込まない"
+  },
+  "usage": "NorvesAudioDecode だけがリンクする（Core・Game に直接含めない）",
+  "files": [
+    {
+      "path": "stb_vorbis.c",
+      "size": 201058,
+      "sha256": "2D778374F9CCC44B08A2AC0389FEF082B6897D7845746610E250B714E4D7C666"
+    },
+    {
+      "path": "LICENSE",
+      "size": 2588,
+      "sha256": "EB36E45C704DD0B59730115523E089B051852625B4DB0A6FE76C991900AF20E7"
+    }
+  ],
+  "patches": [
+    {
+      "id": "GHSL-2023-172",
+      "cve": "CVE-2023-45682",
+      "file": "stb_vorbis.c",
+      "description": "負の復号結果を疎な codebook の sorted_values の添字に使わない。",
+      "source": "https://github.com/nothings/stb/pull/1560",
+      "upstreamSize": 198004,
+      "upstreamSha256": "B52CF518355F7B2D181F18B97B812F361FFEB26299D935C8CF29E842401D60A6"
+    },
+    {
+      "id": "NORVES-CRC-TABLE-CONST",
+      "file": "stb_vorbis.c",
+      "description": "CRC 表を事前計算の読み取り専用の定数にし、デコーダを開くたびに共有の表を書き換えない(別のインスタンスを並行に開く・シークするときの競合をなくす)。",
+      "source": "NorvesLib の局所修正",
+      "upstreamSize": 198004,
+      "upstreamSha256": "B52CF518355F7B2D181F18B97B812F361FFEB26299D935C8CF29E842401D60A6"
+    },
+    {
+      "id": "NORVES-SEEK-RUNTIME-CHECK",
+      "file": "stb_vorbis.c",
+      "description": "seek_to_sample_coarse・stb_vorbis_seek_frame64・stb_vorbis_seek64 が assert だけで確かめていた条件(最後のページの位置が既知・探索のページが最後のページより前・戻ったページに位置の分かる区切りがある・現在位置が有効で目標を越えていない・目標のフレームの復号が成功する・移動先が復号済みの範囲に収まる)を実行時に検査し、満たさないときは VORBIS_seek_failed で 0 を返す。",
+      "source": "NorvesLib の局所修正",
+      "upstreamSize": 198004,
+      "upstreamSha256": "B52CF518355F7B2D181F18B97B812F361FFEB26299D935C8CF29E842401D60A6"
+    }
+  ]
+}

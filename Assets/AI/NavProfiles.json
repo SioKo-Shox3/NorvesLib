@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "profiles": [
+    { "name": "Small",  "radius": 0.25, "shallowWaterExtraPer128": 64,  "grassExtraPer128": 16 },
+    { "name": "Medium", "radius": 0.5,  "shallowWaterExtraPer128": 96,  "grassExtraPer128": 8 },
+    { "name": "Large",  "radius": 1.0,  "shallowWaterExtraPer128": 128, "grassExtraPer128": 0 }
+  ]
+}
