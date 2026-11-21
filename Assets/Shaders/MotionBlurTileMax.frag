@@ -18,7 +18,7 @@ layout(std140, set = 0, binding = 4) uniform MotionBlurParams
     mat4 previousView;
     mat4 previousProjection;
     vec4 cameraPositionAndHistory;   // w: 前のカメラがあるか
-    vec4 imageSizeAndShutter;        // xy: 寸法、z: シャッター時間/フレーム長（カメラのシャッターでは1を超え、最大2）、w: 動きの長さの上限（画素）
+    vec4 imageSizeAndShutter;        // xy: 寸法、z: シャッター時間/フレーム長（1を超えることがあり、最大2）、w: 動きの長さの上限（画素）
     vec4 tileInfo;                   // x: tileの一辺、yz: tileの数
 } params;
 

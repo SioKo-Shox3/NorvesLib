@@ -13122,3 +13122,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Next: ランナーの評価者の反証（Public API の `CameraProxy`・RenderThread・PT = 危険地帯）。Bokeh・Framing の値を使う側は G14-GR62-DOF-WIDE と G14-GR62-DIRECTOR。
 - Notes: 既知の限界: 物理レンズ（GateFit が Vertical 以外）を全画面でないビューポートで使うと、前のカメラはパケットで描画先全体の縦横比から確定するので、velocity・TAA・動きぼけの前後の画角がずれる。ピッキングもカメラの Viewport の矩形を使う。今は `Viewport::SetRect` の呼び出しが無く、起きない（前と今のカメラの画角の一致は、メインのビューポートが全画面の構成に限った）。分割画面など全画面でないビューポートを入れるときは、下の要起票を先に済ませる。
 - 要起票: 前のカメラの履歴をビューポートごとに確定済みで持ち、全画面でないビューポートでも物理レンズの前後の画角を揃え、ピッキングにもビューの矩形を渡す（今の前のカメラは `RenderingCoordinator.cpp` でパケットの `Scene.MainCamera` を描画先全体の縦横比で確定した値、`CameraPicking.cpp` はカメラの `Viewport` の矩形を使う）。
+- U8 明示したシャッター時間の倍率の上限も MotionBlurMaxStretch にする(差し戻しの直し 3): 着地(直し 0 回)

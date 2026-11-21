@@ -21,7 +21,7 @@ namespace NorvesLib::Core::Rendering
     /** @brief 速度の最大を求めるtileの一辺（画素）。隣の3×3 tileで上限の長さまで届く。 */
     inline constexpr uint32_t MotionBlurTileSize = 64u;
 
-    /** @brief 仮想フレーム率が実フレーム率より低く、シャッター時間が実フレーム長を超えるときのvelocityの最大倍率。 */
+    /** @brief シャッター時間が実フレーム長（明示指定時はFrameDuration）を超えるときのvelocityの最大倍率。 */
     inline constexpr float MotionBlurMaxStretch = 2.0f;
 
     /**
@@ -40,7 +40,7 @@ namespace NorvesLib::Core::Rendering
         float FrameDuration = 1.0f / 24.0f;
     };
 
-    /** @brief シャッター時間/フレーム長（0〜1）。無効な値や0のシャッターは0。 */
+    /** @brief シャッター時間/フレーム長を0〜MotionBlurMaxStretchの範囲に制限する。無効な値や0のシャッターは0。 */
     inline float ComputeMotionBlurShutterFraction(const MotionBlurSettings& settings)
     {
         if (!std::isfinite(settings.ShutterDuration) || !std::isfinite(settings.FrameDuration) ||
@@ -48,11 +48,11 @@ namespace NorvesLib::Core::Rendering
         {
             return 0.0f;
         }
-        return std::clamp(settings.ShutterDuration / settings.FrameDuration, 0.0f, 1.0f);
+        return std::clamp(settings.ShutterDuration / settings.FrameDuration, 0.0f, MotionBlurMaxStretch);
     }
 
     /**
-     * @brief 画面velocityに掛ける倍率。明示したシャッター時間を優先し、その場合の倍率は最大1。
+     * @brief 画面velocityに掛ける倍率。明示したシャッター時間を優先し、その場合もMotionBlurMaxStretchで頭打ちにする。
      *
      * 指定がなければカメラのシャッター角（上限360度）を使う。カメラが無い場合や角度が有限の正値でない場合は0。
      * 実フレーム率では角度の割合をそのまま使う。仮想フレーム率ではシャッター時間を実フレーム長で割り、
