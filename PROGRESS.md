@@ -13160,3 +13160,10 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - U15 知覚の草の照会を倍率と先端の高さを返す QueryOcclusion の多重定義に通す: 着地(直し 0 回)
 - U16 反応の遅れを更新の中で求めた閾値の通過時刻から数える: 着地(直し 0 回)
 - U17 設計文書を草の照会と反応の遅れの直しに合わせ、Game のビルドを通す: 着地(直し 0 回)
+## G13-GR24-SENSE-MODELS 差し戻しの直しの仕上げ（2026-11-22、run 20261122-090007・反復 1）
+- Done: (1) 知覚の草の照会を `GrassField::QueryOcclusion(a, b, stepMeters, pDryness, opacityScale, pOutMaxTopHeight)` に通した。τ に `grass.opacityScale` を掛けてから exp を 1 回だけ取り、視線上の草の先端の最大高さを返す。`QueryOpticalDepth` は private の内部関数にし、2 引数版・4 引数版は宣言も値も今のまま。ポートの `GrassPathSample` は透過率 `Transmittance` と `MaxTopHeight` になり、`EngineGrassFieldSource` はこの `QueryOcclusion` を呼ぶ。`VisionModel` は目が先端の最大以上なら 1、それ以外は照会の透過率を使う。(2) 反応の遅れを、更新の中で積分前の値と増加率から求めた閾値の通過時刻から数える（更新の前から閾値以上なら更新の先頭から）。I=1・感度 10・Gain 1.5・ジッター 0 で dt 0.2 s なら Alert は 0.4 s、dt 0.01 s なら 0.36 s の更新で上がる。(3) 設計文書 `Docs/Architecture/AIModule.md` の知覚のモデルを合わせた。
+- 証拠: `.harness/runs/20261122-090007/verify-G13-GR24-SENSE-MODELS-U17.txt`（`cmake --build build --config Debug --target Game -- /m:1` が exit=0・エラー 0 で `Game.exe` まで生成。警告は既存の LNK4099 だけ）。
+- 試験: 試験は作らず回していない（人の決まり）。
+- 人が見るときの見どころ: まだ知覚の処理へ配線していない（G13-GR24-PERCEPTION-SERVICE の受け持ち）ので、ゲームの見た目と動きは変わらない。
+- Next: ランナーの評価者の反証（`GrassField` は Public API）。配線・`PerceptionTuning` の読み込み・固体の遮蔽は G13-GR24-PERCEPTION-SERVICE。
+- Notes: 採った判断: 目が草の先端より高いときに 1 にする判定は `QueryOcclusion` の中でなく `VisionModel` に置いた（`QueryOcclusion` は区間の透過率と先端の最大高さを返す汎用の照会のまま）。既知の限界（嗅覚の真横が風上より薄い・聴覚の風の係数で約 3.9 m/s 超の風下/風上比が 1.6 を超える・目の高さが先端の最大をまたぐ所の段差）は前の仕上げの Notes のまま。
