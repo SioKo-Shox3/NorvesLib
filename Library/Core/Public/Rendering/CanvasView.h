@@ -24,6 +24,9 @@ namespace NorvesLib::Core::Rendering
         static BlendMode NormalizeBoardBlendMode(BlendMode blendMode);
         static RHI::BlendAttachmentDesc CreateBoardBlendAttachmentDesc(BlendMode blendMode);
 
+        /// Opaque とマスクシェーダーの組は被覆率で合成し、マスクの外では下の画素を残す。
+        static RHI::BlendAttachmentDesc CreateBoardBlendAttachmentDesc(BlendMode blendMode, BoardShaderKind shaderKind);
+
         bool Initialize(const ViewSettings& settings) override;
         void Shutdown() override;
         void Render(ViewRenderContext& context) override;
@@ -75,6 +78,8 @@ namespace NorvesLib::Core::Rendering
         void ClearBoardDrawCommands();
         void RetainBoardFrameResources(const RetainedBoardFrameResources &resources);
         bool EnsureBoardSharedResources(RHI::IDevice *device);
+        // 正規化した種類に対応する板描画用の共有サンプラーを返す。
+        RHI::SamplerPtr GetBoardSampler(BoardSampler sampler) const;
         CanvasLayerCompositeConfig GetLayerCompositeConfig(uint32_t layerPriority) const;
         static void AddRetainedTexture(RetainedBoardFrameResources &resources, RHI::TexturePtr texture);
         static void AddRetainedRenderPass(RetainedBoardFrameResources &resources, RHI::RenderPassPtr renderPass);
@@ -93,6 +98,9 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_NextBoardInsertionSequence = 0;
         RHI::TexturePtr m_BoardFallbackWhiteTexture;
         RHI::SamplerPtr m_BoardPointClampSampler;
+        // 基準のミップ段だけを線形補間するサンプラーと、ミップ段間も線形補間するサンプラー。
+        RHI::SamplerPtr m_BoardLinearClampSampler;
+        RHI::SamplerPtr m_BoardLinearMipClampSampler;
         // フレームの持ち主から板の記述子セットを借りるときの共有のレイアウト（EnsureBoardSharedResources で 1 回引く）
         RHI::DescriptorSetLayoutPtr m_BoardDescriptorSetLayout;
         // フレームの持ち主から層の合成の記述子セットを借りるときの共有のレイアウト（EnsureBoardSharedResources で 1 回引く）

@@ -73,6 +73,15 @@ namespace NorvesLib::Core::Component
         void SetUVRect(const Math::Vector4 &uvRect);
         Math::Vector4 GetUVRect() const { return getUVRectProp().Get(); }
 
+        void SetSampler(Rendering::BoardSampler sampler);
+        Rendering::BoardSampler GetSampler() const { return SamplerProp.Get(); }
+
+        void SetShaderKind(Rendering::BoardShaderKind shaderKind);
+        Rendering::BoardShaderKind GetShaderKind() const { return ShaderKindProp.Get(); }
+
+        void SetShaderParams(const Math::Vector4 &shaderParams);
+        Math::Vector4 GetShaderParams() const { return ShaderParamsProp.Get(); }
+
         bool SetFlipbookGrid(uint32_t textureWidth,
                              uint32_t textureHeight,
                              uint32_t cellWidth,
@@ -159,6 +168,11 @@ namespace NorvesLib::Core::Component
         PROPERTY(uint32_t, FirstFrameIndex)
         ECS_PROPERTY(Ecs::EcsBoardRender, LayerPriority, uint32_t, LayerPriority)
         ECS_PROPERTY(Ecs::EcsBoardRender, OrderInLayer, uint32_t, OrderInLayer)
+
+        // Canvas の板の引き方、シェーダーの種類、板ごとの値。ECS の行には持たず、BuildBoardProxy でプロキシへ写す。
+        PROPERTY(Rendering::BoardSampler, SamplerProp)
+        PROPERTY(Rendering::BoardShaderKind, ShaderKindProp)
+        PROPERTY(Math::Vector4, ShaderParamsProp)
 
         Math::Matrix4x4 m_WorldTransform;
         Math::Matrix4x4 m_PreviousWorldTransform;

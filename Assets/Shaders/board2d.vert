@@ -10,6 +10,10 @@ layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec2 fragUV;
+// 円弧のシェーダーが読む板ごとの値。
+layout(location = 2) flat out vec4 fragParams;
+// 円弧と円のマスクに使う、反転前の板の中の UV。
+layout(location = 3) out vec2 fragLocalUV;
 
 void main()
 {
@@ -60,4 +64,6 @@ void main()
     gl_Position = vec4(ndc, 0.0, 1.0);
     fragColor = instanceData.objectColor;
     fragUV = uvRect.xy + sampleUV * uvRect.zw;
+    fragParams = vec4(instanceData.normalRows[2].zw, instanceData.customData.zw);
+    fragLocalUV = sampleUV;
 }

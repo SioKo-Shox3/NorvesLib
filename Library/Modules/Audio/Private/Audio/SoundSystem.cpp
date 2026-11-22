@@ -3,6 +3,7 @@
 #include "Audio/AudioClipResource.h"
 #include "Audio/AudioClipLoader.h"
 #include "Audio/AudioDomain.h"
+#include "Audio/AudioMixerDomain.h"
 #include "Asset/AssetSystem.h"
 #include "Logging/LogMacros.h"
 
@@ -16,6 +17,37 @@ namespace NorvesLib::Modules::Audio::Private
     {
         constexpr float kSoundVirtualEnterDistanceScale = 1.05f;
         constexpr float kMinimumFadeSeconds = 2.0f / 60.0f;
+
+        AudioBusId GetCategoryBus(SoundCategory category)
+        {
+            return category == SoundCategory::Ambience ? AudioBusId::Ambient : AudioBusId::Se;
+        }
+
+        // バンクの bus、cook 済みクリップのカテゴリの順に送り先を決め、どちらもなければ Se を使う。
+        // 定義の category は送り先の判定に使わない。
+        AudioBusId ResolveOutputBus(const SoundDefinition& definition, const AudioClipResource& clip)
+        {
+            if (definition.bHasBus)
+            {
+                return definition.Bus;
+            }
+            using Core::Asset::CookedAudioCategory;
+            switch (clip.GetCookedCategory())
+            {
+            case CookedAudioCategory::Sfx:
+            case CookedAudioCategory::Footstep:
+                return AudioBusId::Se;
+            case CookedAudioCategory::Ambience:
+                return AudioBusId::Ambient;
+            case CookedAudioCategory::Music:
+                return AudioBusId::Music;
+            case CookedAudioCategory::Ui:
+                return AudioBusId::Ui;
+            case CookedAudioCategory::Unspecified:
+                break;
+            }
+            return AudioBusId::Se;
+        }
 
         bool IsValidFade(const SoundFade& fade)
         {
@@ -54,6 +86,11 @@ namespace NorvesLib::Modules::Audio::Private
     {
     }
 
+    void SoundSystem::BindMixer(AudioMixerDomain* mixer)
+    {
+        m_Mixer = mixer;
+    }
+
     bool SoundSystem::IsOwnerThread() const
     {
 #if NORVES_BUILD_DEBUG
@@ -73,6 +110,11 @@ namespace NorvesLib::Modules::Audio::Private
         if (!IsOwnerThread() || m_bShutdown)
         {
             return AudioResult::InvalidState;
+        }
+        if (m_Mixer)
+        {
+            // ゲーム側で個別に設定を読む必要がないよう、最初のバンクと同じアセットから Audio/Mixer.json を読む。
+            m_Mixer->EnsureDefaultConfigLoaded(assets);
         }
         if (m_Banks.find(Core::Identity(bankLogicalPath)) != m_Banks.end())
         {
@@ -186,6 +228,7 @@ namespace NorvesLib::Modules::Audio::Private
         if (!definition.Id.IsValid() || definition.Clips.empty() ||
             m_Definitions.find(definition.Id) != m_Definitions.end() ||
             static_cast<uint32_t>(definition.Category) >= kSoundCategoryCount ||
+            (definition.bHasBus && static_cast<uint32_t>(definition.Bus) >= kAudioBusCount) ||
             !std::isfinite(definition.VolumeDb) || !std::isfinite(definition.VolumeJitterDb) ||
             definition.VolumeJitterDb < 0.0f || !std::isfinite(definition.PitchJitterSemitones) ||
             definition.PitchJitterSemitones < 0.0f || !std::isfinite(definition.DedupeRadius) ||
@@ -432,6 +475,7 @@ namespace NorvesLib::Modules::Audio::Private
         const SoundDefinition& definition = found->second;
         Instance instance;
         instance.DefinitionId = id;
+        instance.DuckTag = definition.DuckTag;
         instance.Params = params;
         instance.OwnerKey = params.OwnerKey;
         instance.Position = position;
@@ -508,6 +552,7 @@ namespace NorvesLib::Modules::Audio::Private
         }
         if (instance.Clip)
         {
+            instance.VoiceDesc.OutputBus = ResolveOutputBus(definition, *instance.Clip);
             instance.PcmBlob = instance.Clip->GetPcmBlob();
             instance.Format = instance.Clip->GetFormat();
             instance.FrameCount = instance.Clip->GetFrameCount();
@@ -810,8 +855,12 @@ namespace NorvesLib::Modules::Audio::Private
 
     float SoundSystem::GetVoiceVolume(const Instance& instance) const
     {
-        return instance.BaseGain * instance.Params.Volume * instance.Gain *
-               m_CategoryVolumes[static_cast<uint32_t>(instance.Category)] * m_MasterVolume * instance.SpatialVolumeScale;
+        float volume = instance.BaseGain * instance.Params.Volume * instance.Gain;
+        if (!m_Mixer)
+        {
+            volume = volume * m_CategoryVolumes[static_cast<uint32_t>(instance.Category)] * m_MasterVolume;
+        }
+        return volume * instance.SpatialVolumeScale;
     }
 
     AudioResult SoundSystem::ApplyVolume(Instance& instance)
@@ -1026,6 +1075,25 @@ namespace NorvesLib::Modules::Audio::Private
                 m_Service.StopVoice(instance.Voice);
             }
         }
+
+        if (m_Mixer)
+        {
+            AudioMixerActivity activity;
+            for (const Instance& instance : m_Instances)
+            {
+                if (!instance.bActive || instance.bVirtual || instance.bStopVoiceIssued)
+                {
+                    continue;
+                }
+                ++activity.ActiveInstancesPerBus[static_cast<uint32_t>(instance.VoiceDesc.OutputBus)];
+                auto& tags = activity.ActiveDuckTags;
+                if (instance.DuckTag.IsValid() && std::find(tags.begin(), tags.end(), instance.DuckTag) == tags.end())
+                {
+                    tags.push_back(instance.DuckTag);
+                }
+            }
+            m_Mixer->Update(deltaSeconds, activity);
+        }
     }
 
     AudioResult SoundSystem::SetVolume(SoundInstanceHandle handle, float volume)
@@ -1167,6 +1235,11 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return;
         }
+        if (m_Mixer)
+        {
+            m_Mixer->SetUserBusVolume(AudioBusId::Master, volume);
+            return;
+        }
         m_MasterVolume = volume;
     }
 
@@ -1176,7 +1249,7 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return 0.0f;
         }
-        return m_MasterVolume;
+        return m_Mixer ? m_Mixer->GetUserBusVolume(AudioBusId::Master) : m_MasterVolume;
     }
 
     void SoundSystem::SetCategoryVolume(SoundCategory category, float volume)
@@ -1184,6 +1257,11 @@ namespace NorvesLib::Modules::Audio::Private
         if (!IsOwnerThread() || m_bShutdown || static_cast<uint32_t>(category) >= kSoundCategoryCount ||
             !IsValidVolume(volume))
         {
+            return;
+        }
+        if (m_Mixer)
+        {
+            m_Mixer->SetUserBusVolume(GetCategoryBus(category), volume);
             return;
         }
         m_CategoryVolumes[static_cast<uint32_t>(category)] = volume;
@@ -1195,7 +1273,7 @@ namespace NorvesLib::Modules::Audio::Private
         {
             return 0.0f;
         }
-        return m_CategoryVolumes[static_cast<uint32_t>(category)];
+        return m_Mixer ? m_Mixer->GetUserBusVolume(GetCategoryBus(category)) : m_CategoryVolumes[static_cast<uint32_t>(category)];
     }
 
     SoundSystemDiagnostics SoundSystem::GetDiagnostics() const
@@ -1233,6 +1311,10 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 ReleaseSlot(index);
             }
+        }
+        if (m_Mixer)
+        {
+            m_Mixer->ResetActivity();
         }
         m_Banks.clear();
         m_Definitions.clear();
