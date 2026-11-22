@@ -8785,14 +8785,18 @@
 - notes: ロードマップ 2945・2960 行、要件 `#### GR95` の「runtime との分担」(AudioClipResource に Loop・Gain・Category を持たせる)と `#### GR74` の P5。`AudioClipLoader` は G8-GR72-SOUND-SYSTEM が作る。M9 の側の直の読み込み(`Game/GameApplicationHandler.cpp` の M9 のクリップの読み込み)はこの項目でも触らない(G8 の notes と同じ)。危険地帯: アセットの読み込みと Resource の寿命なので評価者を通す。
 
 ## G16-GR75-FOOTSTEPS: 足音の仕組み(接地の出来事・歩様と地表のキーの連鎖・同じ音を続けない袋・強さの写像・濡れの層・歩幅からの位相の累積)を、入力の seam の背後にデータ駆動で作る
-- status: blocked
+- status: todo
 - after: G16-GR73-SPATIAL-LISTENER, G8-GR72-AUDIO-SPI, G8-GR72-SOUND-SYSTEM, G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR75
 - needs-gr: GR72
-- done-when: (1) `Public/Audio/FootstepSystem.h`(IAudioModule のメンバ): `FootfallEvent{Entity, FootIndex, Position, Speed, GaitId, Intensity}` と seam `ISurfaceQuery::Query(position) → {SurfaceName, Wetness 0..1, PuddleDepth}`(供給が無い間は default・0・0)。キーの連鎖 `footstep.<歩様>.<地表>` → `footstep.<歩様>.default` → `footstep.default.<地表>` → `footstep.default.default`(無音は定義で明示したときだけ。連鎖の果てでも無ければ診断に出して鳴らさない)、no-repeat のシャッフルバッグ(`Random::Generator` を注入)、強さ → 音量とピッチの写像、乾きと濡れの層の等パワー(g_dry²+g_wet²=1)、水たまりの深さで水しぶきの層。足の位置へ 3D の `PlayAt`。(2) `FootfallPhaseAccumulator`(接地の印の無い動きの代え): 速度と歩幅で位相を進め、左右を交互にし、閾値未満の速度で発火せず、向きの反転で重複しない。(3) 足音の JSON のスキーマ(`gait_names` = locomotion.v1 の歩様の番号 → キーの名前。既定 walk・trot・canter・gallop は仮。surface・wetness の区間・intensity の写像・no_repeat)と検査(存在しない SoundId・3d の stereo・曲線の点が単調でない設定を拒否)と再読込の口(`Reload(bytes)`。不正なら直前の有効な定義を保って診断に出す。ファイルの監視は G18 の GR99)。試験の定義は `Test/Modules/Audio/Fixtures/` に置く(既定のデータは G16-GR75-REAL-INPUTS)。(4) 試験 `AudioFootstepTest`(`AudioBackendLifetimeTest` の束の MEMBER): 歩様 × 地表 × 濡れの全部の組合せ(欠落を意図して作る)でキーの連鎖が期待のフォールバック先になり、無音は明示のときだけ。固定のシードで 10,000 回引いて同じ clip が続かず、出現率が一様から ±5% 以内。位相の累積の発火数が v·T/歩幅 ±1、左右が交互、閾値未満で発火なし、向きの反転で重複なし。Wetness 0→1 で g_dry²+g_wet²=1(±1e-3)。再読込で次の Update から新しい定義、不正な JSON で前の定義を保つ。閾値は実装の前に `Docs/AudioValidation/GR75Acceptance.md`(新規)へ固定する。既存の試験が通る。
-- verify: `cmake --build build --config Debug --target AudioBackendLifetimeTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(AudioFootstepTest|AudioSpatialTest|AudioPlaybackTest|AudioBackendLifetimeTest|AudioModuleLifecycleTest|AudioModuleRegistryTest)$" --no-tests=error --output-on-failure --timeout 300`
-- paths: Library/Modules/Audio, Test/Modules/Audio, Docs/Architecture/AudioFlow.md, Docs/AudioValidation/GR75Acceptance.md, Docs/Testing.md, TASKS.md, PROGRESS.md
+- done-when: (1) `Public/Audio/FootstepSystem.h`(IAudioModule のメンバ): `FootfallEvent{Entity, FootIndex, Position, Speed, GaitId, Intensity}` と seam `ISurfaceQuery::Query(position) → {SurfaceName, Wetness 0..1, PuddleDepth}`(供給が無い間は default・0・0)。キーの連鎖 `footstep.<歩様>.<地表>` → `footstep.<歩様>.default` → `footstep.default.<地表>` → `footstep.default.default`(無音は定義で明示したときだけ。連鎖の果てでも無ければ診断に出して鳴らさない)、no-repeat のシャッフルバッグ(`Random::Generator` を注入)、強さ → 音量とピッチの写像、乾きと濡れの層の等パワー(g_dry²+g_wet²=1)、水たまりの深さで水しぶきの層。足の位置へ 3D の `PlayAt`。
+  (1a) no_repeat の層(dry・wet・splash)は、実際に再生に成功した実クリップの並びで、候補が 2 つ以上なら同じクリップが続かない。袋の直前の値と読み位置は再生に成功したときだけ進める(取り出しと確定を分ける。クールダウン・重複の抑止・発音数で拒否された接地は袋を進めない)。音の定義の集合が変わったら(RegisterDefinition・UnregisterDefinition とそれを通る LoadBank・UnloadBank、SoundSystem の作り直し)、次の接地までに全層の候補を作り直す(SoundSystem に定義の版を 1 つ足して比べる。消えた定義・3d で stereo になった定義は候補から外す。共有の PlayAt の周りの差分は小さく保つ)。
+  (2) `FootfallPhaseAccumulator`(接地の印の無い動きの代え): 速度と歩幅で位相を進め、左右を交互にし、閾値未満の速度で発火せず、向きの反転で重複しない。
+  (3) 足音の JSON のスキーマ(`gait_names` = locomotion.v1 の歩様の番号 → キーの名前。既定 walk・trot・canter・gallop は仮。surface・wetness の区間・intensity の写像・no_repeat)と検査(存在しない SoundId・3d の stereo・曲線の点が単調でない設定を拒否)と再読込の口(`Reload(bytes)`。不正なら直前の有効な定義を保って診断に出す。ファイルの監視は G18 の GR99)。
+  確かめは Debug の Game のビルドが通ること。試験は作らない・回さない(AudioFootstepTest・試験の fixture・ctest は外した)。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Modules/Audio, Docs/Architecture/AudioFlow.md, Docs/AudioValidation/GR75Acceptance.md, TASKS.md, PROGRESS.md
+- effort: max
 - notes: ロードマップ 2963・3009 行、段階をまたぐ注意 4419・4458・4486 行(歩様の識別子の正本は GR05 の歩様の表、接地は GR11 の `Foot.<脚>.Down`)。今の locomotion.v1 の歩様は名前の無い 4 つの番号(`QuadrupedLocomotionJson.cpp:123-126`・`QuadrupedLocomotionParams.h:16`)で、Animator には `GaitId` のパラメータで渡る(G4-GR05-COMPONENT-CASES)。そこで番号を正本にし、音のキーの名前への写しは足音の JSON に持つと決めた(G4 の locomotion.v1 の形は変えない)。地表の名前は G5 の GR38 の SurfaceId の表の名前に合わせる。`SurfaceTagComponent` は作らず、物理の公開の型に欄を足さない(ロードマップ 2963 行)。共有の `SoundSystem` の PlayAt の周りは差分を小さくする。実の入力は G16-GR75-REAL-INPUTS。試験を足す前に `Docs/Testing.md` の 3 点を書く。
 
 ## G16-GR75-EVENTS: 名前付きの音のイベントの対応表・衝突の強さから音への写像・AI に渡す音の出来事の待ち行列を作る
