@@ -8785,7 +8785,7 @@
 - notes: ロードマップ 2945・2960 行、要件 `#### GR95` の「runtime との分担」(AudioClipResource に Loop・Gain・Category を持たせる)と `#### GR74` の P5。`AudioClipLoader` は G8-GR72-SOUND-SYSTEM が作る。M9 の側の直の読み込み(`Game/GameApplicationHandler.cpp` の M9 のクリップの読み込み)はこの項目でも触らない(G8 の notes と同じ)。危険地帯: アセットの読み込みと Resource の寿命なので評価者を通す。
 
 ## G16-GR75-FOOTSTEPS: 足音の仕組み(接地の出来事・歩様と地表のキーの連鎖・同じ音を続けない袋・強さの写像・濡れの層・歩幅からの位相の累積)を、入力の seam の背後にデータ駆動で作る
-- status: todo
+- status: blocked
 - after: G16-GR73-SPATIAL-LISTENER, G8-GR72-AUDIO-SPI, G8-GR72-SOUND-SYSTEM, G8-GR72-AUDIO-COMPONENT-BOOT
 - gr: GR75
 - needs-gr: GR72
