@@ -8595,7 +8595,7 @@
 - notes: 選定課題 G14-S5（DOF の方式。ロードマップ 4569 行）は推奨の (a) を採る: 半解像度の新しい 4 パスを既定にし、今の全探索を Reference の品質として併存させる。理由: 今の全探索は上限の半径の二乗で標本が増え（要件の設計案の見積り、1080p で約 51 億標本）、要件の例（50mm・f/1.8・被写体 1.5 m・前景の草 0.4 m で半径約 59 画素）が上限 16 画素に収まらない。PT 参照（R8-P4 の規則）に収まらなければ、退路として Wide を半径 16 画素を超えるときだけに限る（G14-GR62-REFERENCE-CHECK で判定）。既定を Wide にして見た目が変わるのは、ピントを入れる FollowCameraComponent を使う DogMovementSmoke（ランチャーに載らない）だけ。ほかのシーンは FocusDistance=0 で DOF が働かない（Game での SetFocusDistance の呼び出しは FollowCameraComponent.cpp:314・361 だけ）。標本 48 のノイズと段は TAA を使わない設定で目立つので、Composite の後の小さなフィルタは必要なら入れる。アルファハッシュの草（GR27）・深度を書かない雨（GR58）の CoC は正しく出ない（ロードマップ 2888 行。範囲外）。GPU の時間は G14-GR62-REFERENCE-CHECK で記録だけ。試験を足す理由: Reference の品質の byte 一致が崩れると R8-P4 の参照比較の前提が黙って変わり、広い CoC の半径の取り違えは撮影では程度の差にしか見えない。危険地帯（RenderThread・シェーダー・PT）。評価者を通す。
 
 ## G14-GR62-DIRECTOR: Cinematic モジュールを新設し、ゲームカメラとショットを重ねて最終のカメラを Game の OnLateUpdate で 1 回だけ確定する CameraDirector・ブレンド・ピント・手持ちの揺れ・レターボックスを足す
-- status: todo
+- status: blocked
 - after: G14-GR62-LENS-SHUTTER
 - gr: GR62
 - needs-gr: GR13
