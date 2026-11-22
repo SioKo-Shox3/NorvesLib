@@ -212,6 +212,57 @@ step  = base + (base * extra) / 128
 
 `LocomotionProfileCache` は論理パスごとに初回だけ資産を読み、Core の `QuadrupedLocomotionParams` を共有する。空パスは既定値、読み込み・解析失敗時は既定値をそのパスに保持する。`MotorProfilePath` のプロパティ適用時はそのパスで引き直し、モジュールの終了時にキャッシュを消す。配布するオオカミのプロファイルは `locomotion.v1` で、4 歩様の速度上限 1.8、4.5、9、15 m/s を含む値は仮の調整値である。[LocomotionProfileCache.cpp](../../Library/Modules/AI/Private/AI/Motor/LocomotionProfileCache.cpp)・[Wolf.json](../../Assets/AI/Locomotion/Wolf.json)
 
+## 知覚のモデル
+
+草と風は GameThread でポートを通して読む。どちらの Engine 実装も参照先を借りる。
+
+| ポート | 既定の値 | Engine 実装 |
+|---|---|---|
+| `IGrassFieldSource::QueryGrassPath` | 草なし。`GrassPathSample` の透過率 `Transmittance` は 1、草の先端の最大高さ `MaxTopHeight` は −∞ | `EngineGrassFieldSource` は `Vegetation` の枯れ度マップと `grass.opacityScale` を `GrassField::QueryOcclusion(a, b, stepMeters, pDryness, opacityScale, &maxTop)` に渡し、透過率と先端の最大高さを得る。 |
+| `IWindSource::SampleWind` | 無風。風速は零ベクトル | `EngineWindSource` は `EnvironmentSystem` が解決した `WindParameters`（`Resolve().Wind`）を使い、ワールド位置と描画と共通の風の時計を `EvaluateWind` に渡して風速（m/s）を得る。 |
+
+**視覚（`VisionModel`）。** 目から対象の各点までの可視度を求め、その最大値を採る。
+
+```text
+visibility = grassTransmittance * terrainClear * angleWeight * distanceWeight
+```
+
+`terrainClear` は地形が視線を遮ると 0、通れば 1。視野の縁と最大距離に近づくと、それぞれの重みが滑らかに 0 まで下がる。`FieldOfViewEdgeDegrees <= 0` または `FadeStartMeters >= MaxDistanceMeters` なら調整値が不正なため、可視度は 0 になる。
+`GrassField::QueryOcclusion` は密度・草丈・GR42 の種別表の `Opacity` から、視線に沿って光学的厚さ `τ` を積分する。倍率付きの多重定義は `τ` に `grass.opacityScale` を掛けてから指数関数を一度だけ適用し、透過率 `exp(-τ * grass.opacityScale)` を返す。2 引数版と 4 引数版の透過率は `exp(-τ)` である。
+草のある各積分点で、地面の高さに枯れ度を反映した草丈を足し、その最大値を `MaxTopHeight` とする。`VisionModel` は目の高さが `MaxTopHeight` 以上なら `grassTransmittance` を 1 とし、それより低ければ照会で得た透過率を使う。
+
+枯れ度は `QueryOcclusion` の積分の中で一度だけ反映する。描画と共通の `GrassEffectiveDryness` でマップと植生層の基礎枯れ度の大きい方を採り、種別の `DensityScale` と `HeightScale` に向けて密度・草丈の倍率を補間する。
+遠景の帯で草丈を潰す処理は描画に限る。踏み倒し（GR44）は GPU の場だけに記録され、CPU から読めないため、知覚の透過率には含まれない。
+
+**聴覚（`HearingModel`）。** 音響経路の利得と、開けた場所での可聴半径から得た閾値との差を線形の聴覚量に換算する。
+
+```text
+excessDb = GainDb - ThresholdDb
+amount = 10^(excessDb / 10) * WindFactor * MaskingFactor
+intensity = 1 - exp(-amount)
+```
+
+`WindFactor` は音源から聞き手へ向かう水平風の成分で増減し、設定の上下限に収める。雨音によるマスキングは、音響評価器の騒音床と受音レベルから求める。音クラスがマスキング免除（`bExemptFromMasking`）なら `MaskingFactor = 1` とし、騒音床は結果の `NoiseFloorDb` に記録する。
+`amount >= 1` で可聴とし、量が大きいほど音源方向の誤差の上限は小さくなる。
+
+**嗅覚（`SmellModel`）。** 源の強さを `S`、水平距離を `d` とする。平滑化した水平風速の `smoothstep` を重みに、無風の濃さ `S * exp(-d / Lcalm)` と次の風の分布を補間する。風下方向の符号付き距離を `a`、風の軸からの横距離を `c` とする。匂いの濃さは雨の影響を受けない。
+
+- 風下（`a >= 0`）では、煙の濃さ `S * exp(-a / L_down) * exp(-c² / (2σ²))` を使う。幅 `σ = base + spread * a` は風下ほど広がる。
+- 風上（`a < 0`）では、濃さは `S * UpwindFactor * exp(-d / L_up)` となる。
+
+**気づき（`AwarenessIntegrator`）。** 刺激の強さ `I` を 0～1 に収め、気づき `a` を時間刻み `dt`（秒）で更新する。個体の感度はこの積分の増加項だけに掛ける。
+
+```text
+a = clamp(a + (Gain * I * Sensitivity - Decay * (1 - I)) * dt, 0, 1)
+```
+
+`Suspicious` と `Alert` は昇格の保留を別々に持つ。各段階の閾値に達するまでの時間を、閾値と積分前の気づきの差を増加率で割って求める。その時点から、シードと反応回数で決まる遅れを数える。更新開始時にすでに閾値以上なら、更新の先頭から数える。`Suspicious` への昇格を待つ間も、`Alert` の閾値に達すればその遅れが進む。閾値からヒステリシス幅を引いた値を下回ると、その段階からの降格または保留解除が即座に起こる。
+閾値に達してから更新の終わりまでの時間も遅れに算入するため、更新間隔の分だけ余計に待つことはない。たとえば初期値 `a = 0`、`I = 1`、感度 10、`Gain = 1.5` なら、`Alert` の閾値 0.8 に約 0.053 秒で達する。遅れ 0.3 秒、ジッター 0、`dt = 0.2` 秒なら、開始から 0.4 秒の更新で `Alert` に昇格する。
+位置を伴う刺激が途絶えて `MemorySeconds` が経つと、最終既知位置を忘れる。
+
+調整値は `Assets/AI/PerceptionTuning.json` にあり、同梱値も組み込みの既定値も仮の値である。`LoadPerceptionTuningFromAssetFile` は指定の項目を既定値に重ね、検証に成功したときだけ `PerceptionTuning` を更新する。`vision.fieldOfViewEdgeDegrees` は有限の正の値だけを受け付ける。
+実行時にこのファイルを読み込んで各モデルを知覚処理につなぐことと、物理のレイによる固体の遮蔽判定は G13-GR24-PERCEPTION-SERVICE が担当する。[PerceptionTuning.json](../../Assets/AI/PerceptionTuning.json)
+
 ## デバッグ描画と対象範囲
 
 格子の印はカメラ位置を中心とする XZ 円内だけを `DebugDrawQueue` に送る。既定半径は 24 m、地面からの高さは 0.05 m、1 回の上限は 4096 セル。複数のフラグがあれば表の上から最初に一致した色を使う。

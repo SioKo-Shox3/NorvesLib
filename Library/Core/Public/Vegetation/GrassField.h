@@ -7,6 +7,8 @@
 
 namespace NorvesLib::Core::Vegetation
 {
+    class DrynessMap;
+
     /** @brief 草の場のチャンク寸法と画素数。寸法は有限の正数、解像度は正数を指定する。 */
     struct GrassFieldDesc
     {
@@ -79,6 +81,24 @@ namespace NorvesLib::Core::Vegetation
         float QueryTopHeight(float x, float z) const;
         /** @brief 区間を 0.5m 以下の刻みで積分した透過率（0..1）を返す。 */
         float QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b) const;
+        /**
+         * @brief 区間を stepMeters 以下の刻みで積分した透過率（0..1）を返す。積分回数には上限がある。
+         * stepMeters が有限の正数でなければ 0.5 m を使う。0.5 m かつ pDryness が nullptr なら 2 引数版と一致する。
+         * pDryness を渡すと、DrynessMap::Sample と LayerB の A による基礎の枯れ度の大きい方を描画と同様に使う。
+         * 種別の枯れ度応答で密度と草丈を補正し、枯れ度 0 の点では補正なしの値とビット一致する。
+         * 踏み倒し（GR44）は GPU 上の場にのみ記録され、CPU から読めないため含めない。
+         */
+        float QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
+                             const DrynessMap* pDryness = nullptr) const;
+        /**
+         * @brief 刻みと枯れ度は 4 引数版と同様に扱い、積分した光学的厚さ τ から透過率（0..1）を返す。
+         * τ に opacityScale を掛けてから指数関数を 1 回だけ適用し、exp(-τ × opacityScale) を求める。
+         * opacityScale が有限の非負数でなければ倍率 1 を使う。倍率が 0 なら透過率は 1、それ以外で τ が NaN なら 0。
+         * pOutMaxTopHeight には草のある積分点での、地面の高さと枯れ度を反映した草丈の和の最大値（m）を書く。
+         * 草のある積分点がない場合や区間が不正な場合は負の無限大を書く。
+         */
+        float QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
+                             const DrynessMap* pDryness, float opacityScale, float* pOutMaxTopHeight = nullptr) const;
         GrassSurface QuerySurface(float x, float z) const;
         float GetCameraClearance(const Math::Vector3& position) const;
         Container::TSharedPtr<const Rendering::GrassFieldRenderData> BuildRenderData() const;
@@ -104,8 +124,17 @@ namespace NorvesLib::Core::Vegetation
         const Chunk* FindChunk(GrassChunkCoord coord) const;
         const uint8_t* ReadPixel(const Chunk& chunk, int32_t pixelX, int32_t pixelZ,
                                  bool bLayerA) const;
-        Math::Vector3 SampleLayer(const Chunk& chunk, float localX, float localZ, bool bLayerA) const;
+        Math::Vector3 SampleLayer(const Chunk& chunk, float localX, float localZ, bool bLayerA,
+                                  float* pOutAlpha = nullptr) const;
+        GrassSample SampleInternal(float x, float z, float* pOutBaseDryness) const;
         float GetGroundHeight(float x, float z) const;
+        /**
+         * @brief QueryOcclusion の各版が使う積分で、区間の草の光学的厚さ τ（0 以上）を返す。
+         * pOutMaxTopHeight には草のある積分点での、地面の高さと枯れ度を反映した草丈の和の最大値（m）を書く。
+         * 草のある積分点がない場合や区間が不正な場合は負の無限大を書く。
+         */
+        float QueryOpticalDepth(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
+                                const DrynessMap* pDryness = nullptr, float* pOutMaxTopHeight = nullptr) const;
 
         GrassFieldDesc m_Desc;
         Container::UnorderedMap<uint64_t, Chunk> m_Chunks;
