@@ -13196,3 +13196,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - Done(2 回目の差し戻しの直し): 明示したリスナー位置は 1 声以上を評価した更新でだけ消費し、再評価の期限が来ていない更新では保留する。声の奪取・休眠では `AbortVoice` を先に呼び、声を実際に手放すときだけ遮蔽の追跡を外す。停止に失敗して鳴り続ける声は追跡と平滑化の今の値を保つので、音量が既定へ跳ばない。
 - Next(2 回目の差し戻しの直し): ランナーの評価者の判定(危険地帯: Public API の `IAudioService`・`IAudioOcclusion`、SPI の `IAudioBackend`)。起動の確かめは G13-GR116-AUDIO-CHECK。
 - Notes(2 回目の差し戻しの直し): 判断: 評価器が失敗を返した声も評価の枠を使ったものとして件数に入れる(その声は評価済みになり目標値を保つ)。奪取で停止に失敗して隔離になった声は、`SoundSystem` では外さず、更新器が次の Tick の初めに状態を見て外す。人が見るときの見どころ: 声の上限を超えて 3D の音を重ねたときと、遠ざかって休眠する音で、遮蔽のかかった音量がぶつ切れに戻らないこと。
+
+## G13-GR21-NAV-OBSTACLES の統合ブランチの取り込み(2026-11-22)
+- Done: `feature/scene-launcher` を取り込んだ。衝突した `Docs/Architecture/TickStages.md` のフレームの順序は統合側の書き方(`bWorldAdvance` のゲート・ポーズ中の更新)を採り、手順 3 に「AI は `FixedModulePre.PreFixedTick` で動く障害物の押印を更新してから操舵速度を確定する」を差し込んだ。`PROGRESS.md` は統合側を採った。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0・エラー 0 件・`Game.vcxproj -> build/Game/Debug/Game.exe` まで(`.harness/runs/20261122-051901/verify-merge-build.txt`)。
+- Notes: 試験は作らない・回さない決まりにより ctest の行は回していない。起動の確かめは G13-GR22-AI-SMOKE-CHECK。人が見るときの見どころ: `--ai-nav-smoke` で動く箱が経路を塞いだとき、代役が回り込んで目標へ着くこと。
