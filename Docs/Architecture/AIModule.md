@@ -6,7 +6,7 @@
 
 `Library/Modules/AI/CMakeLists.txt` は C++23 の静的ライブラリ `NorvesModule_AI` を定義し、`Core` と `NorvesModule_Physics` に `PRIVATE` リンクする。CharacterBody への依存は AI → Physics の一方向である。`Public/AI` にナビの型・照会・地形ポートと操舵の Component、`Private/AI` に格子の構築、探索、操舵、四足運動への接続、描画の実装を置く。ソースは `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)` で `Public/*.h`、`Private/*.h`、`Private/*.cpp` から集める。
 
-モジュールとサービスの設計上の入口は `RegisterAIModule`、`FindAIModule`、`IAIModule::GetNavigation()` である。登録後はレジストリからモジュールを引き、そこから `INavigationService` を借りる。モジュールは `NavigationService` とその `NavGrid` を所有する。寿命の遷移、タイルの出し入れ、経路の要求・参照・解放はすべて GameThread で行う。[IModule.h](../../Library/Core/Public/Module/IModule.h)
+モジュールとサービスの設計上の入口は `RegisterAIModule`、`FindAIModule`、`IAIModule::GetNavigation()` である。登録後はレジストリからモジュールを引き、そこから `INavigationService` を借りる。モジュールは `NavigationService` とその `NavGrid`、動的オーバーレイを所有する。寿命の遷移、タイルの出し入れ、経路の要求・参照・解放はすべて GameThread で行う。[IModule.h](../../Library/Core/Public/Module/IModule.h)
 
 | 寿命の段 | AI モジュールの契約 |
 |---|---|
@@ -22,7 +22,7 @@
 | 1 歩の順序 | その歩で行うこと |
 |---|---|
 | 1. World の `FixedBegin` | Transform と補間履歴を準備し、`Physics.FixedPre` が Kinematic の歩の開始位置を控える。 |
-| 2. `FixedModulePre.PreFixedTick` | 全モジュールの前段を実行する。AI は `SteeringSystem::BeginStep` で要求の変更と経路の再要求を受け付け、`NavigationService::RunBudget` で探索を進め、`SteeringSystem::Compute` でその歩の操舵速度を確定する。 |
+| 2. `FixedModulePre.PreFixedTick` | 全モジュールの前段を実行する。AI は `NavObstacleSystem::Step` で動く障害物の押印を更新し、`SteeringSystem::BeginStep` で要求の変更と経路の再要求を受け付け、`NavigationService::RunBudget` で探索を進め、`SteeringSystem::Compute` でその歩の操舵速度を確定する。 |
 | 3. World の `FixedTick` | `Physics.CharacterFixed` が固定駆動の CharacterBody に要求を出す。要求内の `BeforeSimulation` でモーターがその歩の操舵速度を変位に写し、続く `Physics.FixedStep` が物理を進める。 |
 | 4. モジュールの `FixedTick` | 物理はすでに一歩進んでいる。AI はここで位置を書き換えない。 |
 | 5. World の `FixedEnd` | Transform を確定し、補間履歴を記録する。 |
@@ -82,14 +82,42 @@ step  = base + (base * extra) / 128
 | `GetPathStatus` | `Pending`、`Succeeded`、`Partial`、`Failed`、`Cancelled` を区別する。無効または解放済みの枠は `Invalid`。 |
 | `GetPath` / `BuildPathPolyline` | 成功または部分到達の平滑化済み点列を借りる。他の状態では点列は空。折れ線を手元に保持する場合は `BuildPathPolyline` でコピーする。 |
 | `CancelPath` / `ReleasePath` | 前者は `Pending` を中止して `Cancelled` にする。後者は状態を問わず枠を返す。解放後はハンドルのコピーも借りた点列も使えない。 |
-| `IsPathStale` | 経路のセル列に加え、返す折れ線の各線分で `Raycast` が通行を調べたセル（角の両脇や格子線の両側を含む）について、タイルの座標と世代を記録する。1 点の経路でもその点で照会する。記録したタイルが一枚でも置換または解放されていれば真。[NavigationService.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavigationService.cpp) |
+| `IsPathStale` | 経路のセル列に加え、返す折れ線の各線分で `Raycast` が通行を調べたセル（角の両脇や格子線の両側を含む）について、タイルの座標・世代・動的な版（`DynamicVersion`）を記録する。1 点の経路でもその点で照会する。記録したタイルが解放されたか、世代または動的な版が変われば真となる。探索中に通過タイルの動的な版が変わった経路は、完成時点ですでに古い。[NavigationService.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavigationService.cpp) |
 | `FindNearestWalkable` / `IsWalkable` | 指定の探索半径内で XZ 距離が最小の通行可能セル中心を地面高で返す（同距離なら Z、X の昇順）。後者は指定位置のセルを通れるか返す。どちらもエージェントの半径を使う。 |
 | `NavRaycast` / `SampleCost` | 線分が最初に当たるセル・位置・進行割合を返す。XZ の変位がゼロでも、始点が格子線上なら両側のセルが判定対象になる（格子点では 4 セル）。後者は指定セルに直進で入るコストを返し、通行不能なら `kNavCostImpassable` を返す。[NavGridQueries.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavGridQueries.cpp) |
 | `FindProfile` / `SetExpansionBudget` / `GetExpansionBudget` | 名前でプロファイルを引く。予算は固定ステップ 1 歩で展開できる節点の合計として設定・取得する。 |
 
-**探索中の版管理。** `PreFixedTick` では最も古い要求から 1 本ずつ進める。1 本が終われば残った展開数を次の要求に渡し、予算を使い切れば次の歩に持ち越す。既定の **1500 展開は未計測の仮値**。処理中に格子の版が変わった場合、サービスは新しい版で `Begin` し直す。`NavPathfinder::Step` 自体は版の不一致で追加展開せず `Failed` になる。完成後の `IsPathStale` では格子全体の版より細かい、通過タイルごとの世代を使う。
+**探索中の版管理。** `PreFixedTick` では最も古い要求から 1 本ずつ進める。1 本が終われば残った展開数を次の要求に渡し、予算を使い切れば次の歩に持ち越す。既定の **1500 展開は未計測の仮値**。処理中に格子の版が変わった場合、サービスは新しい版で `Begin` し直す。`NavPathfinder::Step` 自体は版の不一致で追加展開せず `Failed` になる。完成後の `IsPathStale` では格子全体の版より細かい、通過タイルごとの世代と動的な版を使う。
 
 **平滑化。** `SmoothNavPath` は地面高のセル中心を順に調べ、現在の点から最初に見通しが遮られる直前の中心までを 1 線分にする。成功時は各線分が探索と同じ半径で `NavRaycast` 相当の `NavGridQueries::Raycast` を通る。角や格子線では両側のセルも調べる。1 セルなら 1 点を返す。これは通行可能性の保証で、草や浅瀬のコストは平滑化では再評価しない。[NavPathSmoothing.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavPathSmoothing.cpp)
+
+## 動く障害物
+
+`NavObstacleComponent` は `Initialize` で AI モジュールに登録され、最初の固定歩で所有 Entity の足跡を動的オーバーレイに押す。寸法はメートルで指定し、Entity の拡大率は掛けない。[NavObstacleComponent.h](../../Library/Modules/AI/Public/AI/Navigation/NavObstacleComponent.h)
+
+| PROPERTY | 足跡への反映 |
+|---|---|
+| `Shape` | XZ 面の円（`Circle`）、カプセル（`Capsule`）、向き付きの箱（`Obb`）を選ぶ。 |
+| `Radius`・`HalfLength` | 円とカプセルの半径、カプセルの中心線の半分の長さを指定する。 |
+| `HalfExtents` | 箱の局所 X 軸・Z 軸に沿った半幅を指定する。 |
+| `MinHeight`・`MaxHeight` | 所有 Entity の Y 座標を基準に足跡の下端と上端を指定する。 |
+| `Mode`・`CostMultiplier` | `Block` はセルを塞ぐ。`Cost` はセルを通行可能なまま、倍率に応じて進入コストを加算する。 |
+
+**押印と解除。** オーバーレイはセルごとに塞いでいる足跡の数とコストの加算量を持つ。`Apply` は押したセルと寄与を記録し、`Revoke` はその記録分だけ引く。足跡が重なっても他の障害物の分は残る。カウンタの上限を超える押印は全体を取り消す。格子の取り替えや `NavigationService::Reset` で全消去すると世代が進み、以前の世代の押印記録は解除時に捨てる。次の固定歩で登録中の障害物を再評価し、移動条件を満たしていなければ前回の押印の位置・向きで塗り直す。[NavDynamicOverlay.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavDynamicOverlay.cpp)
+
+**押し直し。** `NavObstacleSystem::Step` は固定歩の `dt` を積算し、`Entity::GetTransformVersion()` で変換の変化を検出する。通常の移動では、前の押印から `MinRestampIntervalSeconds`（0.25 s）以上経ち、かつ `MinRestampDistanceCells`（0.5 セル）以上動いたときに押し直す。移動量には、上下を含む前の押印位置からの移動距離と、向きの変化を外接半径で弧長に換算した値の大きい方を使う。移動量だけ先に満たした場合は、間隔が満ちた歩で再判定する。前回の観測からの速さも上下を含む移動距離で求める。速さが `MaxStampSpeed`（3 m/s）を超える間は押印を外し、しきい値以下に戻った歩で再開する。タイルの読み込み・置換・解放で格子の版が変わったとき、オーバーレイの全消去で世代が変わったとき、または設定が変わったときは、登録中の全障害物を再評価する。公開の参照アクセサで押印のプロパティを直接書き換えた場合も、次の固定歩で前回評価した値との差を検出し、その障害物を再評価する。再評価でも、押印を今の位置・向きに移すには間隔と移動量の両方を満たす必要がある。条件がそろうまでは前回の押印の位置・向きで足跡を作り直し、押印の時刻・位置・向きは更新しない。同じ世代でセル集合・モード・コストの加算量が一致すれば押印を保ち、動的な版も進めない。初回、速すぎて押印を外した後、塗るセルが無かった後など、押印が無い障害物だけは移動条件を待たずに今の位置で塗る。足跡を `AgentPadding`（0.5 m）だけ広げ、セルの地面から `HeightBand`（2 m）までの帯が障害物の高さの範囲と重なるセルに押す。これらの設定は `IAIModule::SetNavObstacleSettings` と `GetNavObstacleSettings` で設定・取得する。[NavObstacleSystem.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavObstacleSystem.cpp)・[NavObstacleSettings.h](../../Library/Modules/AI/Public/AI/Navigation/NavObstacleSettings.h)
+
+**経路への反映。** A* は始点セルを除いて動的な塞ぎを調べ、進入コストにセルの加算量を含める。平滑化と通行・レイ・最寄り点・コストの照会も塞ぎを参照する。平滑化では、短絡する線分が触れるセル（角だけで触れるセルを含む）の動的な割増を合計し、元のセル列の同じ区間より割増が増える場合は折れ点を残す。どちらの合計でも区間の始点セルは除く。平滑化後の経路が 2 点以上なら、新しい線分が通れ、各線分の始点セルを除く動的な割増が元の線分より増えないときに、端点を要求の始点・目標（目標は探索成功時のみ）に差し替える。新しい線分が通れても割増が増えるときはセル中心を残し、セル中心と要求の座標を結ぶ線分が通れる場合だけ、始点を先頭に、目標を末尾に足す。カウンタが変わると全体の通し番号が進み、その値が変更タイルの `DynamicVersion` になる。探索または平滑化に失敗したとき、この通し番号が探索開始時と異なれば、要求を `Pending` に保ち、現在の版で探し直す。`IsPathStale` が通過タイルの世代または動的な版の変化を検出すると、操舵は経路を再要求する。[NavPathSmoothing.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavPathSmoothing.cpp)・[NavigationService.cpp](../../Library/Modules/AI/Private/AI/Navigation/NavigationService.cpp)
+
+`--ai-nav-smoke` では、箱が始点と目標を結ぶ直線を横切る。代役は箱の `Block` の押印を避ける経路をたどる。走行中に押印を一度でも観測して目標に着くと `AI_SMOKE mode=nav result=pass` を出す。`obstacle_cells` はその時点の押印セル数、`obstacle_cells_max` は走行中の最大数である。[AINavSmokeRoutine.cpp](../../Game/GameModes/AISmoke/AINavSmokeRoutine.cpp)
+
+**既知の限界**
+
+- 動的な版の通し番号は `uint32_t` である。探索中に周回すると、探索開始時の番号との大小比較で変更を見落としうる。
+- 余白は全エージェント共通で、既定の 0.5 m は Medium の半径に相当する。半径 1.0 m の Large は押印の縁を擦りうる。
+- 可変の Tick で箱を動かし、同じフレームに固定歩が複数あると、最初の歩で速さを歩数倍に見積もりうる。その歩だけ押印が外れ、次の歩で戻ることがある。
+- 版の単位はタイルである。同じタイル内の押し直しは、そこを通るすべての経路を古くするため、引き直しが増える。
+- 間隔 0.25 s、移動量 0.5 セル、速さ 3 m/s、余白 0.5 m、高さの帯 2 m はいずれも未計測の仮値である。
 
 ## エージェントのプロファイル
 
@@ -200,4 +228,4 @@ step  = base + (base * extra) / 128
 
 `IAIModule::SetSteeringDebugDrawEnabled` はナビの描画とは独立したスイッチで、既定は無効。`LateTick` でカメラから XZ 半径 60 m 以内の有効な個体に、上限適用後の操舵速度を緑、適用前の希望速度を黄で描く。目標は水色の球と個体からの線、`KeepDistance` の上下限は目標を中心とする 2 本の円、`MoveTo` の準備済み経路は青い折れ線で示す。要求の版が変わった直後は古い目標・帯・経路を描かない。Release ではスイッチは無効で `IsSteeringDebugDrawEnabled()` は常に `false`。[SteeringDebugDraw.cpp](../../Library/Modules/AI/Private/AI/Steering/SteeringDebugDraw.cpp)
 
-この格子が扱う障害物は静的な XZ 足跡である。動く障害物の更新、実地形データと地形ポートの接続、ベイク済みナビ資産の生成・読み込みは対象外。HPA* による階層探索は実測で必要性が示された場合に限る。同じ XZ に複数の歩行面を持つ橋の上下や建物内部の階層は、この単層表現の対象外である。
+静的な XZ 足跡は格子にベイクし、動く障害物の足跡はオーバーレイで更新する。実地形データと地形ポートの接続、ベイク済みナビ資産の生成・読み込みは対象外。HPA* による階層探索は実測で必要性が示された場合に限る。同じ XZ に複数の歩行面を持つ橋の上下や建物内部の階層は、この単層表現の対象外である。

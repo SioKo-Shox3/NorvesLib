@@ -25,6 +25,7 @@
 #include "Debug/CapturedFramePng.h"
 #include "Core/Public/Rendering/ToneMappingPass.h"
 #include "Core/Public/Resource/SkinnedMeshResource.h"
+#include "GameModes/AISmoke/AINavSmokeMode.h"
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "GameModes/CombatSlice/CombatSliceMode.h"
 #if NORVES_BUILD_DEVELOPMENT
@@ -1160,6 +1161,7 @@ namespace Game
         m_bAnimationDebugRequested = false;
         m_bPoseModifiersOffRequested = false;
         m_bDogMovementSmoke = false;
+        m_bAINavSmoke = false;
         m_bCombatSmoke = false;
         m_bEncounterSmoke = false;
         m_bEnemySmoke = false;
@@ -1838,6 +1840,16 @@ namespace Game
                 continue;
             }
 
+            if (args[i] == TEXT("--ai-nav-smoke"))
+            {
+                if (m_bAINavSmoke)
+                {
+                    LOG_ERROR("--ai-nav-smoke が重複しています");
+                    return false;
+                }
+                m_bAINavSmoke = true;
+                continue;
+            }
             if (args[i] == TEXT("--dog-movement-smoke"))
             {
                 if (m_bDogMovementSmoke)
@@ -4216,6 +4228,12 @@ namespace Game
                 return false;
             }
         }
+        if (m_bAINavSmoke && (m_bDogMovementSmoke || combatSliceSmokeCount != 0 || m_SoakResetCount > 0 ||
+                              m_bAnimationDebugRequested))
+        {
+            LOG_ERROR("--ai-nav-smoke は犬の移動比較・戦闘スモーク・--soak-reset・--animation-debug と併用できません");
+            return false;
+        }
         if (combatSliceSmokeCount > 1)
         {
             LOG_ERROR("--combat-smoke・--encounter-smoke・--enemy-smoke はどれか 1 つだけ指定してください");
@@ -5744,24 +5762,25 @@ namespace Game
                 LOG_ERROR("--scene-cycle-smoke は --shisha-showcase と併用できません");
                 return false;
             }
-            if (m_bDogMovementSmoke)
+            if (m_bDogMovementSmoke || m_bAINavSmoke)
             {
-                LOG_ERROR("--dog-movement-smoke は --shisha-showcase と併用できません");
+                LOG_ERROR("%s は --shisha-showcase と併用できません", m_bAINavSmoke ? "--ai-nav-smoke" : "--dog-movement-smoke");
                 return false;
             }
             return true;
         }
 #endif
-        if (m_bDogMovementSmoke)
+        if (m_bDogMovementSmoke || m_bAINavSmoke)
         {
+            const char* option = m_bAINavSmoke ? "--ai-nav-smoke" : "--dog-movement-smoke";
             if (!m_StartupSceneId.empty() || !m_StartupSceneView.empty())
             {
-                LOG_ERROR("--scene・--scene-view は --dog-movement-smoke と併用できません");
+                LOG_ERROR("--scene・--scene-view は %s と併用できません", option);
                 return false;
             }
             if (m_SceneCycle.IsEnabled())
             {
-                LOG_ERROR("--scene-cycle-smoke は --dog-movement-smoke と併用できません");
+                LOG_ERROR("--scene-cycle-smoke は %s と併用できません", option);
                 return false;
             }
             return true;
@@ -6050,6 +6069,9 @@ namespace Game
         const bool bSkyOccluderDemo = s_bSkyOccluderDemo;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
+        registerMode(AINavSmoke, [](const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
+            return MakeUnique<AINavSmokeMode>();
+        });
         const auto dogDrive = m_DogDrive;
         const bool bDogAutopilot = m_bDogMovementAutopilot;
         const auto dogAutopilotPath = m_DogMovementAutopilotPath;
@@ -6464,6 +6486,10 @@ namespace Game
         {
             startMode = DogMovementSmoke;
         }
+        else if (m_bAINavSmoke)
+        {
+            startMode = AINavSmoke;
+        }
         else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke || m_SoakResetCount > 0)
         {
             startMode = CombatSlice;
@@ -6494,6 +6520,10 @@ namespace Game
         if (m_bDogMovementSmoke)
         {
             LOG_INFO("犬の移動比較モードを開始します");
+        }
+        else if (m_bAINavSmoke)
+        {
+            LOG_INFO("AI のナビゲーション場面を開始します");
         }
         else if (m_bCombatSmoke || m_bEncounterSmoke || m_bEnemySmoke || m_SoakResetCount > 0)
         {

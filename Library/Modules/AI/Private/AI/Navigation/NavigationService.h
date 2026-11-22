@@ -11,13 +11,15 @@ namespace NorvesLib::Modules::AI
     class NavigationService final : public INavigationService
     {
     public:
-        NavigationService() = default;
+        NavigationService();
         NavigationService(const NavigationService&) = delete;
         NavigationService& operator=(const NavigationService&) = delete;
 
         ENavTileResult LoadTile(NavTile&& tile) override;
         bool UnloadTile(NavTileCoord coord) override;
         const NavGrid& GetGrid() const override;
+        NavDynamicOverlay& GetDynamicOverlay();
+        const NavDynamicOverlay& GetDynamicOverlay() const override;
         PathHandle RequestPath(const Math::Vector3& start, const Math::Vector3& goal,
                                const NavAgentProfile& profile, float epsilon = 1.2f) override;
         ENavPathStatus GetPathStatus(PathHandle handle) const override;
@@ -36,7 +38,7 @@ namespace NorvesLib::Modules::AI
         void SetExpansionBudget(uint32_t expansionsPerStep) override;
         uint32_t GetExpansionBudget() const override;
 
-        /// PreFixedTick で 1 回呼ぶ。到着順に同じ探索を 1 本ずつ続けるため、同じ格子なら
+        /// PreFixedTick で 1 回呼ぶ。到着順に同じ探索を 1 本ずつ続けるため、格子と押印が変わらなければ
         /// 固定ステップに展開を分けても一括で探索したときと同じ経路になる。
         void RunBudget();
         void SetProfiles(NavAgentProfileSet&& profiles);
@@ -53,6 +55,7 @@ namespace NorvesLib::Modules::AI
         {
             NavTileCoord Coord;
             uint32_t Generation;
+            uint32_t DynamicVersion;
         };
 
         struct PathSlot
@@ -63,6 +66,7 @@ namespace NorvesLib::Modules::AI
             PathSlot& operator=(PathSlot&&) = default;
 
             ENavPathStatus Status = ENavPathStatus::Invalid;
+            bool bDynamicStaleAtFinish = false;
             Math::Vector3 Start;
             Math::Vector3 Goal;
             NavPathQuery Query;
@@ -72,9 +76,13 @@ namespace NorvesLib::Modules::AI
         };
 
         bool HasSlot(PathHandle handle) const;
-        void FinishPath(PathSlot& slot, ENavSearchState state);
+        /// 探索中に押印が変わり、現在の版で探し直す場合は false を返す。
+        bool TryFinishPath(PathSlot& slot, ENavSearchState state);
+
+        void SyncOverlayGridDesc(const NavGridDesc& previous);
 
         NavGrid m_Grid;
+        NavDynamicOverlay m_Overlay;
         NavAgentProfileSet m_Profiles;
         NavPathfinder m_Pathfinder;
         Core::Container::VariableArray<PathSlot> m_Slots;

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "AI/Navigation/INavigationService.h"
+#include "AI/Navigation/NavObstacleSettings.h"
 #include "Module/IModule.h"
 #include "Module/ModuleRegistry.h"
 
@@ -15,6 +16,10 @@ namespace NorvesLib::Modules::AI
         /// モジュールが所有するサービスを GameThread で借りる。
         virtual INavigationService& GetNavigation() = 0;
         virtual const INavigationService& GetNavigation() const = 0;
+
+        /// 動的障害物の押印条件を変更する。不正な設定、または所有スレッド以外からの変更は false を返す。
+        virtual bool SetNavObstacleSettings(const NavObstacleSettings& settings) = 0;
+        virtual NavObstacleSettings GetNavObstacleSettings() const = 0;
 
         /// 格子と経路の描画を切り替える。Release では常に無効。
         virtual void SetNavDebugDrawEnabled(bool bEnabled) = 0;

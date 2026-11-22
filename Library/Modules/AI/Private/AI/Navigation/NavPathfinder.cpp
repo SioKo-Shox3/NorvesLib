@@ -1,5 +1,6 @@
 ﻿#include "AI/Navigation/NavPathfinder.h"
 
+#include "AI/Navigation/NavDynamicOverlay.h"
 #include "AI/Navigation/NavGrid.h"
 #include "NavBinaryHeap.h"
 #include "Container/UnorderedMap.h"
@@ -69,6 +70,8 @@ namespace NorvesLib::Modules::AI
         };
 
         const NavGrid* Grid = nullptr;
+        const NavDynamicOverlay* Overlay = nullptr;
+        uint32_t DynamicSerialAtBegin = 0;
         NavPathQuery Query;
         uint64_t GridVersion = 0;
         uint32_t EpsilonQ8 = 256;
@@ -121,10 +124,11 @@ namespace NorvesLib::Modules::AI
             return page;
         }
 
-        NavCellRef FindPassable(NavCellCoord cell) const
+        NavCellRef FindPassable(NavCellCoord cell, const NavDynamicOverlay* overlay) const
         {
             const NavCellRef ref = Grid->FindCell(cell);
-            if (ref && IsNavCellPassable(ref.Tile->Flags[ref.Index], ref.Tile->ClearanceQ[ref.Index], ThresholdQ))
+            if (ref && IsNavCellPassable(ref.Tile->Flags[ref.Index], ref.Tile->ClearanceQ[ref.Index], ThresholdQ)
+                && !(overlay && cell != Query.Start && overlay->IsBlocked(cell)))
             {
                 return ref;
             }
@@ -170,7 +174,7 @@ namespace NorvesLib::Modules::AI
                 {
                     continue;
                 }
-                const NavCellRef ref = FindPassable(neighbor);
+                const NavCellRef ref = FindPassable(neighbor, Overlay);
                 if (!ref)
                 {
                     continue;
@@ -179,8 +183,10 @@ namespace NorvesLib::Modules::AI
                 {
                     bPassable[i] = true;
                 }
-                const uint32_t extra = NavCellExtraPer128(Query.Profile, ref.Tile->Flags[ref.Index],
-                                                          ref.Tile->GrassQ[ref.Index]);
+                const uint32_t terrain = NavCellExtraPer128(Query.Profile, ref.Tile->Flags[ref.Index],
+                                                            ref.Tile->GrassQ[ref.Index]);
+                const uint32_t dynamic = Overlay ? Overlay->GetCostExtraPer128(neighbor) : 0;
+                const uint32_t extra = terrain + (std::min)(dynamic, UINT32_MAX - terrain);
                 Relax(neighbor, ref, cost + NavStepCost(bDiagonal, extra), direction.Reverse);
             }
         }
@@ -243,7 +249,7 @@ namespace NorvesLib::Modules::AI
     NavPathfinder::NavPathfinder(NavPathfinder&&) noexcept = default;
     NavPathfinder& NavPathfinder::operator=(NavPathfinder&&) noexcept = default;
 
-    void NavPathfinder::Begin(const NavGrid& grid, const NavPathQuery& query)
+    void NavPathfinder::Begin(const NavGrid& grid, const NavPathQuery& query, const NavDynamicOverlay* overlay)
     {
         Reset();
         if (!m_Search)
@@ -252,14 +258,17 @@ namespace NorvesLib::Modules::AI
         }
         Search& search = *m_Search;
         search.Grid = &grid;
+        search.Overlay = overlay;
+        search.DynamicSerialAtBegin = overlay ? overlay->GetSerial() : 0;
         search.GridVersion = grid.GetVersion();
         search.Query = query;
         search.EpsilonQ8 = QuantizeEpsilon(query.Epsilon);
         search.ThresholdQ = NavClearanceThresholdQ(query.Profile.Radius, grid.GetDesc().CellSize);
         search.AdvanceStamp();
 
-        const NavCellRef start = search.FindPassable(query.Start);
-        if (!start || (search.FindPassable(query.Goal) &&
+        // 動的な塞ぎで終点に届かないときも、探索で最も近いセルまでの部分経路を求める。
+        const NavCellRef start = search.FindPassable(query.Start, nullptr);
+        if (!start || (search.FindPassable(query.Goal, nullptr) &&
             grid.GetConnectivityRegion(query.Start) != grid.GetConnectivityRegion(query.Goal)))
         {
             search.State = ENavSearchState::Failed;
@@ -311,6 +320,11 @@ namespace NorvesLib::Modules::AI
         return m_Search ? m_Search->GridVersion : 0;
     }
 
+    uint32_t NavPathfinder::GetDynamicSerialAtBegin() const
+    {
+        return m_Search ? m_Search->DynamicSerialAtBegin : 0;
+    }
+
     Core::Container::Span<const NavCellCoord> NavPathfinder::GetPathCells() const
     {
         if (!m_Search || m_Search->Path.empty())
@@ -331,6 +345,8 @@ namespace NorvesLib::Modules::AI
         {
             Search& search = *m_Search;
             search.Grid = nullptr;
+            search.Overlay = nullptr;
+            search.DynamicSerialAtBegin = 0;
             search.GridVersion = 0;
             search.CachedPage = nullptr;
             search.ClosestDistance = UINT64_MAX;
