@@ -2883,11 +2883,11 @@ namespace NorvesLib::Core::Engine
             return;
         }
         (void)ApplyPendingInputDeviceFocus();
-        // pause中も描画を維持する。gateは同frameで一度だけ取得する。
-        const bool bAdvanceSim = handler ? handler->ShouldAdvanceSimulation() : true;
-        // simulationが発行するPlayより前にpauseを反映し、停止はこの地点で送信する。
-        (void)GEngine->SetHapticsPaused(!bAdvanceSim);
-        TickSimulation(rawDeltaNanoseconds, deltaTime, bAdvanceSim, handler);
+        const bool bBridgeAdvance = handler ? handler->ShouldAdvanceSimulation() : true;
+        const bool bWorldAdvance = bBridgeAdvance && !GEngine->GetSimulationPauseState().IsWorldPaused();
+        // シミュレーションが振動の再生を要求する前に、ワールドの停止状態を振動出力に反映する。
+        (void)GEngine->SetHapticsPaused(!bWorldAdvance);
+        TickSimulation(rawDeltaNanoseconds, deltaTime, bBridgeAdvance, handler);
         const bool hapticsHealthy = UpdateHapticsFrame(rawDeltaNanoseconds);
         if (!hapticsHealthy && !m_HapticsFailureWarned)
         {
@@ -2908,11 +2908,13 @@ namespace NorvesLib::Core::Engine
     }
 
     FixedStepAdvanceResult ApplicationProcessor::TickSimulation(
-        int64_t rawDeltaNanoseconds, float deltaTime, bool bAdvanceSimulation,
+        int64_t rawDeltaNanoseconds, float deltaTime, bool bBridgeAdvance,
         Application::IApplicationHandler* handler)
     {
+        // GameMode がこのフレーム中にポーズを切り替えた場合は、次のフレームから反映する。
+        const bool bWorldAdvance = bBridgeAdvance && !GEngine->GetSimulationPauseState().IsWorldPaused();
         auto& timeSystem = GEngine->GetTimeSystem();
-        if (timeSystem.BeginFrame(rawDeltaNanoseconds, deltaTime, bAdvanceSimulation) != TimeSystemResult::Success)
+        if (timeSystem.BeginFrame(rawDeltaNanoseconds, deltaTime, bWorldAdvance) != TimeSystemResult::Success)
         {
             LOG_ERROR("時間倍率の計算に失敗したためシミュレーションを停止します");
             GEngine->RequestExit(1);
@@ -2931,21 +2933,33 @@ namespace NorvesLib::Core::Engine
         timing.Rate = m_FixedStepScheduler->GetRate();
         timing.InputNanoseconds = times.PhysicsDeltaNanoseconds;
         timing.StartRemainderScaledUnits = m_FixedStepScheduler->GetRemainderScaledUnits();
-        if (bAdvanceSimulation)
+        if (bBridgeAdvance)
         {
-            // 段 PreSimulation: GameMode の状態機械 → World の段 Tick → 段 PostTick: 粒子
+            // Bridge が進む間は、ゲーム内ポーズ中も GameMode の状態機械を進める。
             RunFrameStage(EFrameStage::PreSimulation, times.Unscaled, handler);
+        }
+        if (bWorldAdvance)
+        {
             GEngine->GetWorld().Tick(times);
             GEngine->GetVegetation().Tick(times.World);
             RunFrameStage(EFrameStage::PostTick, times.Particle, handler);
         }
+        else if (bBridgeAdvance)
+        {
+            // ポーズ中は印の付いたものを上限で丸める前の実経過秒で進め、読み込みも継続する。通常時の読み込みは PostTick で行う。
+            const float elapsedSeconds = rawDeltaNanoseconds > 0
+                ? static_cast<float>(static_cast<double>(rawDeltaNanoseconds) * 1e-9)
+                : 0.0f;
+            GEngine->GetWorld().TickWhenPaused(elapsedSeconds);
+            GEngine->GetStreamingSystem().Update();
+        }
         const FixedStepAdvanceResult result =
-            AdvanceFixedSimulation(times.PhysicsDeltaNanoseconds, bAdvanceSimulation, &timing);
+            AdvanceFixedSimulation(times.PhysicsDeltaNanoseconds, bWorldAdvance, &timing);
         (void)GEngine->GetWorld().SetRenderInterpolationAlpha(static_cast<float>(result.RemainderScaledUnits) /
                                                               1'000'000'000.0f);
-        if (bAdvanceSimulation)
+        if (bWorldAdvance)
         {
-            // World の段 LateTick → 段 PostLateTick: モジュールの LateTick → handler の OnLateUpdate
+            // ワールドが進むフレームだけ LateTick と後続の PostLateTick を実行する。
             GEngine->GetWorld().LateTick(times);
         }
         GEngine->UpdateWorldFieldInteractors();
@@ -2953,7 +2967,7 @@ namespace NorvesLib::Core::Engine
         // 近距離の雨のインスタンスも同じ所で作る・更新する・破棄する。
         GEngine->GetEnvironment().PublishTo(GEngine->GetRenderWorld());
         GEngine->GetEnvironment().UpdateRainNear(GEngine->GetParticleSystem().GetVfxEffects());
-        if (bAdvanceSimulation)
+        if (bWorldAdvance)
         {
             RunFrameStage(EFrameStage::PostLateTick, times.Unscaled, handler);
         }

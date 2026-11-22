@@ -1,5 +1,6 @@
 ﻿#include "AI/AIModule.h"
 
+#include "AI/Navigation/NavObstacleComponent.h"
 #include "AI/Steering/SteeringAgentComponent.h"
 #include "Asset/AssetFileReader.h"
 #include "Engine/Engine.h"
@@ -51,11 +52,47 @@ namespace NorvesLib::Modules::AI
     void AIModule::RegisterReflectedTypes()
     {
         Core::ClassRegistry::Get().RegisterClass(SteeringAgentComponent::StaticClass());
+        Core::ClassRegistry::Get().RegisterClass(NavObstacleComponent::StaticClass());
     }
 
     const Core::World* AIModule::GetEngineWorld() const
     {
         return m_Engine ? &m_Engine->GetWorld() : nullptr;
+    }
+
+    void AIModule::RegisterObstacle(NavObstacleComponent& obstacle)
+    {
+        if (IsOwnerThread())
+        {
+            m_Obstacles.Register(obstacle);
+        }
+    }
+
+    void AIModule::UnregisterObstacle(NavObstacleComponent& obstacle)
+    {
+        if (IsOwnerThread())
+        {
+            m_Obstacles.Unregister(obstacle, m_Navigation);
+        }
+    }
+
+    bool AIModule::SetNavObstacleSettings(const NavObstacleSettings& settings)
+    {
+        if (!IsOwnerThread() || !settings.IsValid())
+        {
+            return false;
+        }
+        if (m_ObstacleSettings != settings)
+        {
+            m_ObstacleSettings = settings;
+            m_Obstacles.MarkAllForReevaluate();
+        }
+        return true;
+    }
+
+    NavObstacleSettings AIModule::GetNavObstacleSettings() const
+    {
+        return IsOwnerThread() ? m_ObstacleSettings : NavObstacleSettings{};
     }
 
     void AIModule::RegisterAgent(SteeringAgentComponent& agent)
@@ -131,6 +168,7 @@ namespace NorvesLib::Modules::AI
     {
         if (IsOwnerThread() && m_bInitialized)
         {
+            m_Obstacles.Step(dt, m_Navigation, m_Engine->GetWorld(), m_ObstacleSettings);
             const auto stepAgents = m_Steering.BeginStep(m_Navigation, m_Engine->GetWorld());
             m_Navigation.RunBudget();
             m_Steering.Compute(dt, m_Navigation, stepAgents);
@@ -231,6 +269,7 @@ namespace NorvesLib::Modules::AI
         if (IsOwnerThread())
         {
             m_Steering.Reset(m_Navigation, GetEngineWorld());
+            m_Obstacles.Reset(m_Navigation);
             m_LocomotionProfiles.Clear();
             m_Navigation.Reset();
             m_bInitialized = false;
@@ -243,7 +282,7 @@ namespace NorvesLib::Modules::AI
         {
             return;
         }
-        if (m_bInitialized || m_Steering.GetAgentCount() != 0)
+        if (m_bInitialized || m_Steering.GetAgentCount() != 0 || m_Obstacles.HasRegisteredObstacles())
         {
             Shutdown();
         }

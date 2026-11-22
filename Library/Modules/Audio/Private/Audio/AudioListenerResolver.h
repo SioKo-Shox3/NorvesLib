@@ -35,6 +35,8 @@ namespace NorvesLib::Modules::Audio
             AudioListenerState Resolve(const IAudioListenerSource& cameraSource,
                                        Core::Container::Span<AudioListenerComponent* const> listeners,
                                        float deltaSeconds);
+            /** 直近の Resolve が入力の欠けで既定の姿勢へ退避したかを返す。 */
+            [[nodiscard]] bool IsUsingFallback() const noexcept { return m_bPreviousWasFallback; }
             [[nodiscard]] uint32_t GetFallbackLogCount() const noexcept;
             void Reset() noexcept;
 

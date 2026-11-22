@@ -25,6 +25,7 @@ namespace Game::GameModes
 
     /// 固定/可変駆動と描画補間の比較用モード。明示フラグ時のみ起動する。
     inline constexpr NorvesLib::Core::GameMode::GameModeId DogMovementSmoke = "DogMovementSmoke"_id;
+    inline constexpr NorvesLib::Core::GameMode::GameModeId AINavSmoke = "AINavSmoke"_id;
 
     /// 戦闘の垂直スライスの確かめ。--combat-smoke・--encounter-smoke・--enemy-smoke のときだけ入る(ランチャーに載せない)
     inline constexpr NorvesLib::Core::GameMode::GameModeId CombatSlice = "CombatSlice"_id;

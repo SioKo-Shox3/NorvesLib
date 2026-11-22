@@ -2,6 +2,7 @@
 
 #include "Audio/AudioTypes.h"
 #include "Asset/AssetBlob.h"
+#include "Asset/CookedAudioFormat.h"
 #include "Container/Span.h"
 #include "Object/Reflection.h"
 #include "Object/Resource.h"
@@ -29,6 +30,8 @@ namespace NorvesLib::Modules::Audio
         [[nodiscard]] size_t GetMemorySize() const override;
         [[nodiscard]] const AudioPcmFormat& GetFormat() const noexcept;
         [[nodiscard]] uint64_t GetFrameCount() const noexcept;
+        void SetCookedCategory(Core::Asset::CookedAudioCategory category) noexcept;
+        [[nodiscard]] Core::Asset::CookedAudioCategory GetCookedCategory() const noexcept;
         [[nodiscard]] Core::Asset::AssetBlob GetPcmBlob() const;
         [[nodiscard]] Core::Container::Span<const uint8_t> GetPcmBytes() const noexcept;
 
@@ -36,5 +39,6 @@ namespace NorvesLib::Modules::Audio
         Core::Asset::AssetBlob m_PcmBlob;
         AudioPcmFormat m_Format;
         uint64_t m_FrameCount = 0;
+        Core::Asset::CookedAudioCategory m_CookedCategory = Core::Asset::CookedAudioCategory::Unspecified;
     };
 } // namespace NorvesLib::Modules::Audio

@@ -2,8 +2,10 @@
 
 #include "Audio/AudioDomain.h"
 #include "Container/VariableArray.h"
+#include "Math/MathTypes.h"
 #include "Thread/Atomic.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <Windows.h>
@@ -42,10 +44,20 @@ namespace NorvesLib::Modules::Audio::Private
             AudioBackendEventMailbox& m_Mailbox;
         };
 
+        constexpr uint32_t kBusChannelCount = 2;
+
+        struct XAudio2BusRecord
+        {
+            IXAudio2SubmixVoice* Voice = nullptr;
+            AudioBusId Parent = AudioBusId::Master;
+            uint32_t Depth = 0;
+        };
+
         struct XAudio2VoiceRecord
         {
             uint32_t Generation = 0;
             uint32_t InputChannelCount = 0;
+            uint32_t DestinationChannelCount = 0;
             IXAudio2SourceVoice* Voice = nullptr;
             Core::Container::TUniquePtr<XAudio2VoiceCallback> Callback;
         };
@@ -78,6 +90,7 @@ namespace NorvesLib::Modules::Audio::Private
                 XAUDIO2_VOICE_DETAILS voiceDetails{};
                 masteringVoice->GetVoiceDetails(&voiceDetails);
                 m_OutputChannelCount = voiceDetails.InputChannels;
+                m_OutputSampleRate = voiceDetails.InputSampleRate;
                 m_EventSink.Store(&eventSink);
                 m_ShutdownEpoch.Store(shutdownEpoch);
                 m_bAcceptingCallbacks.Store(true);
@@ -86,14 +99,68 @@ namespace NorvesLib::Modules::Audio::Private
                 return AudioResult::Success;
             }
 
+            AudioResult CreateBus(AudioBusId bus, AudioBusId parent) override
+            {
+                const uint32_t index = static_cast<uint32_t>(bus);
+                const uint32_t parentIndex = static_cast<uint32_t>(parent);
+                if (m_Engine == nullptr || index >= kAudioBusCount ||
+                    (bus != AudioBusId::Master && parentIndex >= kAudioBusCount))
+                {
+                    return AudioResult::BackendFailure;
+                }
+                XAudio2BusRecord& record = m_Buses[index];
+                if (record.Voice != nullptr)
+                {
+                    return AudioResult::AlreadyInState;
+                }
+
+                IXAudio2Voice* destination = m_MasteringVoice;
+                uint32_t depth = 0;
+                if (bus != AudioBusId::Master)
+                {
+                    const XAudio2BusRecord& parentRecord = m_Buses[parentIndex];
+                    if (parentRecord.Voice == nullptr)
+                    {
+                        return AudioResult::BackendFailure;
+                    }
+                    destination = parentRecord.Voice;
+                    depth = parentRecord.Depth + 1;
+                }
+
+                XAUDIO2_SEND_DESCRIPTOR send{0, destination};
+                const XAUDIO2_VOICE_SENDS sends{1, &send};
+                IXAudio2SubmixVoice* voice = nullptr;
+                // 送り元の子が親より先に処理されるよう、深いバスほど小さい段を割り当てる。
+                if (FAILED(m_Engine->CreateSubmixVoice(&voice, kBusChannelCount, 48000, 0, kAudioBusCount - depth, &sends)))
+                {
+                    return AudioResult::BackendFailure;
+                }
+                record = {voice, bus == AudioBusId::Master ? AudioBusId::Master : parent, depth};
+                return AudioResult::Success;
+            }
+
+            AudioResult SetBusVolume(AudioBusId bus, float gain) override
+            {
+                const uint32_t index = static_cast<uint32_t>(bus);
+                if (index >= kAudioBusCount || !std::isfinite(gain) || gain < 0.0f || m_Buses[index].Voice == nullptr)
+                {
+                    return AudioResult::BackendFailure;
+                }
+                return SUCCEEDED(m_Buses[index].Voice->SetVolume(gain))
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
+            using IAudioBackend::CreateVoice;
             AudioResult CreateVoice(VoiceHandle handle,
-                                    const AudioPcmFormat& format,
-                                    float maxFrequencyRatio,
+                                    const AudioBackendVoiceDesc& desc,
                                     AudioBackendEventMailbox& mailbox) override
             {
-                if (m_Engine == nullptr || !format.IsSupported() || !handle.IsValid() ||
-                    !std::isfinite(maxFrequencyRatio) || maxFrequencyRatio < XAUDIO2_MIN_FREQ_RATIO ||
-                    maxFrequencyRatio > XAUDIO2_MAX_FREQ_RATIO)
+                const AudioPcmFormat& format = desc.Format;
+                const uint32_t busIndex = static_cast<uint32_t>(desc.OutputBus);
+                if (m_Engine == nullptr || !format.IsSupported() || !handle.IsValid() || busIndex >= kAudioBusCount ||
+                    !std::isfinite(desc.MaxFrequencyRatio) || desc.MaxFrequencyRatio < XAUDIO2_MIN_FREQ_RATIO ||
+                    desc.MaxFrequencyRatio > XAUDIO2_MAX_FREQ_RATIO)
                 {
                     return AudioResult::BackendFailure;
                 }
@@ -115,13 +182,22 @@ namespace NorvesLib::Modules::Audio::Private
                 waveFormat.wBitsPerSample = format.BitsPerSample;
                 waveFormat.nBlockAlign = format.BlockAlignment;
                 waveFormat.nAvgBytesPerSec = format.SampleRate * format.BlockAlignment;
+                IXAudio2SubmixVoice* destination = m_Buses[busIndex].Voice;
+                if (destination == nullptr)
+                {
+                    destination = m_Buses[static_cast<uint32_t>(AudioBusId::Master)].Voice;
+                }
+                XAUDIO2_SEND_DESCRIPTOR send{0, destination};
+                const XAUDIO2_VOICE_SENDS sends{1, &send};
                 IXAudio2SourceVoice* voice = nullptr;
-                if (FAILED(m_Engine->CreateSourceVoice(&voice, &waveFormat, 0, maxFrequencyRatio, callback.get())))
+                if (FAILED(m_Engine->CreateSourceVoice(&voice, &waveFormat, XAUDIO2_VOICE_USEFILTER, desc.MaxFrequencyRatio,
+                                                       callback.get(), destination != nullptr ? &sends : nullptr)))
                 {
                     return AudioResult::BackendFailure;
                 }
                 record.Generation = handle.Generation;
                 record.InputChannelCount = format.ChannelCount;
+                record.DestinationChannelCount = destination != nullptr ? kBusChannelCount : m_OutputChannelCount;
                 record.Voice = voice;
                 record.Callback = std::move(callback);
                 return AudioResult::Success;
@@ -189,6 +265,28 @@ namespace NorvesLib::Modules::Audio::Private
                     : AudioResult::BackendFailure;
             }
 
+            AudioResult SetVoiceFilter(VoiceHandle handle, float lowpassCutoffHz, float oneOverQ) override
+            {
+                XAudio2VoiceRecord* record = Resolve(handle);
+                if (record == nullptr || !std::isfinite(lowpassCutoffHz) || !std::isfinite(oneOverQ))
+                {
+                    return AudioResult::BackendFailure;
+                }
+
+                // ソースのフィルタはサンプルレート変換後に動くため、送り先のマスタリングボイスの入力レートを使う。
+                const float fs = m_OutputSampleRate > 0 ? static_cast<float>(m_OutputSampleRate) : 48000.0f;
+                // 2 sin(π f/fs) は fs/6 で上限の 1 に達する。それ以上は 1/Q = 1 のとき素通し相当とし、
+                // fs/2 を超えて正弦が下がる領域に入らないよう、変換前に遮断周波数を丸める。
+                const float cutoff = std::clamp(lowpassCutoffHz, 0.0f, fs / 6.0f);
+                const float frequency = std::clamp(2.0f * std::sin(Math::Constants::PI * cutoff / fs),
+                                                   0.0f, XAUDIO2_MAX_FILTER_FREQUENCY);
+                const XAUDIO2_FILTER_PARAMETERS params{LowPassFilter, frequency,
+                                                       std::clamp(oneOverQ, 1.0e-3f, XAUDIO2_MAX_FILTER_ONEOVERQ)};
+                return SUCCEEDED(record->Voice->SetFilterParameters(&params, XAUDIO2_COMMIT_NOW))
+                    ? AudioResult::Success
+                    : AudioResult::BackendFailure;
+            }
+
             AudioResult SetVoiceFrequencyRatio(VoiceHandle handle, float ratio) override
             {
                 XAudio2VoiceRecord* record = Resolve(handle);
@@ -201,14 +299,14 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 XAudio2VoiceRecord* record = Resolve(handle);
                 if (record == nullptr || record->InputChannelCount < 1 || record->InputChannelCount > 2 ||
-                    m_OutputChannelCount < 1 || m_OutputChannelCount > XAUDIO2_MAX_AUDIO_CHANNELS)
+                    record->DestinationChannelCount < 1 || record->DestinationChannelCount > XAUDIO2_MAX_AUDIO_CHANNELS)
                 {
                     return AudioResult::BackendFailure;
                 }
                 const uint32_t sourceChannels = record->InputChannelCount;
                 float levels[2 * XAUDIO2_MAX_AUDIO_CHANNELS]{};
                 // 行列は入力チャンネル数 × 出力番号 + 入力番号の順に並べる。
-                if (m_OutputChannelCount == 1)
+                if (record->DestinationChannelCount == 1)
                 {
                     const float monoGain = (leftGain + rightGain) * 0.5f;
                     for (uint32_t source = 0; source < sourceChannels; ++source)
@@ -221,7 +319,7 @@ namespace NorvesLib::Modules::Audio::Private
                     levels[0] = leftGain;
                     levels[sourceChannels + (sourceChannels == 1 ? 0 : 1)] = rightGain;
                 }
-                return SUCCEEDED(record->Voice->SetOutputMatrix(nullptr, sourceChannels, m_OutputChannelCount, levels))
+                return SUCCEEDED(record->Voice->SetOutputMatrix(nullptr, sourceChannels, record->DestinationChannelCount, levels))
                     ? AudioResult::Success
                     : AudioResult::BackendFailure;
             }
@@ -316,6 +414,18 @@ namespace NorvesLib::Modules::Audio::Private
                         record.Callback.reset();
                     }
                 }
+                // 子から親へ破棄し、送り先を参照するボイスが残らないようにする。
+                for (uint32_t depth = kAudioBusCount; depth > 0; --depth)
+                {
+                    for (XAudio2BusRecord& bus : m_Buses)
+                    {
+                        if (bus.Voice != nullptr && bus.Depth == depth - 1)
+                        {
+                            bus.Voice->DestroyVoice();
+                            bus = {};
+                        }
+                    }
+                }
                 if (m_MasteringVoice != nullptr)
                 {
                     m_MasteringVoice->DestroyVoice();
@@ -327,6 +437,7 @@ namespace NorvesLib::Modules::Audio::Private
                     m_Engine = nullptr;
                 }
                 m_OutputChannelCount = 0;
+                m_OutputSampleRate = 0;
                 m_ShutdownEpoch.Store(0);
             }
 
@@ -359,9 +470,11 @@ namespace NorvesLib::Modules::Audio::Private
                 return record.Generation == handle.Generation && record.Voice != nullptr ? &record : nullptr;
             }
 
+            XAudio2BusRecord m_Buses[kAudioBusCount]{};
             IXAudio2* m_Engine = nullptr;
             IXAudio2MasteringVoice* m_MasteringVoice = nullptr;
             uint32_t m_OutputChannelCount = 0;
+            uint32_t m_OutputSampleRate = 0;
             Thread::Atomic<IAudioBackendEventSink*> m_EventSink{nullptr};
             Thread::Atomic<uint64_t> m_ShutdownEpoch{0};
             Thread::Atomic<bool> m_bAcceptingCallbacks{false};

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "AI/Navigation/NavDynamicOverlay.h"
 #include "AI/Navigation/NavGridQueries.h"
 #include "Math/PolylinePath.h"
 
@@ -17,8 +18,9 @@ namespace NorvesLib::Modules::AI
         virtual ENavTileResult LoadTile(NavTile&& tile) = 0;
         virtual bool UnloadTile(NavTileCoord coord) = 0;
         virtual const NavGrid& GetGrid() const = 0;
+        virtual const NavDynamicOverlay& GetDynamicOverlay() const = 0;
 
-        /// 始点が通れなければ半径 2 m 内の通行可能なセルに寄せる。候補がなければ Failed の枠を返す。
+        /// 始点が静的な地形を通れなければ半径 2 m 内の通行可能なセルに寄せる。候補がなければ Failed の枠を返す。
         /// 非有限の座標・重み・半径、または負の半径には無効なハンドルを返す。
         virtual PathHandle RequestPath(const Math::Vector3& start, const Math::Vector3& goal,
                                        const NavAgentProfile& profile, float epsilon = 1.2f) = 0;
@@ -31,7 +33,7 @@ namespace NorvesLib::Modules::AI
         virtual bool CancelPath(PathHandle handle) = 0;
         /// 状態を問わず枠を返す。解放したハンドルの状態は Invalid。
         virtual bool ReleasePath(PathHandle handle) = 0;
-        /// 経路のセル列が通るタイルのどれかが置き換えられたか、解放されたときに真を返す。
+        /// 経路が通るタイルの置き換え・解放、またはそのタイルの動的な押印の変化で真を返す。
         virtual bool IsPathStale(PathHandle handle) const = 0;
 
         virtual bool FindNearestWalkable(const Math::Vector3& position, const NavAgentProfile& profile,

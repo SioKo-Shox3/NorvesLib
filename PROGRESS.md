@@ -13129,46 +13129,165 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 証拠: `.harness/runs/20261122-011236/verify-G14-GR62-LENS-SHUTTER-U8.txt`（Core を再コンパイルして `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`exit_code=0` で `Game.vcxproj -> ...Game.exe`。警告は LNK4099・C4996・C4244 だけ）。
 - 試験: 試験は作らず回していない（人の決まり）。
 - Next: ランナーの評価者の反証（危険地帯）。
-- U1 GrassField に刻みと枯れ度を指定する QueryOcclusion の多重定義を足す: 着地(直し 0 回)
-- U2 AI のポート IGrassFieldSource・IWindSource を足す: 着地(直し 0 回)
-- U6 聴覚の純関数 HearingModel を足す: 着地(直し 0 回)
-- U7 嗅覚の純関数 SmellModel と風向の低域フィルタを足す: 着地(直し 0 回)
-- U8 気づきの積分 AwarenessIntegrator を足す: 着地(直し 0 回)
-- U5 視覚の純関数 VisionModel を足す: 着地(直し 0 回)
-- U4 ポートの Engine 実装（草 = GrassField＋DrynessMap、風 = EnvironmentSystem の WindParameters）を足す: 着地(直し 0 回)
-- U3 調整値の束 PerceptionTuning と JSON の読み込み、Assets/AI/PerceptionTuning.json を足す: 着地(直し 0 回)
-- U9 AIModule の設計文書に知覚のモデルを書き、全体のビルドを通す: 着地(直し 0 回)
-## G13-GR24-SENSE-MODELS 知覚のモデルの仕上げ（2026-11-22）
-- Done: 草の遮蔽の積分に刻みと枯れ度を指定する `GrassField::QueryOcclusion(a, b, stepMeters, pDryness)` を足した（2 引数版はこれへ 0.5 m・nullptr で委ねて値は同じ。枯れ度は描画と同じ `Rendering::GrassEffectiveDryness`（`DrynessMap::Sample` と LayerB の A の大きい方）と種別の `Dryness.DensityScale`・`HeightScale` を枯れ度 > 0 の点だけ掛ける）。AI のポート `IGrassFieldSource`・`IWindSource`（既定は草なし・無風）と Engine 実装 `EngineGrassFieldSource`（Vegetation の草の場＋枯れ度マップ）・`EngineWindSource`（`EnvironmentSystem` の解決した風を `EvaluateWind`・`WindClockSeconds` で引く。`Resolve` は風の 7 項目が変わったときだけ呼ぶ）を足した。純関数 `VisionModel`・`HearingModel`・`SmellModel`（＋`WindDirectionFilter`）・`AwarenessIntegrator` と、調整値の束 `PerceptionTuning`（`Assets/AI/PerceptionTuning.json`、値は仮）を `Library/Modules/AI/Private/AI/Perception/` に置き、`Docs/Architecture/AIModule.md` に「知覚のモデル」の節を書いた。
-- 証拠: `.harness/runs/20261122-050549/verify-G13-GR24-SENSE-MODELS-U9.txt`（試験を外した全体の `cmake --build build --config Debug -- -m:1`。初回は PowerShell の引数分割で MSB1031 の中断、引数を引用符で囲んだ再実行でエラー 0・27 プロジェクトを生成し Game.exe まで通った）。
-- 試験: 試験は作らず回していない（人の決まり）。done-when (3) の Perception*Test は作っていない。
-- 人が見るときの見どころ: まだ知覚の処理へ配線していない（G13-GR24-PERCEPTION-SERVICE の受け持ち）ので、ゲームの見た目と動きは変わらない。
-- Next: ランナーの評価者の反証（GrassField は Public API）。G13-GR24-PERCEPTION-SERVICE が `PerceptionTuning` の読み込みとモデルの配線、固体の遮蔽を受け持つ。
-- Notes: 採った判断: 枯れ度は GR24 の側で掛けず `GrassField` の多重定義の中で 1 回だけ掛ける（LayerB の A を読めるのが草の場だけのため）。遠景の帯の草丈の潰しは視点の距離で決まる描画だけの効果なので知覚には掛けない（近景の帯の値）。草の倍率 `grass.opacityScale` は光学的厚さに掛ける（T^scale、T=1 は 1 のまま）。聴覚の量は (R/d)^2 の線形（可聴半径の換算は評価器の `ComputeHearingRadiusThresholdDb`）、強さは 1−exp(−量)、騒音床のマスキングは 1/(1+10^((床−受音)/10))。嗅覚は風上の拡散に横風の境で 1・真の風上で `upwindAxisRatio`（仮 0.5）の角度の倍率を掛け、同じ距離で横風 > 風上を保つ（要件の式からの差）。気づきの上がる遷移は段ごとに遅れを数えるので、Unaware から一気に Alert へ上がると遅れが 2 回入ることがある。感度は気づきの積分の側だけで掛ける。踏み倒し（GR44）は CPU から読めないので知覚に入れていない。
-- U10 目が草の先端より高いと草の透過率を 1 にし、倍率を光学的厚さに掛けてから指数を取る: 着地(直し 0 回)
-- U11 嗅覚の濃さを風上・風下とも決めた式どおりにし、視野の縁の幅に正の値を求める: 着地(直し 0 回)
-- U12 Alert への反応の遅れを Alert の閾値を超えた時点から数える: 着地(直し 0 回)
-- U13 音響評価器でマスキング免除の音クラスは聴覚の量をマスキングで下げない: 着地(直し 0 回)
-- U14 設計文書を直しに合わせ、全体のビルドを通す: 着地(直し 0 回)
-## G13-GR24-SENSE-MODELS 差し戻しの直しの仕上げ（2026-11-22、run 20261122-050549・反復 3）
-- Done: 評価者の 6 件の指摘を直した。(1) 嗅覚は風下（`a >= 0`）が煙 `S·exp(−a/L_down)·exp(−c²/(2σ²))` だけ、風上（`a < 0`）が `S·UpwindFactor·exp(−d/L_up)` だけになり、`UpwindAxisRatio` と `max(煙, B)` を消した。(2) 気づきの昇格の保留を Suspicious と Alert で別々に持ち、反応の遅れを各段階の閾値を超えた時点から数える（Unaware から一気に上がっても遅れは 2 回入らない）。(3) 草のポートを `QueryGrassPath`（光学的厚さと積分点の草の先端の最大）にし、目の高さが枯れ度を反映した草の先端の最大以上なら草の透過率を 1 にした（`GrassField::QueryOpticalDepth` を足し、`QueryOcclusion` はその `exp(−τ)`）。(4) `grass.opacityScale` を光学的厚さに掛けてから指数を 1 回だけ取るので、濃い草でも倍率が効く。(5) 音響評価器でマスキング免除（`bExemptFromMasking`）の音クラスは `MaskingFactor = 1`（騒音床は結果に入れる）。(6) `vision.fieldOfViewEdgeDegrees` は正の値だけを受け付け、縁の幅 ≤ 0 か FadeStart ≥ MaxDistance の調整値では可視度 0。設計文書 `Docs/Architecture/AIModule.md` の「知覚のモデル」を合わせた。
-- 証拠: `.harness/runs/20261122-050549/verify-G13-GR24-SENSE-MODELS-U14.txt`（直しを全部入れた先頭で、試験を外した全体の `cmake --build build --config Debug -- -m:1` が終了コード 0・エラー 0 で `Game.vcxproj -> ...Game.exe` まで生成。警告は libwebsockets の MSB8065 だけ）。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は各単位で一致。
-- 試験: 試験は作らず回していない（人の決まり）。done-when (3) の Perception*Test は作っていない。
-- 人が見るときの見どころ: まだ知覚の処理へ配線していない（G13-GR24-PERCEPTION-SERVICE の受け持ち）ので、ゲームの見た目と動きは変わらない。
-- Next: ランナーの評価者の反証（`GrassField` は Public API）。配線・`PerceptionTuning` の読み込み・固体の遮蔽は G13-GR24-PERCEPTION-SERVICE。
-- Notes: 既知の限界: 嗅覚を要件の式どおりにしたので、仮の調整値では真横（90 度）の点が同じ距離の風上より薄くなる（d = 10 m で横風 約 3.7e-6·S、風上 約 3.6e-3·S）。done-when (3) の「風下 > 横風 > 風上」は軸に近い横風か、`crossSigmaBaseMeters`・`upwindFactor` の調整で満たす。前の仕上げの Notes にある「風上の軸の比・`max(煙, B)`・遅れが 2 回入る」はこの直しで無くなった。
-- U15 知覚の草の照会を倍率と先端の高さを返す QueryOcclusion の多重定義に通す: 着地(直し 0 回)
-- U16 反応の遅れを更新の中で求めた閾値の通過時刻から数える: 着地(直し 0 回)
-- U17 設計文書を草の照会と反応の遅れの直しに合わせ、Game のビルドを通す: 着地(直し 0 回)
-## G13-GR24-SENSE-MODELS 差し戻しの直しの仕上げ（2026-11-22、run 20261122-090007・反復 1）
-- Done: (1) 知覚の草の照会を `GrassField::QueryOcclusion(a, b, stepMeters, pDryness, opacityScale, pOutMaxTopHeight)` に通した。τ に `grass.opacityScale` を掛けてから exp を 1 回だけ取り、視線上の草の先端の最大高さを返す。`QueryOpticalDepth` は private の内部関数にし、2 引数版・4 引数版は宣言も値も今のまま。ポートの `GrassPathSample` は透過率 `Transmittance` と `MaxTopHeight` になり、`EngineGrassFieldSource` はこの `QueryOcclusion` を呼ぶ。`VisionModel` は目が先端の最大以上なら 1、それ以外は照会の透過率を使う。(2) 反応の遅れを、更新の中で積分前の値と増加率から求めた閾値の通過時刻から数える（更新の前から閾値以上なら更新の先頭から）。I=1・感度 10・Gain 1.5・ジッター 0 で dt 0.2 s なら Alert は 0.4 s、dt 0.01 s なら 0.36 s の更新で上がる。(3) 設計文書 `Docs/Architecture/AIModule.md` の知覚のモデルを合わせた。
-- 証拠: `.harness/runs/20261122-090007/verify-G13-GR24-SENSE-MODELS-U17.txt`（`cmake --build build --config Debug --target Game -- /m:1` が exit=0・エラー 0 で `Game.exe` まで生成。警告は既存の LNK4099 だけ）。
-- 試験: 試験は作らず回していない（人の決まり）。
-- 人が見るときの見どころ: まだ知覚の処理へ配線していない（G13-GR24-PERCEPTION-SERVICE の受け持ち）ので、ゲームの見た目と動きは変わらない。
-- Next: ランナーの評価者の反証（`GrassField` は Public API）。配線・`PerceptionTuning` の読み込み・固体の遮蔽は G13-GR24-PERCEPTION-SERVICE。
-- Notes: 採った判断: 目が草の先端より高いときに 1 にする判定は `QueryOcclusion` の中でなく `VisionModel` に置いた（`QueryOcclusion` は区間の透過率と先端の最大高さを返す汎用の照会のまま）。既知の限界（嗅覚の真横が風上より薄い・聴覚の風の係数で約 3.9 m/s 超の風下/風上比が 1.6 を超える・目の高さが先端の最大をまたぐ所の段差）は前の仕上げの Notes のまま。
-## G13-GR24-SENSE-MODELS 評価の枠切れ後の仕上げ（2026-11-22、run 20261122-115223・反復 1）
-- Done: 前回の仕上げ（run 20261122-090007）の後、評価者が枠切れ（429）で評価できず作業中に戻っていた。先頭のコードは前回 Game をビルドした版と同じ（その後の差分は `TASKS.md`・`PROGRESS.md` だけ）。差し戻しの 2 件（知覚の草の照会が `GrassField::QueryOcclusion` の倍率つきの多重定義を通ること、反応の遅れを更新の中で求めた閾値の通過時刻から数えること。I=1・感度 10・gain 1.5・ジッター 0・dt 0.2 s で Alert は 0.4 s の更新）が実装に入っていることをコードで確かめ、完了に戻した。
-- 証拠: `.harness/runs/20261122-115223/verify-G13-GR24-SENSE-MODELS-U17.txt`（`cmake --build build --config Debug --target Game -- /m:1` が exit=0・エラー 0 で `Game.exe` まで生成）。
-- 試験: 試験は作らず回していない（人の決まり）。
-- Next: ランナーの評価者の反証（`GrassField` は Public API）。配線・`PerceptionTuning` の読み込み・固体の遮蔽は G13-GR24-PERCEPTION-SERVICE。
+
+## G15-GR119-PAUSE-GATE 統合ブランチの取り込み（2026-11-22）
+- Done: `feature/scene-launcher` を取り込み、衝突を解いた。`Engine.cpp` は表面の provider の登録に使う `Component/GroundContactComponent.h`・`Logging/LogMacros.h` とモジュールの通知に使う `Module/ModuleRegistry.h` を両方残した。`Docs/Architecture/TickStages.md` のフレームの順序は `bBridgeAdvance` と `bWorldAdvance` の分割を保ったまま、統合側が足した AI の操舵の順序（`PreFixedTick` で操舵速度を確定・`AIModule::LateTick` で Animator へ公開）を足し、ポーズの分類表の AI の行を「経路探索と操舵」にして操舵の場所を書いた（どちらも `bWorldAdvance` の中で止まる）。
+- 証拠: `.harness/runs/20261122-015216/verify-merge-build.txt`（取り込んだ先頭で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・`EXIT=0` で `Core.vcxproj -> ...Core.lib`・`Game.vcxproj -> ...Game.exe`。警告は LNK4099 など前からのもの）。
+- 試験: 試験は作らず回していない（人の決まり）。撮影・起動の確かめは回さない決まり。
+- Next: ランナーの評価者の反証（危険地帯: World・Entity・Component の Public API と更新の順序、Object の寿命）。
+- U1 SimulationPauseState を Engine::Engine に置き、変化を IModule::OnPauseStateChanged へ配る: 着地(直し 0 回)
+- U2 Entity・Component の bTickWhenPaused と World::TickWhenPaused: 着地(直し 0 回)
+- U3 ApplicationProcessor のゲートを Bridge とワールドに分ける: 着地(直し 0 回)
+- U4 TickStages.md のポーズの節を実装に合わせて書き換え、全体をビルドで確かめる: 着地(直し 0 回)
+## G15-GR119-PAUSE-GATE（2026-11-21）
+- Done: (1) `Engine::Engine` のメンバ `SimulationPauseState`（`GetSimulationPauseState()`）: 理由（Menu・FocusLost・Minimized・Loading・Dialog）ごとに Push/Pop を数え、重なりも数える。Pop の過多は拒否して警告ログ。`IsWorldPaused()` は全部 0 のときだけ false。理由のビットの集合が変わったときだけ `OnChanged` を 1 回。(2) `ApplicationProcessor` のゲートを `bBridgeAdvance`（`ShouldAdvanceSimulation`、Bridge の全停止）と `bWorldAdvance`（かつ `!IsWorldPaused()`）に分けた。GameMode の状態機械は前者、World::Tick・Vegetation・粒子（GPU 粒子の時計を含む）・気象・固定ステップ・World::LateTick・PostLateTick・`TimeSystem::BeginFrame` の進行・`SetHapticsPaused` は後者。ゲーム内ポーズ中は `World::TickWhenPaused(Unscaled)` を呼ぶ。(3) `Entity`/`Component` の `SetTickWhenPaused`（既定 false。Entity の印は直下の Component だけ）、World は印の一覧を木に入る・出る・破棄で登録・解除し、`TickWhenPaused` は一覧だけを群の順に回して最後に `CleanupDestroyedObjects`。(4) `IModule::OnPauseStateChanged(uint32_t)`（既定は空）を `ModuleRegistry::DispatchPauseStateChanged` が状態の変化のときだけ呼ぶ。(5) `Docs/Architecture/TickStages.md` の「Bridge進行とポーズの3分類」を実装に合わせ、今ある更新の分類表と、後の段階（AIModule の FixedTick・音のダッキング）が同じ表へ載せる約束を書いた。
+- 証拠: `.harness/runs/20261121-184522/verify-G15-GR119-PAUSE-GATE-U4.txt`（全部の単位を入れた先頭で `cmake --build build --config Debug --target Game -- /m:1` がエラー 0・終了コード 0 で `Game.exe` を生成。numstat の 2 通りの比較も一致）。
+- 試験: done-when (6) の試験（`SimulationPauseStateTest`・`ApplicationPausePipelineTest`・`WorldTickWhenPausedTest`）と verify の ctest の行は、人の決まり（試験を作らない・回さない）により作らず回していない。既存の試験の登録は変えていない。
+- 人が見るときの見どころ: 今はポーズの理由を Push する呼び手が無い（フォーカス・最小化は G15-GR119-WINDOW-EVENTS、メニューのフローは G15-GR119-GAME-FLOW）ので、ランチャーと各シーンの動き・見た目は変わらない。ランチャーから Rendering3DTest などへ入って戻る流れと、Bridge の Paused/Stopped で全部止まることが従来どおりかを見る。
+- Notes: 採った判断: ストリーミング（`StreamingSystem::Update`）はゲーム内ポーズ中も回す（Loading の理由のポーズ中に読み込みが止まらないように。進むフレームは従来どおり `PostTick.Streaming`、Bridge の停止中は止まる）。`ModuleRegistry::DispatchPauseStateChanged` の宣言のため `Library/Core/Public/Module/ModuleRegistry.h`（paths の外）に 1 行足した。`bTickWhenPaused` は ECS の列・反映の PROPERTY にせず通常のメンバにした。ポーズ中の印の付いた本体には未スケールの dt を渡し、本体の中の `TryGetComponentTickDelta` も持ち主の時間倍率を掛けずに同じ秒を返す。done-when (5) の `UiSystem` はコードに無いので分類表に載せていない。`ApplicationProcessor::TickSimulation` の宣言（第 3 引数）は変えず、Bridge の進行として扱う。
+- U5 ポーズの状態の変化の通知を発生順に積んで配る: 着地(直し 0 回)
+- U6 ポーズ中の呼び先の候補を印と着脱のときだけ更新し、通常の更新と同じ順で呼ぶ: 着地(直し 0 回)
+- U7 ポーズ中の印の付いたものへ上限で丸める前の実経過秒を渡す: 着地(直し 0 回)
+- U8 TickStages.md を直しに合わせ、UiSystem の行を足し、全体をビルドで確かめる: 着地(直し 0 回)
+## G15-GR119-PAUSE-GATE 差し戻しの直し（2026-11-22）
+- Done: (1) `SimulationPauseState` は `OnChanged` の通知の中で `Push`・`Pop`・`Reset` が呼ばれて状態が変わっても、要求数とビットはその場で変え、通知は発生順に積んで、今の通知を全購読者へ配り終えてから次を配る（モジュール A の通知の中の `Pop(Menu)` で、後ろのモジュール B に `0` の後に古い `Menu` が届くことは無い）。(2) World はポーズ中に呼ぶ候補を「自分か持ち主の Entity の印が効いている Component」の集合で持ち、印の変更・Component の着脱・解除（`UnbindPausedTickComponent` は印の有無に関係なく外す）のときだけ更新する。印の付いた Entity の子 Entity を毎フレーム型判定する走査を無くした。(3) `World::TickWhenPaused` は通常の `World::Tick` と同じく、付け直しが要れば `SyncOrderedTicks` してから、各候補の順序付きの呼び先の記録（`m_OrderedTicks`）の群・本体・優先度・深さ優先の番号を使い、群ごとに優先度→番号の順で呼ぶ（ポーズに入っても同じ群の呼び順が変わらない）。(4) ゲーム内ポーズ中の印の付いたものへは `ClampVariableDeltaTime` の 100 ms の上限で丸める前の実経過秒（`rawDeltaNanoseconds` を秒にした値。0 以下なら 0）を渡す。GameMode・`TimeSystem`・固定ステップの秒は変えていない。(5) `Docs/Architecture/TickStages.md` に (1)〜(4) を書き、分類表に `UiSystem`（ゲート外・実装予定。`G15-GR68-UI-CORE` が足し、足すときに場所を書く）の行を足した。
+- 証拠: `.harness/runs/20261121-184522/verify-G15-GR119-PAUSE-GATE-U8.txt`（全部の直しを入れた先頭で `cmake --build build --config Debug --target Game -- /m:1` が `ExitCode=0`・エラー 0 で `Game.vcxproj -> ...Game.exe`。変えた `World.cpp`・`Entity.cpp`・`Component.cpp`・`ApplicationProcessor.cpp`・`Engine.cpp` が再コンパイルされている。各単位の `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致）。
+- 人が見るときの見どころ: ポーズの理由を Push する呼び手がまだ無いので、ランチャーと各シーンの動き・見た目は変わらない。ランチャーから各シーンへ入って戻る流れと、Bridge の Paused/Stopped で全部止まることが従来どおりかを見る。
+- Next: ランナーの評価者の反証（危険地帯）。ポーズを使う側（G15-GR119-WINDOW-EVENTS のフォーカス・最小化、G15-GR119-GAME-FLOW のメニュー）。
+- Notes: 採った判断: ポーズ中の秒は丸めないので、デバッガの停止の後などには長い秒が 1 回渡る（印の付いたものは実時間で進む契約に合わせた）。`World::GetTickWhenPausedEntryCount()` は名前を変えず、候補の Component の数を返す（ほかに使う所は無い）。Running になった後に登録されたモジュールが、その時点のポーズの理由を受け取らないのは前のまま。
+- U9 印の付いた対象が無いポーズ中は順序の作り直しと収集を飛ばし、文書に作り直しの条件を書いてビルドで確かめる: 着地(直し 0 回)
+## G15-GR119-PAUSE-GATE 人の判断による再開の仕上げ（2026-11-22）
+- Done: `World::TickWhenPaused` は、印の付いた対象の集合が空なら順序の作り直し（`SyncOrderedTicks`）も呼び先の収集もせず、破棄予約の回収（`CleanupDestroyedObjects`）だけを行って抜ける。順序の汚れの印は下ろさず、再開後の通常の更新で付け直す。対象が 1 件以上あるときの流れは変えていない。`Docs/Architecture/TickStages.md` のポーズの節に、作り直しは対象があり木の構造・Tick の設定が変わったフレームだけで、費用は通常のフレームと同じことを書いた。書き換えた done-when の (1)〜(5) は前の反復までの実装とこの直しで満たし、(6) は下のビルド。
+- 証拠: `.harness/runs/20261122-015216/verify-G15-GR119-PAUSE-GATE-U9.txt`（`cmake --build build --config Debug --target Game -- /m:1` が `exit=0`、`Core.vcxproj -> ...Core.lib` と `Game.vcxproj -> ...\Game\Debug\Game.exe` まで生成、`World.cpp` 由来の警告 0 件。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は World.cpp 7/0・TickStages.md 1/1 で一致）。
+- 採った判断: 対象があるときに作り直しを飛ばすと、ポーズ中に足された対象を `m_OrderedTicks` から引けずに取りこぼすので、対象があり順序が汚れたフレームでは通常の更新と共通の `SyncOrderedTicks` を走らせる（変化の無いフレームでは走らず、毎フレームの全走査にはならない）。ポーズ用の順序を差分で別に保つ作りは、World と Object の寿命に第 2 の順序の仕組みを足すことになり、得るものに見合わないので採らなかった。試験は決まりにより足さず、回していない。
+- 人が見るときの見どころ: ポーズの理由を Push する呼び手がまだ無いので、ランチャーと各シーンの動き・見た目は変わらない。
+- Next: ランナーの評価者の反証（危険地帯）。ポーズを使う側（G15-GR119-WINDOW-EVENTS のフォーカス・最小化、G15-GR119-GAME-FLOW のメニュー）。
+- Notes: 要起票: Running になった後に登録したモジュールへ、そのときのポーズの理由を最初に 1 回届ける
+## G15-GR119-PAUSE-GATE 完了条件の欄を判断役の書き換えにそろえる（2026-11-22）
+- Done: 作業ブランチの `TASKS.md` にある自分の項目の done-when・verify・paths を、判断役が書き換えた統合ブランチ（`feature/scene-launcher`）の文面にそろえた。盤面の再開のコミットは status だけを戻しており、書き換えた欄が作業ブランチに届いていなかった。そろえた (3) は「集合が空のときは `SyncOrderedTicks` も収集もせずに抜ける」「集合が空でなく、順序が汚れたフレームに限り共通の `SyncOrderedTicks` で付け直してよい」で、今の実装（空の集合での早抜け）がこれを満たす。コードは変えていない。
+- 証拠: `.harness/runs/20261122-015216/verify-G15-GR119-PAUSE-GATE-U9.txt`（`cmake --build build --config Debug --target Game -- /m:1` が `exit=0`、`Game.vcxproj -> ...\Game\Debug\Game.exe` まで生成）。その後にコードの変更は無い。
+- 採った判断: 差し戻しが挙げた「対象が 1 件以上のときも一覧だけを回す」を満たすには、判断役が採らなかった作り（ポーズ用の順序を差分で別に保つ）が要る。判断役の判断（今の実装を正とし (3) を緩める）に従って実装は変えず、書き換えた欄を作業ブランチへ反映した。
+
+## G13-GR116-AUDIO-ACOUSTICS(2026-11-22)
+- U1 バックエンドにローパスの口、サービスに声ごとの遮蔽の口と遮蔽の公開の型を足す: 着地(直し 0 回)
+- U2 SoundDefinition に音の分類 sound_class を足し、バンクから読む: 着地(直し 0 回)
+- U3 AudioOcclusionUpdater(予算つきの評価と 1 次遅れの平滑)を作る: 着地(直し 0 回)
+- U4 SoundSystem が 3D の声を遮蔽の追跡に載せ、外す: 着地(直し 0 回)
+- U5 モジュールに更新器をつなぎ、解決したリスナーの位置を渡し、文書と設定を直す: 着地(直し 0 回)
+- Done: 評価器の結果を声ごとの音量とローパスへ当てる口を音のモジュールに足した。`IAudioService::SetVoiceAcoustics(handle, VoiceAcousticParams{TargetGainDb, LowpassCutoffHz})` を追加だけで足し、private の SPI に `IAudioBackend::SetVoiceFilter(voice, lowpassCutoffHz, oneOverQ)` を足した。backend の音量は「呼び手の音量(`SetVoiceVolume`)× 遮蔽の利得」の積で、SoundSystem のフェードと遮蔽が上書きし合わない。`XAudio2Backend` は source voice を `XAUDIO2_VOICE_USEFILTER` 付きで作り、`SetFilterParameters`(`LowPassFilter`、`Frequency = 2·sin(π·f/fs)` を `XAUDIO2_MAX_FILTER_FREQUENCY` で頭打ち、fs はマスタリングの入力の周波数)を呼ぶ。`NorvesAudioDomain` の `AudioOcclusionUpdater`(公開の口 `IAudioOcclusion`: `TrackVoiceAcoustics`・`SetVoiceSourcePosition`・`UntrackVoice`・`SetListenerPosition`・`ClearListenerPosition`)は、1 フレーム最大 `voiceBudgetPerFrame` 声・各声 `updateHz` で、未評価の声を先に、次に「待ち時間 + 優先度の加点(最大 1 周期)」の順に評価器を呼び、利得(dB)と遮断周波数(対数)を時定数 0.15 s の 1 次遅れで寄せて当てる(最初の評価は寄せずに当てる)。当てる利得は遮蔽の分だけ(距離の減衰は GR73 の定位が掛ける)。免除のクラスは評価器が分類の設定で外す。破棄・Stopping 以降・Quarantined の声は backend に触れずに外す。`SoundDefinition::SoundClass`(既定 Ambient)をバンクの `sound_class` から読み、SoundSystem が 3D の定義の声を分類と優先度つきで追跡に載せ、奪う・開始失敗・休眠・終端の回収・停止の前に外す。モジュールが更新器を持ち、`IAudioModule::GetAudioOcclusion()`(既定 nullptr の追加だけの仮想関数)で返し、Tick の最後(`SoundSystem::Update` の後)に `Engine::GetAcoustics()` で回す。`Acoustics.json` の `voiceBudgetPerFrame` を 32 から 4 にした。流れは `Docs/Architecture/AudioFlow.md` の「遮蔽とローパス」。
+- 証拠: `.harness/relay/G13-GR116-AUDIO-ACOUSTICS-U5-verify.txt`(全単位を載せた版で `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0・`Game.exe` まで。`AudioServiceModule.cpp`・`AudioListenerResolver.cpp` を再コンパイルし、Audio の警告 0 件。`Acoustics.json` は json ok)。各単位で `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らない・回さない決まりにより、verify の ctest の行は回しておらず、`Scripts/Test-M9World.ps1` は存在しないので回していない。撮影・計測・アプリの起動の確かめは回さない決まり。
+- 人が見るときの見どころ: 今の既定のバンクと Game は 3D の定義の音を鳴らしていない(`--audio-smoke` の雨と足音は `PlayGlobal` の 2D なので追跡に載らない)。3D の AudioComponent か 3D の定義の音を置いたシーンで、音源とカメラの間に岩・壁・背の高い草を挟む前後に、音量と高域が約 0.15 s かけて下がり・戻ること、クリック音が出ないこと、雨量を上げると免除でない声の高域が曇ることを聞く。
+- Next: ランナーの評価者の判定(危険地帯: Public API の `IAudioService`・`IAudioModule`・`IAudioOcclusion`、SPI の `IAudioBackend`)。起動の確かめは G13-GR116-AUDIO-CHECK。遮蔽の方針を AudioSpatial の結果として持つのは G16-GR73-REVERB-OCCLUSION。
+- Notes: 判断: リスナーは、GR73 のリスナー解決(G16-GR73-SPATIAL-LISTENER、done)が既に音のモジュールの Tick にあるので、Game から最終のカメラの位置を渡す代わりにモジュールが解決した位置を毎 Tick `SetListenerPosition` で渡し、原点の既定値へ退避している間は `ClearListenerPosition` で評価を止める(`Game/GameApplicationHandler.cpp` は触っていない。外から `SetListenerPosition` を呼んでも次の Tick で上書きされる)。判断: Cue を免除にするかは作者が決めるので `Acoustics.json` の分類の免除の値は変えていない。Core の `MakeDefault()` の予算 32 は paths の外なので変えず、`Acoustics.json` の 4 が効く。done-when (3) の `FakeAudioBackend`・`AudioAcousticsTest` は作っていない(試験を作らない決まり、`Test/` は TEST-REMOVE-1114 で消えている)。`Scripts/Test-AudioSmoke.ps1` は存在せず、`-Mode occlusion` と `--audio-smoke` の遮蔽の段はアプリを起動する確かめの道具なので作っていない。既知の限界: fs = 48 kHz では係数の頭打ちにより約 8 kHz より上の遮断周波数は素通しと同じ。予算 4 声・10 Hz・時定数 0.15 s は要件の案の値で実測の根拠は無い。
+- Notes(G13-GR116-AUDIO-ACOUSTICS の再検証): verify の 3 行目 `Scripts/Test-M9World.ps1 -ContractOnly` は、台本が c9226a9b(試験だけが使うスクリプトの削除)で消えているため「存在しません」で落ちる。ビルドの行は exit=0。台本を戻すと試験の復活になるので、この行を外すかの判断を待つ(同じ行を verify に持つ G16 の未着手 9 件も同じ形で落ちる)。
+- Done(反復 5): 判断役の判断に従い、verify の `Scripts/Test-M9World.ps1 -ContractOnly`(c9226a9b で消えた試験の台本)を絶対規則 11 により無いものとして外し、`status: done` にした。同じ行を持つ G16 の未着手 9 件(G16-GR73-BUS-MIXER・G16-GR73-REVERB-OCCLUSION・G16-GR74-STREAM-VOICE・G16-GR74-SOUND-STREAM-WIRE・G16-GR75-EVENTS・G16-GR75-AMBIENCE・G16-GR75-REAL-INPUTS・G16-AUDIO-SMOKE-MODES・G16-GR73-ACOUSTICS-AI-WIRE)からも同じ行だけを外した(done-when は変えていない)。
+- 証拠(反復 5): `cmake --build build --config Debug --target Game -- /m:1` が exit=0・`Game.vcxproj -> build/Game/Debug/Game.exe` まで、エラー・警告 0 件(`.harness/runs/20261121-231859/verify-G13-GR116-AUDIO-ACOUSTICS-iter5-build.txt`)。ctest の行と試験の部分は絶対規則 11 で回していない。
+- Next(反復 5): ランナーの評価者の判定(危険地帯: Public API の `IAudioService`、SPI の `IAudioBackend`)。起動の確かめは G13-GR116-AUDIO-CHECK。
+- Notes(反復 5): 同じ台本の行は G8-GR72-AUDIO-SPI・G8-GR72-SOUND-SYSTEM・G8-GR72-AUDIO-COMPONENT-BOOT・G14-GR67-EDITOR-UI・G15-*・G19-*・G10-SHISHA-SHOWCASE-P1・backlog の *-CHECK にも残っている。それぞれを回すときに同じ決まりで扱う。
+- U6 更新器の初回の跳び・新しい声の選び方・リスナーの明示と GR73 の優先を直す: 着地(直し 0 回)
+- U7 評価器の設定の 1 フレームの予算の既定を 4 にそろえる: 着地(直し 0 回)
+- U8 更新器の駆動をサービスの Tick に集約し、モジュールは評価器と GR73 のリスナーを渡す: 着地(直し 0 回)
+- Done(差し戻しの直し、2026-11-22): 評価者の 4 件の指摘を直した。(1) 初回の評価も既定の 0 dB・20 kHz から 1 次遅れで寄せ、目標へ跳ばない。(2) 未評価の声を無限大のスコアで先に選ぶのをやめ、登録した時点で期限が来た扱いの「登録からの経過 + 1 周期 + 優先度の加点」で、評価済みの声の「待ち時間 + 優先度の加点」と同じ順位付けに並べた(優先度の高い新しい声が先に入り、新しい声が入り続けても持続音に順番が回る)。(3) `Core::Scene::AcousticSettings::VoiceBudgetPerFrame` の既定を 32 から 4 にし、`AcousticTransmission.md` の表も直した。(4) 更新器の持ち主をサービスに移し、`AudioService::Tick()` の最後(通知の取り込みの後)で単調時計の dt(0.1 s で頭打ち)で回す。モジュールは Install で評価器を渡し、GR73 の解決位置を `SetResolvedListenerPosition` で渡す。呼び手が `IAudioOcclusion::SetListenerPosition` で明示した位置は次の更新で優先して使い、消費する。モジュールの末尾の更新器の Tick は消したので二重には回らない。`AudioFlow.md` を新しい流れに直した。
+- 証拠(差し戻しの直し): `cmake --build build --config Debug --target Game -- /m:1` が exit 0・`Game.vcxproj -> build/Game/Debug/Game.exe` まで(`.harness/runs/20261122-015214/verify-G13-GR116-AUDIO-ACOUSTICS-U8-build.txt`)。各単位で `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。ctest の行と試験の部分は絶対規則 11 で回していない。
+- Next(差し戻しの直し): ランナーの評価者の判定(危険地帯: Public API の `IAudioService`・`IAudioOcclusion`、SPI の `IAudioBackend`、Core の `AcousticSettings` の既定値)。起動の確かめは G13-GR116-AUDIO-CHECK。
+- Notes(差し戻しの直し): 判断: `AcousticTransmission.h` と `AcousticTransmission.md` は paths の外だが、done-when が `voiceBudgetPerFrame（既定 4）` と名指しし、この値を読むのは音の遮蔽の更新器だけなので、既定の 1 行と文書の 1 行を直した。モジュールの Tick の中で解決したリスナーと、同じフレームの `SoundSystem::Update` で始まった声は、次のフレームのサービスの Tick から評価に入る(1 フレームの遅れ。初回は開いた値から寄せるので跳ばない)。評価器が null の間は経路の評価を休み、明示の位置は保留のまま残す。
+- U9 評価 0 件の更新で明示のリスナー位置を消さず、停止に失敗して鳴り続ける声の遮蔽の追跡を保つ: 着地(直し 0 回)
+- 証拠(2 回目の差し戻しの直し): `cmake --build build --config Debug --target Game -- /m:1` で `AudioOcclusionUpdater.cpp`・`SoundSystem.cpp` を再コンパイルし、`Game.vcxproj -> build/Game/Debug/Game.exe` までエラーなし(`.harness/relay/` の U9 の確かめの出力)。`git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。ctest の行と試験の部分は絶対規則 11 で回していない。
+- Done(2 回目の差し戻しの直し): 明示したリスナー位置は 1 声以上を評価した更新でだけ消費し、再評価の期限が来ていない更新では保留する。声の奪取・休眠では `AbortVoice` を先に呼び、声を実際に手放すときだけ遮蔽の追跡を外す。停止に失敗して鳴り続ける声は追跡と平滑化の今の値を保つので、音量が既定へ跳ばない。
+- Next(2 回目の差し戻しの直し): ランナーの評価者の判定(危険地帯: Public API の `IAudioService`・`IAudioOcclusion`、SPI の `IAudioBackend`)。起動の確かめは G13-GR116-AUDIO-CHECK。
+- Notes(2 回目の差し戻しの直し): 判断: 評価器が失敗を返した声も評価の枠を使ったものとして件数に入れる(その声は評価済みになり目標値を保つ)。奪取で停止に失敗して隔離になった声は、`SoundSystem` では外さず、更新器が次の Tick の初めに状態を見て外す。人が見るときの見どころ: 声の上限を超えて 3D の音を重ねたときと、遠ざかって休眠する音で、遮蔽のかかった音量がぶつ切れに戻らないこと。
+
+## G16-GR73-BUS-MIXER（2026-11-21、run 20261121-213315）
+- U1 バスの SPI・voice の送り先・サービスの口と、XAudio2 と Null のバックエンドの実装: 着地(直し 0 回)
+- Notes(反復 1): 単位の計画は U1〜U6(SPI とバックエンド → ミキサーの中核 → Mixer.json と定義・バンクの欄 → SoundSystem とモジュールの結線 → 文書と最終ビルド)。採った判断: Mixer.json は Game を変えずに当てるため、SoundSystem の最初の LoadBank が同じアセットから `Audio/Mixer.json` を 1 回だけ読む。バスの親の構成はコードに固定(JSON は音量・ポーズの影響・ダッキングだけを上書き)。ポーズ用のゲインは Se・Ambient・Music だけに掛け、Ui と Master には掛けない。ダッキングの既定の規則は 0 個(聴感の値)。試験(`AudioMixerTest`・`AssetCookSoundBankSmoke` のケース・`FakeAudioBackend` の記録)は試験を作らない決まりにより作らない。verify の 3 行目 `Scripts/Test-M9World.ps1 -ContractOnly` は、2026-11-14 の c9226a9b で消えたスクリプトを呼ぶので実装に関係なく失敗する(G16-GR73-VIRTUAL-VOICE と同じ。判断役が行を外す前例あり)。
+- U2 IAudioMixer とドメインのミキサー(バスの正本・実効のゲイン・設定の音量・ポーズ・ダッキング・当て直し): 着地(直し 0 回)
+- U3 Mixer.json の読み込み(既定はコード、JSON で上書き、欠落・不正は既定と診断): 着地(直し 0 回)
+- U4 音の定義の bus・duck_tag とクリップのカテゴリ: 着地(直し 0 回)
+- U5 SoundSystem とモジュールをミキサーへつなぐ: 着地(直し 0 回)
+- U6 音の流れの文書と GR73 の受入れ記録にバスとダッキングを書き、タスクのビルドを通す: 着地(直し 0 回)
+- Done: バス(Master・Se・Ambient・Music・Ui)を SPI の `CreateBus`・`SetBusVolume` と voice の作成時の送り先で作り、XAudio2 では各バスを 2ch・48kHz の submix にして send で向け、Master の submix を mastering voice へ送る。`IAudioMixer`(`IAudioModule::GetMixer()`。モジュールが所有)とドメインの `AudioMixerDomain` がバスの構成と今の値の正本を持ち、実効のゲイン = 親の連鎖 × 設定の dB × 設定の音量(slider²)× ダッキング × ポーズ用のゲイン、`ReapplyBackendState()` でバスの作成と音量を 1 回で当て直す。ダッキングは attack・release で別の時定数の dB の 1 次系で、トリガ(バスか duck_tag)を毎フレーム数え直すので Stop・Destroy・奪取・Shutdown で消えた instance は残らない。`Assets/Audio/Mixer.json` は既定をコードに持って上書きし、欠落・不正なら全体を既定にして `AUDIO_MIXER config=default` を出す。SoundSystem の全体と区分の音量はバスの設定の音量へ流し、voice の音量からは外した。voice のバスは定義の `bus` > クリップの NVAUD のカテゴリ > Se(差し戻しの直しで定義の `category` の段を外した)。文書は `Docs/Architecture/AudioFlow.md` の「バスとミキサー」と `Docs/AudioValidation/GR73Acceptance.md` の「バスとダッキングの受入れ」。
+- 証拠: `cmake --build build --config Debug --target Game AssetCook -- /m:1` が EXIT=0・error 0 件で `Game.exe` と `AssetCook.exe` を生成(`.harness/runs/20261121-213315/verify-G16-GR73-BUS-MIXER-U6-build.txt`)。既存ファイルの `git diff --numstat` と `--ignore-cr-at-eol` は全単位で一致。試験を作らない・回さない決まりにより、`AudioMixerTest`・`FakeAudioBackend` のバスの記録・Mixer.json の cook のケースは作らず、ctest は回していない。verify の `Scripts/Test-M9World.ps1 -ContractOnly` はスクリプトが c9226a9b で消えているため回していない。撮影・計測の確かめは回さない決まり。
+- 人が聴くときの見どころ: 設定の音量のスライダーで効果音・環境音・全体がそれぞれ変わること、`Mixer.json` の `ducking` に ui → music の規則を書いて UI 音を鳴らしたときの下がり方と戻り方、`Mixer.json` を壊したときにログに `AUDIO_MIXER config=default` が出て既定の音量で鳴ること(手順は GR73Acceptance.md)。
+- Next: 写像・ダッキングの量の聴感での確定と、mastering voice が 2ch でない環境のバス → 出力の行列の実機の確かめは G16-GR73-SPATIAL-CHECK。ポーズ用のゲインとダッキングの駆動は G15 の GR119、デバイスの喪失からの復帰(voice の作り直しと `ReapplyBackendState()` の呼び出し)は G19 の GR118、リバーブの欄は G16-GR73-REVERB-OCCLUSION。
+- Notes: 判断: 設定(GR76)の全体と区分の音量は slider² の写像を通るようになったので、同じ設定の値でも以前より小さく聞こえる(0.5 で 0.25 倍)。Music・Ui のバスには SoundSystem の区分が無く、設定の音量は `IAudioMixer::SetUserBusVolume` からだけ当たる。モジュールの初期化の前に当てた設定の音量はドメインに保持し、初期化の `ReapplyBackendState()` でバックエンドへ送る。バスの作成・音量の反映に失敗したときの初期化は、差し戻しの直しで失敗扱い(Null への切替と当て直し)に変えた(下の Done を参照)。
+- Notes(反復 5): ランナーの再検証で verify の 3 行目 `Scripts/Test-M9World.ps1 -ContractOnly` が「ファイルが存在しない」で落ちた。このスクリプトは c9226a9b(2026-11-14、試験だけが使うスクリプトの削除)で消えていて、ワーカーは verify の行を書き換えられず、`Scripts/` は paths の外なので、BLOCKED にした(`blocked/G16-GR73-BUS-MIXER.md`)。ビルドの行は exit=0、ctest の行は回していない。実装の変更は無い。同じ verify の行は、todo の音の項目 9 件(G13-GR116-AUDIO-ACOUSTICS・G16-GR73-REVERB-OCCLUSION・G16-GR74-*・G16-GR75-*・G16-AUDIO-SMOKE-MODES・G16-GR73-ACOUSTICS-AI-WIRE)にもあり、同じように落ちる。
+- Done(反復 6): 判断役の判断(`blocked/resolved/G16-GR73-BUS-MIXER.md`)に従い、verify の 3 行を `cmake --build build --config Debug --target Game AssetCook -- /m:1` の 1 行に置き換えた(消えた試験の台本の行、ctest の行、ソースに無い `AudioBackendLifetimeTest` のターゲットを外す。`AssetCook` は done-when (4) の cook に要る道具なので残す)。`done-when` と実装は変えていない。証拠: この行が exit=0・`error C`/`error LNK` 0 件で、`Game.exe` と `AssetCook.exe` を生成(`.harness/runs/20261121-213315/verify-G16-GR73-BUS-MIXER-iter6-build.txt`)。
+- U7 ダッキングの Shutdown での解除と、attack の丸め・hold の切れ目の扱いを直す: 着地(直し 0 回)
+- U8 SPI に既存の CreateVoice の署名を残す: 着地(直し 0 回)
+- U9 voice のバスの最後の既定を Se にし、全バスの作成と音量の反映が通ったときだけモジュールの初期化を成功にする: 着地(直し 0 回)
+- U10 音の流れの文書と受入れ記録を直しに合わせ、タスクのビルドを通す: 着地(直し 0 回)
+- Done(差し戻しの直し、run 20261122-015218 反復 1): 評価の指摘 5 点を直した。(1) `SoundSystem::Shutdown` が呼ぶ `ResetActivity()` とミキサーの `Shutdown()` で、全規則の減衰と保持時間を即座に 0、全バスのダッキングの利得を 1 に戻す。(2) voice のバスはバンクの `bus` > cook 済みのクリップのカテゴリ > Se の順にし、定義の `category` を送り先に使わない。(3) SPI に旧署名 `CreateVoice(handle, format, maxFrequencyRatio, mailbox)` を非仮想の転送として残し、送り先 Se の記述で新しい版へ渡す(Null・XAudio2 に `using` を足して隠蔽しない)。(4) 音声モジュールの初期化は全バスの作成と音量の反映(`ReapplyBackendState()`)が通ったときだけ成功にし、失敗したら `bus_setup_failed` を理由に Null へ切り替えてバスを当て直す。それも失敗なら初期化済みのサービスを止めて失敗を返す。(5) ダッキングの 0 への丸めを目標 0 dB(release の終端)のときだけにし、hold がフレームの途中で尽きたら残りの時間を release に回す。文書(`Docs/Architecture/AudioFlow.md`・`Docs/AudioValidation/GR73Acceptance.md`)も合わせた。
+- 確かめ(差し戻しの直し): `cmake --build build --config Debug --target Game AssetCook -- /m:1` が EXIT=0、`Game.exe` と `AssetCook.exe` を生成し `error C`・`error LNK` は 0 件(`.harness/runs/20261122-015218/verify-G16-GR73-BUS-MIXER-iter1-build.txt`。警告は既存の AssetCook の C4244・C4996 と shaderc の LNK4099)。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。試験は作らず回していない(絶対規則 11)。
+- 人が聴くときの見どころ: (2 周目の直しで同梱の雨音に `bus: ambient` を足したので、下の 2 周目の見どころを正とする)
+- Next: 評価(Public API の危険地帯)はランナーが回す。写像・ダッキングの量の聴感と、2ch でない mastering voice の行列は G16-GR73-SPATIAL-CHECK。
+- Notes: (2 周目の直しで解消済み)`Assets/Audio/Banks/default.soundbank.json` の `Ambience.RainLoop` に `"bus": "ambient"` が無く、ばらの WAV(カテゴリ未指定)では送り先が Se になるため、設定の環境音の音量(`SetCategoryVolume(Ambience)` → Ambient のスライダー)が雨音に効かない(`SoundSystem.cpp` の `ResolveOutputBus` の優先順は done-when どおり)。
+- U11 SPI の旧 CreateVoice を仮想に戻し、IAudioMixer の戻り値の説明を実装に合わせる: 着地(直し 0 回)
+- U12 同梱の雨音を Ambient のバスへ向け、文書を合わせてタスクのビルドを通す: 着地(直し 0 回)
+- Done(差し戻しの直し 2 周目、run 20261122-015218 反復 2): 評価の指摘 2 点を直した。(1) `IAudioBackend` の旧署名 `CreateVoice(handle, format, maxFrequencyRatio, mailbox)` を `virtual` に戻し、既定の本体(送り先 Se の記述で記述構造体版へ渡す)は残した。既存の派生クラスが旧署名に `override` を付けられる。(2) 同梱の `Ambience.RainLoop` に `"bus": "ambient"` を足し、送り先の優先順を変えずに GR76 の環境音の音量(Ambient のスライダー)が雨に効くようにした。あわせて `AudioMixer.h` の `SetUserBusVolume`・`SetPauseGain` の説明を実装(値を保存したうえで送信の最初の失敗を返す。サービス未結合なら送らず Success)に合わせ、`Docs/Architecture/AudioFlow.md` に雨の送り先と旧署名の扱いを書いた。
+- 確かめ(2 周目): `cmake --build build --config Debug --target Game AssetCook -- /m:1` が EXIT=0、`Game.exe` と `AssetCook.exe` を生成し `error C`・`error LNK` は 0 件(`.harness/runs/20261122-015218/verify-G16-GR73-BUS-MIXER-iter2-build.txt`。先頭に JSON の解析の確かめ `Ambience.RainLoop bus=ambient category=ambience`)。U11 のビルドで `AudioDomain`・`AudioMixerDomain`・`AudioServiceModule`・`NullAudioBackend`・`SoundSystem`・`XAudio2Backend` を再コンパイルして通った。編集した既存ファイルは `git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致。試験は作らず回していない(絶対規則 11)。
+- 人が聴くときの見どころ(2 周目): `--audio-smoke` や雨の鳴る場面で、設定の環境音のスライダーを 0 にすると雨が消え、効果音のスライダーでは雨が変わらないこと。全体のスライダー 0 で全部が消えること。
+- Next: 評価(Public API の危険地帯)はランナーが回す。写像・ダッキングの量の聴感と、2ch でない mastering voice の行列は G16-GR73-SPATIAL-CHECK。
+- Done(統合ブランチの取り込み・run 20261122-073230): `feature/scene-launcher`(G13-GR116-AUDIO-ACOUSTICS・G15-GR119-PAUSE-GATE まで)を取り込み、音のモジュールの 8 ファイルの衝突を解いた。バスの SPI(`CreateBus`・`SetBusVolume`)・`IAudioMixer` と、遮蔽の口(`SetVoiceFilter`・`SetVoiceAcoustics`・`IAudioOcclusion`)を両方残し、XAudio2 の source voice は `XAUDIO2_VOICE_USEFILTER` で作って作成時の send list でバスへ向ける。モジュールは `SoundSystem` にミキサーと遮蔽の両方を結び、Shutdown では遮蔽を外してからミキサーを止める。同梱の雨音は `bus: ambient` と `sound_class: rain` の両方を持つ。サウンドバンクの許す鍵に `sound_class`・`bus`・`duck_tag` を並べた。
+- 証拠(統合ブランチの取り込み): `cmake --build build --config Debug --target Game AssetCook -- /m:1` が exit=0・`Game.vcxproj -> build/Game/Debug/Game.exe` と `AssetCook.vcxproj -> build/Tools/AssetCook/Debug/AssetCook.exe` まで、`error C`/`error LNK` は 0 件。衝突を解いた `AudioDomain.cpp`・`AudioServiceModule.cpp`・`SoundBank.cpp`・`SoundSystem.cpp`・`XAudio2Backend.cpp` を再コンパイルした。
+- Next(統合ブランチの取り込み): ランナーの評価者の判定(危険地帯: Public API の `IAudioMixer`・`IAudioService`、SPI の `IAudioBackend`)。
+- Notes(統合ブランチの取り込み): 遮蔽の利得は声の音量に、設定の音量はバスに掛かるので二重には掛からない。人が見るときの見どころ: 同梱の雨音が鳴るシーンで設定の Ambient の音量を下げたとき、雨音が遮蔽のかかったまま小さくなること。
+
+### G15-GR68-CANVAS-EXT Canvas の板の線形・ミップのサンプラー、円弧と円のマスクのシェーダー、板ごとの値、使う組だけのパイプライン（2026-11-21、run 20261121-201027）
+- U1 板のサンプラー・シェーダーの種類・板ごとの値の型を足し、BoardProxy と BoardComponent に口を足す: 着地(直し 0 回)
+- U2 board2d.vert に板ごとの値と板の中の UV を出し、円弧・リングと円のマスクのフラグメントシェーダーを足す: 着地(直し 0 回)
+- U3 CanvasView のバッチの鍵・描画コマンド・インスタンスのデータに新しい欄を通し、サンプラー 3 種とブレンド × シェーダーの組の遅延のパイプラインにする: 着地(直し 0 回)
+- Done(反復 2): (1) `RenderTypes.h` に `BoardSampler`（Point / LinearClamp / LinearMipClamp）と `BoardShaderKind`（Standard / RadialFill / CircleMask）を足し、`BoardProxy` に `Sampler`・`ShaderKind`・`ShaderParams`（既定は Point・Standard・0）、`BoardComponent` に Set/Get と PROPERTY を足して `BuildBoardProxy` で写す。`CanvasView.cpp` の `BoardBatchKey` にサンプラーとシェーダーの種類を入れ、違う板は別のバッチになる（`ShaderParams` だけ違う板は同じバッチ）。板の描画コマンドの `Draw.MaterialIndex`（板の経路では材質を引かない欄）に `サンプラー | シェーダーの種類 << 8` を詰める。(2) `FillBoardInstanceData` で `ShaderParams` を空きの `NormalMatrix[10..11]` と `CustomData[2..3]` へ詰め、インスタンスは 56 float（224 バイト）のまま（`MeshTypes.h` は変えていない）。`board2d.vert` は `flat` の `fragParams = vec4(normalRows[2].zw, customData.zw)` と板の中の UV `fragLocalUV` を出す。(3) `board2d_ring.frag`（塗りの割合・開始角・内径の比・向き、`fwidth` で縁を滑らかに、全周は角のマスクを省く）と `board2d_circle.frag`（内接円のマスク）を足し、`ShaderManager::LoadShader` が実行時に `Assets/Shaders` から読んでコンパイルする。(4) 記録のたびに 3 本作っていたパイプラインを、記録の中で初めて使う（ブレンド × シェーダー）の組だけ作る形にした（既定の板だけなら 1 本）。作れない組はその記録の中で作り直さず、そのコマンドだけ飛ばす。線形（基準の段だけ、`maxLOD = 0`）・ミップのサンプラーを足し、記述子セットはコマンドのサンプラーで作る。層の合成のサンプラーは Point のまま。既定（Point・Standard・0）の板は `MaterialIndex` が 0、追加の 4 float が +0.0f で、インスタンスのデータと描画コマンドは変更の前と同じバイト列。
+- 証拠(反復 2): `.harness/runs/20261121-201027/G15-GR68-CANVAS-EXT-U3-verify.txt`（U1〜U3 を全部載せた版で `cmake --build build --config Debug --target Game -- /m:1` が exit_code=0、error C 0・error LNK 0・CanvasView.cpp の警告 0 で Game.exe まで。`git diff --numstat` と `--ignore-cr-at-eol --numstat` が一致）。シェーダー 4 本は `glslangValidator -V --target-env vulkan1.2` で全部コンパイルできた（U2 の確かめ）。
+- Next(反復 2): ランナーの評価者の反証（危険地帯: RenderThread 側の Canvas の記録）。画素とパイプラインの作成の費用の確かめは G15-GR68-UI-CHECK。
+- Notes(反復 2): 試験（`BoardShaderParamsTest`、`RenderingHdrSceneCaptureTest` の束と `CanvasUiVulkanTest`）と `Docs/Testing.md` の更新は、試験を作らない決まりなので作っていない。`Test/` は既に無く、消した試験は無い。撮影・GPU の計測・Game の起動はしていない。
+- Notes(反復 2): 採った判断: `DrawCommand.h` を範囲外として欄を足さず、板の経路で読まれない `Draw.MaterialIndex` にサンプラーとシェーダーの種類を詰めた。パイプラインは描画パスに結び付くので、表は記録 1 回の中だけで持つ（永続のキャッシュは作っていない）。
+- Notes(反復 2): 人が見るときの見どころ: 起動画面（Rendering3DTest）とランチャーの文字の板は既定の板なので見た目が変わらないこと。`BoardComponent` で `Sampler` を LinearClamp / LinearMipClamp に、`ShaderKind` を RadialFill（`ShaderParams` = 塗りの割合・開始角・内径の比・向き）/ CircleMask にした板を Canvas に置くと、円弧の塗りと円のマスクが出て、Point の板と混ざらずに描かれること。
+- U4 円弧の角度を画面の向きで測り、真上から時計回りに塗る: 着地(直し 0 回)
+- U5 Opaque とマスクのシェーダーの組を被覆率で合成し、下の板を消さない: 着地(直し 0 回)
+- Done(反復 3): 評価の指摘 3 点に対応した。(1) 円弧の向き: `board2d.vert` は板の画素の Y を NDC の上（正の高さのビューポートでは画面の下）へ写すので、反転・回転の無い板では板の中の UV の y が画面の上向きに増える。`board2d_ring.frag` の角度の計算の y を画面の下向き（1 − 2v）にし、真上が 0・右が 0.25 で画面上を時計回りに塗る（塗り 0.25・開始角 0 で画面の右上の四分の一）。半径と縁の計算は変えていない。(2) `CanvasView::CreateBoardBlendAttachmentDesc(BlendMode, BoardShaderKind)` を足し、Opaque × RadialFill / CircleMask のパイプラインは前乗算のアルファの合成（Translucent と同じ係数）にした。マスクの外（被覆率 0）で下の板と背景を残す。Standard の板とほかのブレンドの組は変わらない。(3) インスタンスの大きさ: `GPUSceneInstanceData` は変更の前も後も 56 float（224 バイト、`MeshTypes.h:513`）。done-when (2) の「52 float」は実際の大きさの書き誤りで、狙い（大きさと static_assert を変えない）は満たしている。反復 2 の記録の「52」を「56」に直した。
+- 証拠(反復 3): `.harness/runs/20261121-201027/G15-GR68-CANVAS-EXT-U5-verify.txt`（`cmake --build build --config Debug --target Game -- /m:1` が exit_code=0、error C 0・error LNK 0・CanvasView.cpp の警告 0 で Game.exe まで、numstat の 2 通りが一致）。`G15-GR68-CANVAS-EXT-U4-verify.txt` と `G15-GR68-CANVAS-EXT-iter3-shaders.txt`（統合した版で `board2d_ring.frag`・`board2d_circle.frag`・`board2d.frag` を `glslangValidator -V --target-env vulkan1.2` でコンパイルして全部 exit=0）。シェーダーは CMake に載らず実行時にコンパイルされるので、統合した版の Game のビルドは U5 の版と同じ。
+- Notes(反復 3): `glslangValidator` は `board2d.vert` を `-I` 付きで渡すと、インクルード先 `Common/SceneInstanceData.glsl` の先頭の BOM で構文エラーになる（`board2d.vert` とインクルード先はこの反復で変えていない。実行時のコンパイルは `ShaderManager` が受け持つ）。
+- Notes(反復 3): 採った判断: Opaque × マスクの板はテクスチャのアルファも合成に使う（不透明なテクスチャなら被覆率だけで合成する）。反転（bFlipY）した円弧の板は、テクスチャと一緒に円弧も上下に映る。人が見るときの見どころ: 塗り 0.25・開始角 0・時計回りの RadialFill の板が画面の右上の四分の一を塗ること、Opaque の RadialFill（塗り 0）や CircleMask の板を別の板に重ねたとき、マスクの外で下の板が見えること。
+- Next: G15-GR68-UI-CHECK（記録のたびのパイプラインの作成の費用、UI の縁の画素の確かめ）。
+- U6 板のプロキシのハッシュに、サンプラー・シェーダーの種類・板ごとの値を含める: 着地(直し 0 回)
+- Done(反復 4): G15-GR68-CANVAS-EXT — `HashProxy(BoardProxy)`（`SceneProxyHash.h`）にサンプラー・シェーダーの種類・板ごとの値を足し、人が差し替えた done-when (1)〜(5) をすべて満たした。確かめは `cmake --build build --config Debug --target Game -- /m:1`（終了コード 0、エラー 0 件、`Game.exe` まで）。試験は作らない決まりで、BoardShaderParamsTest と GPU の試験の束は作っていない。撮影・計測の確かめは回さない決まり。
+- Notes(反復 4): 人が見るときの見どころは反復 3 の Notes のとおり（RadialFill の塗り 0.25 が画面の右上の四分の一を塗る、Opaque × マスクの板の外で下の板が見える、Point と Linear の切り替え）。既定（Point・Standard）の板はシェーダー・サンプラー・インスタンスのデータが変更前と同じなので、Rendering3DTest の Text の板の見た目は変わらない。
+- Next: G15-GR68-UI-CHECK（記録のたびのパイプラインの作成の費用、UI の縁の画素の確かめ）。
+
+## G13-GR21-NAV-OBSTACLES の統合ブランチの取り込み(2026-11-22)
+- Done: `feature/scene-launcher` を取り込んだ。衝突した `Docs/Architecture/TickStages.md` のフレームの順序は統合側の書き方(`bWorldAdvance` のゲート・ポーズ中の更新)を採り、手順 3 に「AI は `FixedModulePre.PreFixedTick` で動く障害物の押印を更新してから操舵速度を確定する」を差し込んだ。`PROGRESS.md` は統合側を採った。
+- 証拠: `cmake --build build --config Debug --target Game -- /m:1` が EXIT=0・エラー 0 件・`Game.vcxproj -> build/Game/Debug/Game.exe` まで(`.harness/runs/20261122-051901/verify-merge-build.txt`)。
+- Notes: 試験は作らない・回さない決まりにより ctest の行は回していない。起動の確かめは G13-GR22-AI-SMOKE-CHECK。人が見るときの見どころ: `--ai-nav-smoke` で動く箱が経路を塞いだとき、代役が回り込んで目標へ着くこと。
+- U1 動的なオーバーレイ(セルごとの塞ぎ・コストのカウンタとタイルの版)と足跡の塗り: 着地(直し 0 回)
+- U4 `--ai-nav-smoke` の場面(平地・箱の障害物・動く箱・動物の代役): 着地(直し 0 回)
+- U7 探索・平滑化・照会がオーバーレイを読み、経路がタイルの動的な版を持つ(レビュー済みの差分を当て直す): 着地(直し 0 回)
+- U3 NavObstacleComponent と AIModule の PreFixedTick での押印の更新: 着地(直し 1 回)
+- U6 動く箱に NavObstacleComponent を付けて場面を仕上げ、文書を足す: 着地(直し 1 回)
+## G13-GR21-NAV-OBSTACLES（2026-11-22）
+- Done: 動的なオーバーレイ `NavDynamicOverlay`（セルごとの塞ぎの数とコストの加算量のカウンタ。押印の記録の Apply（加算）・Revoke（減算）で必ず釣り合い、上限を超える押印は全体を取り消し、全消去より前の記録は世代で捨てる。カウンタを変えたタイルの版を全体の通し番号で進める）と、円・カプセル・OBB の XZ の足跡をセルへ塗る `RasterizeNavDynamicFootprint`。
+- Done: A* の通行（始点のセルを除く）とコスト、平滑化の Raycast、照会（IsWalkable・NavRaycast・FindNearestWalkable・SampleCost）が塞ぎを読む。経路は通ったタイルの (タイル, 世代, DynamicVersion) を持ち、`IsPathStale` は世代か動的な版の違いで真、探索中に版が変わった経路は完成時点で古い。操舵は古い経路を引き直す。
+- Done: Public の `NavObstacleComponent`（REFLECTION_CLASS・3 つのコンストラクタ。PROPERTY: Shape・Radius・HalfLength・HalfExtents・MinHeight・MaxHeight・Mode（Block / Cost）・CostMultiplier。`RegisterReflectedTypes` に登録。Initialize で AIModule へ登録し、EndPlay・Finalize・デストラクタで押印を解除）。`NavObstacleSystem` が `AIModule::PreFixedTick` の先頭（操舵の `BeginStep` の前）で `Entity::GetTransformVersion()` の変化を見て、0.25 s 以上空けかつ 0.5 セル以上（向きの変化は外接半径の弧長）動いたときだけ古い足跡を引いて新しい足跡を足し、3 m/s を超える間は押印を外す。設定は `IAIModule::SetNavObstacleSettings` / `GetNavObstacleSettings`（`NavObstacleSettings`）。
+- Done: `Game/GameModes/AISmoke/` の `--ai-nav-smoke`（平地・箱の障害物 2 つ・往復する動く箱・CharacterBody と SteeringAgentComponent の代役 1 体）。動く箱に Block の OBB の `NavObstacleComponent` を付け、代役が目標へ着くと `AI_SMOKE mode=nav result=pass time=… distance=… obstacle_cells=… obstacle_cells_max=…` を出す。押印を一度も見ずに着いたら `result=fail reason=obstacle`。文書は `Docs/Architecture/AIModule.md` の「動く障害物」の節（既知の限界つき）と `Docs/Architecture/TickStages.md` の割当表の行。
+- 確かめ: `cmake --build build --config Debug --target Game -- /m:1` が exit_code=0・error 0 件（`NorvesModule_AI.lib`・`Game.exe` を生成。`.harness/runs/20261122-015215/verify-G13-GR21-NAV-OBSTACLES-U6-build.txt`）。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。
+- done-when (3) の試験（`NavDynamicObstacleTest`・`NavPhysicsConsistencyTest`）、`Test/Modules/Physics/CMakeLists.txt`・`Docs/Testing.md` の更新、ゲームを起動する `Scripts/Test-AINav.ps1` は、試験を作らない・回さない決まりにより作っていない。verify の ctest の行は回していない。
+- 人が見るときの見どころ: `Game.exe --ai-nav-smoke`（ナビと操舵のデバッグ描画は場面が有効にする）。青い動く箱が始点 (4.5, 16.5) と目標 (27.5, 16.5) を結ぶ直線を Z 方向に横切るので、黄色の代役の経路（緑の折れ線）が箱の手前で引き直されて箱を避けること、ログの `stage=ready … obstacle_cells=` と `result=pass … obstacle_cells_max=` が 0 でないことを見る。動的な塞ぎのセル自体はナビの格子の描画には出ない。撮影・計測の確かめは回さない決まり。
+- Next: 場面の起動の確かめ（G13-GR22-AI-SMOKE-CHECK）、地形からのベイク（G13-GR21-NVNAV-COOK）、タイルの出し入れ（G13-GR21-NAV-STREAMING）。
+- Notes: 判断: オーバーレイはエージェントの半径で膨らませないので、押印の足跡を全体で 1 つの余白 `AgentPadding`（既定 0.5 m = Medium の半径）で広げる。高さの帯 `HeightBand` は 2 m、速さのしきい値は 3 m/s（場面の箱は 0.5 m/s）。0.25 s・0.5 セルを含めすべて未計測の仮の値。既知の限界（平滑化が Cost のセルを横切りうる・`uint32_t` の通し番号の周回・Large の縁を擦りうる・可変 Tick で動かすと速さを歩の数の倍に見積もりうる・版がタイル単位）は `AIModule.md` に書いた。
+- U9 探索中に動的な版が進んで失敗した要求を Pending のまま探し直す: 着地(直し 0 回)
+- U8 押印の再評価の契機を足す(上下の移動・公開プロパティの直書き・タイルの読み込み): 着地(直し 0 回)
+- U10 平滑化が動的なコストを増やす短絡をしない: 着地(直し 0 回)
+- U11 AI の文書の既知の限界と押し直しの節を直し、タスクの verify を回す: 着地(直し 0 回)
+- 差し戻しの直し（反復 2 の評価）: 押し直しの移動量と速さに上下の変位を含め、高さの帯を抜けた箱の地上の押印を外す。部品は前回の評価に使った 8 つの PROPERTY の値を控え、公開の参照アクセサで直接書かれても次の固定歩で違いを見て押し直す。タイルの読み込み・置換・解放（`NavGrid::GetVersion()` の変化）で全障害物を再評価し、塗り直したセル列・モード・倍率が今の世代の押印と同じなら Revoke/Apply を飛ばして動的な版を進めない。探索中に押印の通し番号が進み、A* か平滑化が失敗した要求は `Failed` にせず、待ち行列の先頭に残して今の版で探し直す（同じ `RunBudget` の中ではオーバーレイが変わらないので 2 回目で必ず確定する）。平滑化は、短絡する線分が触れるセル（角で触れるセルを含む・始点のセルを除く）の動的な割増の和が元のセル列の同じ区間より大きければ折れ点を残す（隣のセルへの線分と割増の無い経路は今までどおり）。`Docs/Architecture/AIModule.md` の動く障害物の節と既知の限界を今の振る舞いにそろえた。
+- 確かめ（直しの後）: `cmake --build build --config Debug --target Game -- /m:1` が exit_code=0・`warning C`/`error` 0 件（`AIModule.cpp`・`NavGridQueries.cpp`・`NavObstacleComponent.cpp`・`NavObstacleSystem.cpp`・`NavPathSmoothing.cpp`・`NavigationService.cpp` などを再コンパイルし、`NorvesModule_AI.lib`・`Game.exe` を生成。`.harness/runs/20261122-015215/verify-G13-GR21-NAV-OBSTACLES-U11-build.txt`）。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らず・回さず、Game.exe は起動していない（決まりによる）。
+- 人が見るときの見どころ（追加）: `Game.exe --ai-nav-smoke` で、往復する箱が代役の経路を塞いだ後に離れても、代役が止まったままにならず目標へ着くこと。
+- Next: 場面の起動の確かめ（G13-GR22-AI-SMOKE-CHECK）、地形からのベイク（G13-GR21-NVNAV-COOK）、タイルの出し入れ（G13-GR21-NAV-STREAMING）。
+- Notes: 既知の限界: 平滑化の後に端点をセル中心から要求の始点・目標へ差し替えるときは通行可否だけを見るので、その最初と最後の線分では動的な割増を比べない。探索が何歩もまたぐ間に押印が毎回変わって失敗し続けると、先頭の要求の探し直しが続いて後ろの要求が待たされうる。
+- U12 経路の始点・終点を要求の座標へ差し替えるとき、動的なコストの割増が増えるならセル中心を残す: 着地(直し 0 回)
+- U13 格子・オーバーレイ・設定・プロパティの変化による再評価を前回の押印の位置・向きで行い、今の位置への移動には常に間隔と移動量の条件を当てる: 着地(直し 0 回)
+- U14 AI の文書の動く障害物の節を端点の差し替えと再評価の振る舞いにそろえ、タスクの verify を回す: 着地(直し 0 回)
+- 判断役の判断による再開の直し: 平滑化の後に経路の始点・終点を要求の座標へ差し替えるとき、差し替える前と後の線分の動的な割増（`NavGridQueries::Raycast` の割増を返す多重定義。線分の始点セルを除く）を比べ、後の方が多ければセル中心を残して要求の座標を先頭（目標は末尾）に足す（セル中心からその座標への線分が通れるときだけ）。割増の無い経路は今までどおり。
+- 判断役の判断による再開の直し: 動く障害物の印を、押印が無いので今の位置で塗る `m_bNeedsRestamp`（初回・所有者の喪失・速すぎ）と、姿勢はそのまま評価し直す `m_bNeedsReevaluate`（格子の版・オーバーレイの世代・設定・押印のプロパティの変化）に分けた。再評価は前回の押印の位置・向きで足跡を作り直して塗り（同じ世代・セル列・モード・加算量なら押印を保って版を進めない）、押印の時刻・位置・向きは変えない。今の位置への押し直しには、いつも 0.25 s・0.5 セルの条件を当てる。1 歩で塗るのは最大 1 回。`Docs/Architecture/AIModule.md` の動く障害物の節をこの振る舞いにそろえ、既知の限界から端点の調整の項を消した。
+- 確かめ（再開の直しの後）: `cmake --build build --config Debug --target Game -- /m:1` が exit_code=0・`warning C`/`error` 0 件（`NavigationService.cpp`・`AIModule.cpp`・`NavObstacleComponent.cpp`・`NavObstacleSystem.cpp` を再コンパイルし、`NorvesModule_AI.lib`・`Game.exe` を生成。`.harness/runs/20261122-051901/verify-G13-GR21-NAV-OBSTACLES-U14-build.txt`）。各ファイルの `git diff --numstat` と `--ignore-cr-at-eol --numstat` は一致。試験は作らず・回さず、Game.exe は起動していない（決まりによる）。
+- 人が後で見ること: done-when (3) の試験（1 万回の生成・破棄でカウンタが 0 に戻ること、物理との整合）と起動の台本 `Scripts/Test-AINav.ps1` は決まりにより外した。カウンタの漏れや塞ぎの取りこぼしは試験で裏付けていないので、`Game.exe --ai-nav-smoke` などの遊びで見えない壁や壁擦りとして出ないかを見る。
+- Next: 場面の起動の確かめ（G13-GR22-AI-SMOKE-CHECK）、地形からのベイク（G13-GR21-NVNAV-COOK）、タイルの出し入れ（G13-GR21-NAV-STREAMING）。
+- Notes: 既知の限界（扱っていない）: 経路が古くなった歩で `SteeringSystem::FollowPath` が 1 固定歩だけ速度 0 を返す。足跡の判定がセル中心なので OBB の角を斜めにかすめるセルが落ちうる。押印が毎歩変わり続けると後ろの経路の要求が待たされうる。押印が無いまま動く障害物（高さの帯の外を動く箱など）は毎歩塗り直す（押印が空なので版は進まない）。0.25 s・0.5 セルなどのしきい値は未計測の仮の値。

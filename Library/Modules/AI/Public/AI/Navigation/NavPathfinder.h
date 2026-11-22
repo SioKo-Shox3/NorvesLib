@@ -7,6 +7,7 @@
 namespace NorvesLib::Modules::AI
 {
     class NavGrid;
+    class NavDynamicOverlay;
 
     /// 格子上の経路とその探索条件。
     struct NavPathQuery
@@ -28,7 +29,7 @@ namespace NorvesLib::Modules::AI
     };
 
     /// 整数コストの重み付き A*。乱数・時刻・ポインタ値を順序に使わず、同じ入力から
-    /// バイト単位で同じ経路を返す。展開を複数回に分けても一括実行と結果がビット単位で一致する。
+    /// バイト単位で同じ経路を返す。地形と押印が一定なら、展開を複数回に分けても一括実行と結果がビット単位で一致する。
     class NavPathfinder
     {
     public:
@@ -37,8 +38,8 @@ namespace NorvesLib::Modules::AI
         NavPathfinder(NavPathfinder&&) noexcept;
         NavPathfinder& operator=(NavPathfinder&&) noexcept;
 
-        /// 展開せずに探索を初期化する。grid は最後の Step 呼び出しまで有効であること。
-        void Begin(const NavGrid& grid, const NavPathQuery& query);
+        /// 展開せずに探索を初期化する。grid と指定した overlay は最後の Step 呼び出しまで有効であること。
+        void Begin(const NavGrid& grid, const NavPathQuery& query, const NavDynamicOverlay* overlay = nullptr);
 
         /// 最大 maxExpansions 個を展開する。格子の版が変わったら展開せず Failed を返すため、Begin し直すこと。
         ENavSearchState Step(uint32_t maxExpansions);
@@ -47,6 +48,7 @@ namespace NorvesLib::Modules::AI
         /// Begin からの累計展開数。連結成分の不一致による即決も、展開数 0 として確認できる。
         uint32_t GetExpansionCount() const;
         uint64_t GetGridVersionAtBegin() const;
+        uint32_t GetDynamicSerialAtBegin() const;
 
         /// Succeeded または Partial の経路を始点順に返す。それ以外では空。
         Core::Container::Span<const NavCellCoord> GetPathCells() const;

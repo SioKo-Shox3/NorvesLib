@@ -22,9 +22,21 @@ namespace NorvesLib::Modules::AI
         }
     }
 
+    NavigationService::NavigationService()
+    {
+        m_Overlay.Reset(m_Grid.GetDesc());
+    }
+
     ENavTileResult NavigationService::LoadTile(NavTile&& tile)
     {
-        return m_Grid.LoadTile(std::move(tile));
+        const NavGridDesc previous = m_Grid.GetDesc();
+        const ENavTileResult result = m_Grid.LoadTile(std::move(tile));
+        if (result == ENavTileResult::Ok)
+        {
+            // 空の格子は最初のタイルから設定を取り込む。
+            SyncOverlayGridDesc(previous);
+        }
+        return result;
     }
 
     bool NavigationService::UnloadTile(NavTileCoord coord)
@@ -35,6 +47,16 @@ namespace NorvesLib::Modules::AI
     const NavGrid& NavigationService::GetGrid() const
     {
         return m_Grid;
+    }
+
+    NavDynamicOverlay& NavigationService::GetDynamicOverlay()
+    {
+        return m_Overlay;
+    }
+
+    const NavDynamicOverlay& NavigationService::GetDynamicOverlay() const
+    {
+        return m_Overlay;
     }
 
     PathHandle NavigationService::RequestPath(const Math::Vector3& start, const Math::Vector3& goal,
@@ -72,7 +94,8 @@ namespace NorvesLib::Modules::AI
         slot.Goal = goal;
         slot.Query.Profile = profile;
         slot.Query.Epsilon = epsilon;
-        if (!IsWalkable(start, profile) && !FindNearestWalkable(start, profile, 2.0f, slot.Start))
+        if (!NavGridQueries::IsWalkable(m_Grid, start, profile.Radius)
+            && !NavGridQueries::FindNearestWalkable(m_Grid, start, profile.Radius, 2.0f, slot.Start))
         {
             slot.Status = ENavPathStatus::Failed;
             return handle;
@@ -151,9 +174,15 @@ namespace NorvesLib::Modules::AI
         {
             return false;
         }
-        for (const TileStamp& tile : m_Slots[handle.Index].Tiles)
+        const PathSlot& slot = m_Slots[handle.Index];
+        if (slot.bDynamicStaleAtFinish)
         {
-            if (m_Grid.GetTileGeneration(tile.Coord) != tile.Generation)
+            return true;
+        }
+        for (const TileStamp& tile : slot.Tiles)
+        {
+            if (m_Grid.GetTileGeneration(tile.Coord) != tile.Generation
+                || m_Overlay.GetTileVersion(tile.Coord) != tile.DynamicVersion)
             {
                 return true;
             }
@@ -171,7 +200,7 @@ namespace NorvesLib::Modules::AI
             {
                 slot.Query.Start = m_Grid.WorldToCell(slot.Start.x, slot.Start.z);
                 slot.Query.Goal = m_Grid.WorldToCell(slot.Goal.x, slot.Goal.z);
-                m_Pathfinder.Begin(m_Grid, slot.Query);
+                m_Pathfinder.Begin(m_Grid, slot.Query, &m_Overlay);
             }
 
             const uint32_t before = m_Pathfinder.GetExpansionCount();
@@ -181,34 +210,86 @@ namespace NorvesLib::Modules::AI
             remaining -= before == UINT32_MAX ? 1u : m_Pathfinder.GetExpansionCount() - before;
             if (state != ENavSearchState::InProgress)
             {
-                FinishPath(slot, state);
+                const bool finished = TryFinishPath(slot, state);
                 m_Pathfinder.Reset();
-                m_Pending.pop_front();
+                if (finished)
+                {
+                    m_Pending.pop_front();
+                }
             }
         }
     }
 
-    void NavigationService::FinishPath(PathSlot& slot, ENavSearchState state)
+    bool NavigationService::TryFinishPath(PathSlot& slot, ENavSearchState state)
     {
+        const uint32_t serialAtBegin = m_Pathfinder.GetDynamicSerialAtBegin();
         const auto cells = m_Pathfinder.GetPathCells();
         const float radius = slot.Query.Profile.Radius;
         if ((state != ENavSearchState::Succeeded && state != ENavSearchState::Partial)
-            || !SmoothNavPath(m_Grid, cells, radius, slot.Points))
+            || !SmoothNavPath(m_Grid, cells, radius, slot.Points, &m_Overlay))
         {
+            if (m_Overlay.GetSerial() != serialAtBegin)
+            {
+                slot.Points.clear();
+                return false;
+            }
             slot.Status = ENavPathStatus::Failed;
-            return;
+            return true;
         }
         slot.Cells.assign(cells.begin(), cells.end());
         if (slot.Points.size() > 1)
         {
-            if (!NavGridQueries::Raycast(m_Grid, slot.Start, slot.Points[1], radius).bHit)
+            enum class EndpointAction { KeepCenter, ReplaceCenter, KeepBoth };
+            const bool bCheckCost = !m_Overlay.IsEmpty();
+            const auto chooseEndpointAction = [&](const Math::Vector3& oldFrom, const Math::Vector3& oldTo,
+                                                  const Math::Vector3& newFrom, const Math::Vector3& newTo)
+            {
+                uint64_t newExtra = 0;
+                const auto ray = bCheckCost
+                    ? NavGridQueries::Raycast(m_Grid, newFrom, newTo, radius, m_Overlay, newExtra)
+                    : NavGridQueries::Raycast(m_Grid, newFrom, newTo, radius, &m_Overlay);
+                if (ray.bHit)
+                {
+                    return EndpointAction::KeepCenter;
+                }
+                // 差し替え後の線分で動的な割増が増えるなら、平滑化で選んだセル中心を経由する。
+                if (bCheckCost)
+                {
+                    uint64_t oldExtra = 0;
+                    NavGridQueries::Raycast(m_Grid, oldFrom, oldTo, radius, m_Overlay, oldExtra);
+                    if (newExtra > oldExtra)
+                    {
+                        return EndpointAction::KeepBoth;
+                    }
+                }
+                return EndpointAction::ReplaceCenter;
+            };
+
+            const auto startAction = chooseEndpointAction(slot.Points.front(), slot.Points[1], slot.Start, slot.Points[1]);
+            if (startAction == EndpointAction::ReplaceCenter)
             {
                 slot.Points.front() = slot.Start;
             }
-            const auto& previous = slot.Points[slot.Points.size() - 2];
-            if (state == ENavSearchState::Succeeded && !NavGridQueries::Raycast(m_Grid, previous, slot.Goal, radius).bHit)
+            else if (startAction == EndpointAction::KeepBoth
+                     && !NavGridQueries::Raycast(m_Grid, slot.Start, slot.Points.front(), radius, &m_Overlay).bHit)
             {
-                slot.Points.back() = slot.Goal;
+                slot.Points.insert(slot.Points.begin(), slot.Start);
+            }
+
+            if (state == ENavSearchState::Succeeded)
+            {
+                const auto& previous = slot.Points[slot.Points.size() - 2];
+                const auto& last = slot.Points.back();
+                const auto goalAction = chooseEndpointAction(previous, last, previous, slot.Goal);
+                if (goalAction == EndpointAction::ReplaceCenter)
+                {
+                    slot.Points.back() = slot.Goal;
+                }
+                else if (goalAction == EndpointAction::KeepBoth
+                         && !NavGridQueries::Raycast(m_Grid, last, slot.Goal, radius, &m_Overlay).bHit)
+                {
+                    slot.Points.push_back(slot.Goal);
+                }
             }
         }
 
@@ -218,7 +299,12 @@ namespace NorvesLib::Modules::AI
         {
             if (seen.insert(coord.ToKey()).second)
             {
-                slot.Tiles.push_back({coord, m_Grid.GetTileGeneration(coord)});
+                const uint32_t version = m_Overlay.GetTileVersion(coord);
+                slot.Tiles.push_back({coord, m_Grid.GetTileGeneration(coord), version});
+                if (version > serialAtBegin)
+                {
+                    slot.bDynamicStaleAtFinish = true;
+                }
             }
         };
         for (NavCellCoord cell : slot.Cells)
@@ -230,7 +316,7 @@ namespace NorvesLib::Modules::AI
         const auto recordSegment = [&](const Math::Vector3& from, const Math::Vector3& to)
         {
             testedTiles.clear();
-            NavGridQueries::Raycast(m_Grid, from, to, radius, testedTiles);
+            NavGridQueries::Raycast(m_Grid, from, to, radius, testedTiles, &m_Overlay);
             for (NavTileCoord coord : testedTiles)
             {
                 recordTile(coord);
@@ -245,28 +331,29 @@ namespace NorvesLib::Modules::AI
             recordSegment(slot.Points[i - 1], slot.Points[i]);
         }
         slot.Status = state == ENavSearchState::Succeeded ? ENavPathStatus::Succeeded : ENavPathStatus::Partial;
+        return true;
     }
 
     bool NavigationService::FindNearestWalkable(const Math::Vector3& position, const NavAgentProfile& profile,
                                                 float searchRadius, Math::Vector3& outPosition) const
     {
-        return NavGridQueries::FindNearestWalkable(m_Grid, position, profile.Radius, searchRadius, outPosition);
+        return NavGridQueries::FindNearestWalkable(m_Grid, position, profile.Radius, searchRadius, outPosition, &m_Overlay);
     }
 
     bool NavigationService::IsWalkable(const Math::Vector3& position, const NavAgentProfile& profile) const
     {
-        return NavGridQueries::IsWalkable(m_Grid, position, profile.Radius);
+        return NavGridQueries::IsWalkable(m_Grid, position, profile.Radius, &m_Overlay);
     }
 
     NavRaycastResult NavigationService::NavRaycast(const Math::Vector3& from, const Math::Vector3& to,
                                                    const NavAgentProfile& profile) const
     {
-        return NavGridQueries::Raycast(m_Grid, from, to, profile.Radius);
+        return NavGridQueries::Raycast(m_Grid, from, to, profile.Radius, &m_Overlay);
     }
 
     uint32_t NavigationService::SampleCost(const Math::Vector3& position, const NavAgentProfile& profile) const
     {
-        return NavGridQueries::SampleCost(m_Grid, position, profile);
+        return NavGridQueries::SampleCost(m_Grid, position, profile, &m_Overlay);
     }
 
     const NavAgentProfile* NavigationService::FindProfile(const char* name) const
@@ -296,7 +383,23 @@ namespace NorvesLib::Modules::AI
 
     bool NavigationService::SetGridDesc(const NavGridDesc& desc)
     {
-        return m_Grid.SetDesc(desc);
+        const NavGridDesc previous = m_Grid.GetDesc();
+        if (!m_Grid.SetDesc(desc))
+        {
+            return false;
+        }
+        SyncOverlayGridDesc(previous);
+        return true;
+    }
+
+    void NavigationService::SyncOverlayGridDesc(const NavGridDesc& previous)
+    {
+        const NavGridDesc& current = m_Grid.GetDesc();
+        if (current.OriginX != previous.OriginX || current.OriginZ != previous.OriginZ ||
+            current.CellSize != previous.CellSize || current.TileCells != previous.TileCells)
+        {
+            m_Overlay.Reset(current);
+        }
     }
 
     void NavigationService::Reset()
@@ -313,6 +416,7 @@ namespace NorvesLib::Modules::AI
         }
         m_Slots.clear();
         m_Grid.Clear();
+        m_Overlay.Clear();
     }
 
     uint32_t NavigationService::GetPathSlotCount() const

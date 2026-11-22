@@ -337,6 +337,12 @@ namespace NorvesLib::Core::Rendering
         Math::Vector2 SizePx = Math::Vector2(0.0f, 0.0f);
         Math::Vector2 SizeWorld = Math::Vector2(0.0f, 0.0f);
         Math::Vector4 UVRect = Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f);
+        /// Canvas の板だけが使うテクスチャの引き方。
+        BoardSampler Sampler = BoardSampler::Point;
+        /// Canvas の板だけが使うフラグメントシェーダーの種類。
+        BoardShaderKind ShaderKind = BoardShaderKind::Standard;
+        /// Canvas の板だけが使う、シェーダーの種類に応じた板ごとの値。
+        Math::Vector4 ShaderParams = Math::Vector4(0.0f, 0.0f, 0.0f, 0.0f);
 
         bool bVisible = true;
 

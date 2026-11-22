@@ -23,6 +23,9 @@ namespace NorvesLib::Core::Component
         getSizePx().Set(Math::Vector2(0.0f, 0.0f));
         getUVRectProp().Set(GetFullTextureUVRect());
         InitializeFlipbookDefaults();
+        SamplerProp = Rendering::BoardSampler::Point;
+        ShaderKindProp = Rendering::BoardShaderKind::Standard;
+        ShaderParamsProp = Math::Vector4(0.0f, 0.0f, 0.0f, 0.0f);
         getLayerPriority().Set(0);
         getOrderInLayer().Set(0);
     }
@@ -42,6 +45,9 @@ namespace NorvesLib::Core::Component
         getSizePx().Set(Math::Vector2(0.0f, 0.0f));
         getUVRectProp().Set(GetFullTextureUVRect());
         InitializeFlipbookDefaults();
+        SamplerProp = Rendering::BoardSampler::Point;
+        ShaderKindProp = Rendering::BoardShaderKind::Standard;
+        ShaderParamsProp = Math::Vector4(0.0f, 0.0f, 0.0f, 0.0f);
         getLayerPriority().Set(0);
         getOrderInLayer().Set(0);
     }
@@ -61,6 +67,9 @@ namespace NorvesLib::Core::Component
         getSizePx().Set(Math::Vector2(0.0f, 0.0f));
         getUVRectProp().Set(GetFullTextureUVRect());
         InitializeFlipbookDefaults();
+        SamplerProp = Rendering::BoardSampler::Point;
+        ShaderKindProp = Rendering::BoardShaderKind::Standard;
+        ShaderParamsProp = Math::Vector4(0.0f, 0.0f, 0.0f, 0.0f);
         getLayerPriority().Set(0);
         getOrderInLayer().Set(0);
     }
@@ -258,6 +267,24 @@ namespace NorvesLib::Core::Component
     void BoardComponent::SetUVRect(const Math::Vector4 &uvRect)
     {
         getUVRectProp().Set(uvRect);
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetSampler(Rendering::BoardSampler sampler)
+    {
+        SamplerProp = sampler;
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetShaderKind(Rendering::BoardShaderKind shaderKind)
+    {
+        ShaderKindProp = shaderKind;
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetShaderParams(const Math::Vector4 &shaderParams)
+    {
+        ShaderParamsProp = shaderParams;
         MarkRenderStateDirty();
     }
 
@@ -690,6 +717,9 @@ namespace NorvesLib::Core::Component
         outProxy.Pivot = getPivot().Get();
         outProxy.SizePx = getSizePx().Get();
         outProxy.UVRect = getUVRectProp().Get();
+        outProxy.Sampler = SamplerProp.Get();
+        outProxy.ShaderKind = ShaderKindProp.Get();
+        outProxy.ShaderParams = ShaderParamsProp.Get();
         outProxy.LayerPriority = getLayerPriority().Get();
         outProxy.OrderInLayer = getOrderInLayer().Get();
         outProxy.SortKey = Rendering::BoardProxy::ComputeSortKey(getLayerPriority().Get(), getOrderInLayer().Get());
