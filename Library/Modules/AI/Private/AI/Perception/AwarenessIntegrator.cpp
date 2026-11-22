@@ -20,7 +20,8 @@ namespace NorvesLib::Modules::AI::Perception
             return static_cast<float>(hash >> 8) * 0x1p-24f;
         }
 
-        void UpdateLevel(AwarenessState& state, const AwarenessTuning& tuning, float deltaSeconds, uint32_t seed)
+        void UpdateLevel(AwarenessState& state, const AwarenessTuning& tuning, double before, double rate,
+                         float deltaSeconds, uint32_t seed)
         {
             if (state.Level == EAwarenessLevel::Alert && state.Awareness < tuning.AlertThreshold - tuning.Hysteresis)
             {
@@ -47,8 +48,18 @@ namespace NorvesLib::Modules::AI::Perception
                 {
                     const float sample = ReactionSample(seed, state.ReactionCount++);
                     const double delay = tuning.ReactionDelaySeconds + static_cast<double>(tuning.ReactionJitterSeconds) * sample;
-                    remainingSeconds = static_cast<float>(std::clamp<double>(delay, 0.0, std::numeric_limits<float>::max()));
-                    return remainingSeconds == 0.0f;
+                    const double dt = deltaSeconds;
+                    const double crossingSeconds = before < threshold && rate > 0.0
+                        ? std::clamp((threshold - before) / rate, 0.0, dt)
+                        : 0.0;
+                    const double remaining = std::clamp<double>(delay, 0.0, std::numeric_limits<float>::max()) - (dt - crossingSeconds);
+                    remainingSeconds = static_cast<float>(remaining);
+                    if (remainingSeconds <= 0.0f)
+                    {
+                        remainingSeconds = 0.0f;
+                        return true;
+                    }
+                    return false;
                 }
                 return false;
             };
@@ -84,8 +95,9 @@ namespace NorvesLib::Modules::AI::Perception
         const double intensity = std::isfinite(input.Intensity) ? std::clamp(input.Intensity, 0.0f, 1.0f) : 0.0f;
         const double sensitivity = std::isfinite(input.Sensitivity) ? std::max(input.Sensitivity, 0.0f) : 0.0f;
         const double rate = tuning.Gain * intensity * sensitivity - tuning.Decay * (1.0 - intensity);
-        state.Awareness = static_cast<float>(std::clamp(state.Awareness + rate * deltaSeconds, 0.0, 1.0));
-        UpdateLevel(state, tuning, deltaSeconds, seed);
+        const double before = state.Awareness;
+        state.Awareness = static_cast<float>(std::clamp(before + rate * deltaSeconds, 0.0, 1.0));
+        UpdateLevel(state, tuning, before, rate, deltaSeconds, seed);
 
         if (intensity > 0.0 && input.bHasStimulusPosition)
         {
