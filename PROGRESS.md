@@ -13157,3 +13157,4 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: まだ知覚の処理へ配線していない（G13-GR24-PERCEPTION-SERVICE の受け持ち）ので、ゲームの見た目と動きは変わらない。
 - Next: ランナーの評価者の反証（`GrassField` は Public API）。配線・`PerceptionTuning` の読み込み・固体の遮蔽は G13-GR24-PERCEPTION-SERVICE。
 - Notes: 既知の限界: 嗅覚を要件の式どおりにしたので、仮の調整値では真横（90 度）の点が同じ距離の風上より薄くなる（d = 10 m で横風 約 3.7e-6·S、風上 約 3.6e-3·S）。done-when (3) の「風下 > 横風 > 風上」は軸に近い横風か、`crossSigmaBaseMeters`・`upwindFactor` の調整で満たす。前の仕上げの Notes にある「風上の軸の比・`max(煙, B)`・遅れが 2 回入る」はこの直しで無くなった。
+- U15 知覚の草の照会を倍率と先端の高さを返す QueryOcclusion の多重定義に通す: 着地(直し 0 回)

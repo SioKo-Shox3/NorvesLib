@@ -332,6 +332,25 @@ namespace NorvesLib::Core::Vegetation
         return std::exp(-QueryOpticalDepth(a, b, stepMeters, pDryness));
     }
 
+    float GrassField::QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
+                                    const DrynessMap* pDryness, float opacityScale, float* pOutMaxTopHeight) const
+    {
+        const float tau = QueryOpticalDepth(a, b, stepMeters, pDryness, pOutMaxTopHeight);
+        if (!std::isfinite(opacityScale) || opacityScale < 0.0f)
+        {
+            opacityScale = 1.0f;
+        }
+        if (opacityScale == 0.0f)
+        {
+            return 1.0f;
+        }
+        if (std::isnan(tau))
+        {
+            return 0.0f;
+        }
+        return std::exp(-std::max(0.0f, tau) * opacityScale);
+    }
+
     float GrassField::QueryOpticalDepth(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
                                         const DrynessMap* pDryness, float* pOutMaxTopHeight) const
     {

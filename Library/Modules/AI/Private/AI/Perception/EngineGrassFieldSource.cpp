@@ -17,7 +17,7 @@ namespace NorvesLib::Modules::AI::Perception
     }
 
     GrassPathSample EngineGrassFieldSource::QueryGrassPath(const Math::Vector3& eye, const Math::Vector3& target,
-                                                           float stepMeters) const
+                                                           float stepMeters, float opacityScale) const
     {
         const auto* field = m_pVegetation ? m_pVegetation->GetGrassField() : nullptr;
         if (!field)
@@ -25,8 +25,8 @@ namespace NorvesLib::Modules::AI::Perception
             return {};
         }
         GrassPathSample sample;
-        sample.OpticalDepth = field->QueryOpticalDepth(eye, target, stepMeters, &m_pVegetation->GetDrynessMap(),
-                                                      &sample.MaxTopHeight);
+        sample.Transmittance = field->QueryOcclusion(eye, target, stepMeters, &m_pVegetation->GetDrynessMap(),
+                                                     opacityScale, &sample.MaxTopHeight);
         return sample;
     }
 }

@@ -31,21 +31,17 @@ namespace NorvesLib::Modules::AI::Perception
             return static_cast<float>(t * t * (3.0 - 2.0 * t));
         }
 
-        float GrassTransmittance(const GrassPathSample& sample, float eyeHeight, float scale)
+        float GrassTransmittance(const GrassPathSample& sample, float eyeHeight)
         {
-            if (eyeHeight >= sample.MaxTopHeight || scale == 0.0f)
+            if (eyeHeight >= sample.MaxTopHeight)
             {
                 return 1.0f;
             }
-            if (std::isnan(sample.OpticalDepth))
+            if (std::isnan(sample.Transmittance))
             {
                 return 0.0f;
             }
-            if (!std::isfinite(scale) || scale < 0.0f)
-            {
-                scale = 1.0f;
-            }
-            return std::exp(-std::max(0.0f, sample.OpticalDepth) * scale);
+            return std::clamp(sample.Transmittance, 0.0f, 1.0f);
         }
     }
 
@@ -110,8 +106,8 @@ namespace NorvesLib::Modules::AI::Perception
 
         if (grass)
         {
-            const GrassPathSample sample = grass->QueryGrassPath(eye, target, tuning.GrassStepMeters);
-            result.GrassTransmittance = GrassTransmittance(sample, eye.y, tuning.GrassOpacityScale);
+            const GrassPathSample sample = grass->QueryGrassPath(eye, target, tuning.GrassStepMeters, tuning.GrassOpacityScale);
+            result.GrassTransmittance = GrassTransmittance(sample, eye.y);
         }
         result.Visibility = result.GrassTransmittance * result.AngleWeight * result.DistanceWeight;
         return result;

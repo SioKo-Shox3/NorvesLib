@@ -91,12 +91,14 @@ namespace NorvesLib::Core::Vegetation
         float QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
                              const DrynessMap* pDryness = nullptr) const;
         /**
-         * @brief 区間の草の光学的厚さ τ（0 以上）を返す。QueryOcclusion は同じ刻み・枯れ度・積分回数の上限で exp(-τ) を返す。
+         * @brief 刻みと枯れ度は 4 引数版と同様に扱い、積分した光学的厚さ τ から透過率（0..1）を返す。
+         * τ に opacityScale を掛けてから指数関数を 1 回だけ適用し、exp(-τ × opacityScale) を求める。
+         * opacityScale が有限の非負数でなければ倍率 1 を使う。倍率が 0 なら透過率は 1、それ以外で τ が NaN なら 0。
          * pOutMaxTopHeight には草のある積分点での、地面の高さと枯れ度を反映した草丈の和の最大値（m）を書く。
          * 草のある積分点がない場合や区間が不正な場合は負の無限大を書く。
          */
-        float QueryOpticalDepth(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
-                                const DrynessMap* pDryness = nullptr, float* pOutMaxTopHeight = nullptr) const;
+        float QueryOcclusion(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
+                             const DrynessMap* pDryness, float opacityScale, float* pOutMaxTopHeight = nullptr) const;
         GrassSurface QuerySurface(float x, float z) const;
         float GetCameraClearance(const Math::Vector3& position) const;
         Container::TSharedPtr<const Rendering::GrassFieldRenderData> BuildRenderData() const;
@@ -126,6 +128,13 @@ namespace NorvesLib::Core::Vegetation
                                   float* pOutAlpha = nullptr) const;
         GrassSample SampleInternal(float x, float z, float* pOutBaseDryness) const;
         float GetGroundHeight(float x, float z) const;
+        /**
+         * @brief QueryOcclusion の各版が使う積分で、区間の草の光学的厚さ τ（0 以上）を返す。
+         * pOutMaxTopHeight には草のある積分点での、地面の高さと枯れ度を反映した草丈の和の最大値（m）を書く。
+         * 草のある積分点がない場合や区間が不正な場合は負の無限大を書く。
+         */
+        float QueryOpticalDepth(const Math::Vector3& a, const Math::Vector3& b, float stepMeters,
+                                const DrynessMap* pDryness = nullptr, float* pOutMaxTopHeight = nullptr) const;
 
         GrassFieldDesc m_Desc;
         Container::UnorderedMap<uint64_t, Chunk> m_Chunks;
