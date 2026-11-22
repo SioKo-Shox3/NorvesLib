@@ -13167,3 +13167,8 @@ CAPTURE_SCENE result=fail failures=2 metrics=...\scene-capture\SCN-MEGA-FIX-TLAS
 - 人が見るときの見どころ: まだ知覚の処理へ配線していない（G13-GR24-PERCEPTION-SERVICE の受け持ち）ので、ゲームの見た目と動きは変わらない。
 - Next: ランナーの評価者の反証（`GrassField` は Public API）。配線・`PerceptionTuning` の読み込み・固体の遮蔽は G13-GR24-PERCEPTION-SERVICE。
 - Notes: 採った判断: 目が草の先端より高いときに 1 にする判定は `QueryOcclusion` の中でなく `VisionModel` に置いた（`QueryOcclusion` は区間の透過率と先端の最大高さを返す汎用の照会のまま）。既知の限界（嗅覚の真横が風上より薄い・聴覚の風の係数で約 3.9 m/s 超の風下/風上比が 1.6 を超える・目の高さが先端の最大をまたぐ所の段差）は前の仕上げの Notes のまま。
+## G13-GR24-SENSE-MODELS 評価の枠切れ後の仕上げ（2026-11-22、run 20261122-115223・反復 1）
+- Done: 前回の仕上げ（run 20261122-090007）の後、評価者が枠切れ（429）で評価できず作業中に戻っていた。先頭のコードは前回 Game をビルドした版と同じ（その後の差分は `TASKS.md`・`PROGRESS.md` だけ）。差し戻しの 2 件（知覚の草の照会が `GrassField::QueryOcclusion` の倍率つきの多重定義を通ること、反応の遅れを更新の中で求めた閾値の通過時刻から数えること。I=1・感度 10・gain 1.5・ジッター 0・dt 0.2 s で Alert は 0.4 s の更新）が実装に入っていることをコードで確かめ、完了に戻した。
+- 証拠: `.harness/runs/20261122-115223/verify-G13-GR24-SENSE-MODELS-U17.txt`（`cmake --build build --config Debug --target Game -- /m:1` が exit=0・エラー 0 で `Game.exe` まで生成）。
+- 試験: 試験は作らず回していない（人の決まり）。
+- Next: ランナーの評価者の反証（`GrassField` は Public API）。配線・`PerceptionTuning` の読み込み・固体の遮蔽は G13-GR24-PERCEPTION-SERVICE。
